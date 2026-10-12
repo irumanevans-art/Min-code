@@ -22,8 +22,8 @@ import dev.min.agent.spi.NoteLevel
 internal suspend fun SessionRuntime.startPluginMonitors(skill: String? = null) {
     val s = state.value
     if (s.origin != null || s.created.headless) return
-    val bundle = plugins() ?: return
-    for (m in bundle.monitors) {
+    val snapshot = pluginMonitorSnapshot ?: plugins()?.monitors.orEmpty().also { pluginMonitorSnapshot = it }
+    for (m in snapshot) {
         val wanted = if (skill == null) m.onSkill == null else m.onSkill != null && (m.onSkill == skill || "${m.plugin}:${m.onSkill}" == skill)
         if (!wanted || !startedPluginMonitors.add("${m.plugin}:${m.name}")) continue
         when (val start = background.startMonitor(MonitorRequest(m.description, null, m.command, persistent = true))) {

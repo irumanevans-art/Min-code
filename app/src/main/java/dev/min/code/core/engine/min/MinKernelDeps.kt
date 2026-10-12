@@ -70,6 +70,7 @@ class MinHostGeneration(
     val mountKey: String,
     /** 长寿进程（MCP stdio 服务器）：与 [exec] 同一份挂载快照。默认不可用，测试替身不用管 */
     val processes: ProcessPort = ProcessPort.Unavailable,
+    val pluginProcess: dev.min.agent.spi.PluginProcess? = null,
 )
 
 /**

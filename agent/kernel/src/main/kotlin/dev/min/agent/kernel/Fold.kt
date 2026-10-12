@@ -183,7 +183,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is dev.min.agent.spi.SkillToolsGranted -> copy(skillGrants = (skillGrants + e.rules).distinct())
         is dev.min.agent.spi.SkillToolsCleared -> copy(skillGrants = emptyList())
         is dev.min.agent.spi.SecurityGuidanceSeen -> copy(securityWarned = securityWarned + e.warned, securityReported = securityReported + e.reported)
-        is dev.min.agent.spi.OutputStyleLoaded -> copy(outputStyle = e)
+        is dev.min.agent.spi.OutputStyleLoaded -> copy(outputStyle = e.takeUnless { it.name == "Default" && it.body.isBlank() && !it.keepCodingInstructions })
         is dev.min.agent.spi.StructuredOutputDelivered -> copy(structuredOutput = e)
         is dev.min.agent.spi.SessionBranched -> copy(branched = e)
         is SettingsChanged -> copy(
@@ -416,6 +416,13 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is SubagentOrigin -> {
             check(lastSeq == 1L) { "SubagentOrigin 必须紧跟在 SessionCreated 之后" }
             copy(origin = e)
+        }
+        is dev.min.agent.spi.HistoryImported -> {
+            check(origin == null && history.isEmpty() && turn == null) { "历史只能在空根会话的回合之前导入" }
+            copy(history = e.messages.map { m -> when(m.role) {
+                Role.User -> HistoryEntry.User(m.messageId, m.parts, InputOrigin.Hook("imported_history"))
+                Role.Assistant -> HistoryEntry.Assistant(m.messageId, m.parts)
+            } }, toolResults = e.results.associate { it.callId to it.result })
         }
         is ForkSeeded -> {
             check(origin?.fork == true) { "只有分身会话才能继承对话" }

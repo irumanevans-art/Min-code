@@ -2801,3 +2801,51 @@ PolicyContext 添加字段时，还要更新 CLI 的反射兼容夹具，否则�
 - Pattern-Key: native-benchmark.include-original-instrumentation-cost
 
 ---
+
+## [LRN-20261011-PLUGFIN] best_practice
+
+**Logged**: 2026-10-11T19:20:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Windows 多工作树验证应隔离 daemon 注册目录，传递 argv 数组，冻结源码并保留 Kotlin trailing lambda 兼容。
+
+### Details
+- PowerShell 会把未正确传递的 `-Pkotlin.compiler.execution.strategy=in-process` 拆成 Gradle task；用 Python `subprocess` 的 argv 数组调用 `gradlew.bat`，保存完整 argv 和真实退出码。证据：`plugins-finish-evidence/deps-red.log` 与 `requirements-red-2-command.json`。
+- 多工作树共享 `~/.gradle` 时，别的任务执行 `--stop` 会中断单次 daemon。每个工作树使用独立 `GRADLE_USER_HOME` 的 daemon 注册目录，缓存与 wrapper 用只读需求下的共享目录；不杀其它任务的进程。证据：`requirements-red.log` 的 daemon stop，与隔离后有效断言红测 `requirements-red-2.log`。
+- Gradle 编译一层后再编辑该层 SPI，会让下游看到旧产物，出现并非需求缺陷的编译失败。验证期间冻结源码；后续实现先放 ignored `work/`，当前验证收尾后再发布。
+- Kotlin 的可选参数必须放在末尾函数参数之前，才能保留已有 trailing lambda 调用。新增 scaffold / stdin 参数时，把 `scripted` / `models` 留作最后参数。证据：`context-green-interrupt-init-red.log` 的编译失败；修复后 `context-green-init-interrupt-reload-red.log` 已进入真实断言阶段。
+
+- Windows 临时目录和目标仓库常在不同卷，Files.move 不能充当跨卷发布。先复制到目标目录下的私有 staging，再同卷改名；交互 init 的本机 scripted 用例验证发布结果。
+
+这些失败不计作红测或安全变异。有效红测需要编译通过，并保留 JUnit AssertionError 与 GRADLE_EXIT。
+
+### Metadata
+- Source: debugging
+- Pattern-Key: windows.gradle.isolated-daemon-frozen-inputs
+- Related Files: agent/cli/src/main/kotlin/dev/min/agent/cli/PluginEvalKernel.kt
+---
+
+## [LRN-20261011-PLUGFIN-VERIFY] best_practice
+
+**Logged**: 2026-10-11T23:20:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Windows 的并行进程测试应直接验证执行区间重叠；认证显示要处理编码后的 URL 参数，私有 Git 应保留系统凭据配置。
+
+### Details
+- 全量 HookBatchIntegrationTest 在 7013ms 时超过 7000ms 墙钟阈值，单独复测 4895ms 通过。改为真实处理器 start/end 顺序证明三个处理器在任一正常处理器结束前都已开始，保留 stdin、输出、超时与清理断言；无需放宽执行器超时或只调大性能阈值。
+- headersHelper 的确认目标直接显示 URL 会泄露 userinfo 与百分号编码 query key 的凭据。先解码 key 再匹配敏感字段，显示脱敏目标，授权 SHA 仍用完整原始值；privacy-red-hook-recheck 的 AssertionError 与第 8 个安全变异证明断言有效。
+- Windows Git 凭据管理器通常注册在系统配置。强制 GIT_CONFIG_NOSYSTEM 会使已登录的私有源仍报无认证。用本机 Basic 挑战的 bare Git 仓库与假系统 helper 得到真实红测，保留系统/用户配置后通过；禁交互与无日志端口继续生效。
+
+### Metadata
+- Source: debugging
+- Related Files: agent/cli/src/test/kotlin/dev/min/agent/cli/HookBatchIntegrationTest.kt, agent/host/src/main/kotlin/dev/min/agent/host/FilePluginSources.kt
+- Pattern-Key: private-source.auth-redaction-and-native-concurrency-proof
+
+---

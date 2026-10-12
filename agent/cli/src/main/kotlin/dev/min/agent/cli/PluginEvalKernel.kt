@@ -22,13 +22,17 @@ import java.time.ZoneId
 import java.util.UUID
 
 internal data class EvalEvidence(val lastMessage: String, val trace: String, val calls: List<ToolCallPart>,
-    val files: Map<String, String>, val error: String? = null, val costUsd: Double? = null, val sandbox: String? = null, val started: Boolean = true, val authFailed: Boolean = false)
+    val files: Map<String, String>, val error: String? = null, val costUsd: Double? = null, val sandbox: String? = null, val started: Boolean = true, val authFailed: Boolean = false,
+    val createdFiles: Set<String> = files.keys, val mockCalls: List<JsonObject> = emptyList(), val aborted: JsonObject? = null,
+    val mockRecordings: Map<String, JsonObject> = emptyMap())
 
 internal fun interface EvalKernel { suspend fun run(case: EvalCase, withPlugin: Boolean, root: Path): EvalEvidence }
 
 internal class LocalEvalKernel(
     private val suite: EvalSuite, private val args: CliArgs, private val grants: List<String>, private val keep: Boolean,
     private val modelOverride: Boolean = false,
+    private val scaffoldEnabled: Boolean = false,
+    private val mockJudgeModel: String? = null,
     private val scripted: ((ModelRef) -> ResolvedModel)? = null,
 ) : EvalKernel {
     override suspend fun run(case: EvalCase, withPlugin: Boolean, root: Path): EvalEvidence {
@@ -38,9 +42,16 @@ internal class LocalEvalKernel(
         val home = Files.createDirectories(root.resolve("home"))
         Files.createDirectories(root.resolve("tmp"))
         copyEvalManagedPolicy(root)
-        if (withPlugin) copyEvalPlugin(suite.plugin, root.resolve("plugin"), suite.directory, suite.hiddenPaths + suite.cases.map { it.dir })
+        case.scaffold(root, scaffoldEnabled)
+        val scaffoldFiles = Files.walk(work).use { entries -> entries.filter { Files.isRegularFile(it, NOFOLLOW_LINKS) }.map { work.relativize(it).toString().replace('\\', '/') }.toList().toSet() }
+        val pluginDirs = if (withPlugin) case.pluginPaths(suite).mapIndexed { index, source ->
+            val name = if (index == 0) "plugin" else "plugins/$index"
+            copyEvalPlugin(source, root.resolve(name), PluginEval.evalDirectory(source), suite.hiddenPaths + suite.cases.map { it.dir })
+            GuestPath("/$name")
+        } else emptyList()
         // 空 rootfs 不挂任何宿主盘；用户目录、配置、结果文件都不在模型可访问的工作目录。
-        val fs = RootfsFileSystem(root, scopes = ScopeRules(device = emptyList()))
+        val mounts = case.fixtureMounts()
+        val fs = RootfsFileSystem(root, binds = mounts, scopes = ScopeRules(device = emptyList()))
         val selected = args.copy(model = if (modelOverride) args.model else case.execution.string("model", args.model ?: "default"))
         val resolver = scripted ?: evalModelResolver(selected)
         val resolvedModels = java.util.concurrent.ConcurrentHashMap<ModelRef, ResolvedModel>()
@@ -51,17 +62,48 @@ internal class LocalEvalKernel(
         val store = FileSessionStore(root.resolve("sessions"), { System.currentTimeMillis() })
         val readOnly = setOf("Read", "Glob", "Grep", "NotebookRead", "Skill", "AskUserQuestion", "Agent", "TodoWrite", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop")
         val requests = case.execution.strings("allowed_tools")
-        val permitted = requests.filter { it.substringBefore('(') in readOnly } + grants
+        var stopMockRun: () -> Unit = {}
+        var mockCost = 0.0; var mockCostKnown = true; var mockAuthFailed = false
+        val mockArgs = selected.copy(model = mockJudgeModel ?: selected.fastModel ?: resolveModel(selected, dev.min.agent.llm.catalog.Catalog.bundled()).provider.fastModel ?: selected.model)
+        val mocks = EvalMocks(suite, case, agentAnswer = { instructions ->
+            val judgeCase = case.copy(prompt = instructions, fields = JsonObject(emptyMap()), execution = buildJsonObject { put("max_turns", 1); put("timeout_seconds", case.timeout) })
+            val judgeRoot = Files.createTempDirectory("min-plugin-eval-mock-judge-")
+            try { LocalEvalKernel(suite, mockArgs, emptyList(), false, modelOverride = true, scripted = scripted).run(judgeCase, false, judgeRoot).let {
+                if (it.costUsd == null) mockCostKnown = false else mockCost += it.costUsd
+                mockAuthFailed = mockAuthFailed || it.authFailed
+                require(it.error == null) { "agent mock judge failed" }; it.lastMessage
+            } }
+            finally { deleteEvalTemp(judgeRoot) }
+        }, onAbort = { stopMockRun() })
+        val loadedPlugins = pluginDirs.map { directory ->
+            val result = dev.min.agent.ext.plugins.PluginLoader(fs, fs::canonical).load(dev.min.agent.ext.plugins.PluginRequest(directory.value, null, sideload = true))
+            require(result.errors.isEmpty()) { result.errors.joinToString() }
+            requireNotNull(result.plugin)
+        }
+        val mockTools = mocks.tools(loadedPlugins)
+        // 先解析声明来绑定 mocks，再删去副本里的真实服务器声明；任何未 mock 的工具都不可见。
+        pluginDirs.forEach { directory ->
+            val base = fs.hostPath(directory)
+            listOf(".mcp.json", ".lsp.json").forEach { Files.deleteIfExists(base.resolve(it)) }
+            listOf(".claude-plugin/plugin.json", "plugin.json").forEach { relative ->
+                val manifest = base.resolve(relative)
+                if (Files.isRegularFile(manifest)) {
+                    val json = AgentJson.parseToJsonElement(Files.readString(manifest)).jsonObject
+                    Files.writeString(manifest, JsonObject(json - setOf("mcpServers", "lspServers")).toString())
+                }
+            }
+        }
+        val permitted = requests.filter { it.substringBefore('(') in readOnly } + grants + mockTools.map { it.name } + mounts.map { "Read(${it.guest.value}/**)" }
         val names = permitted.map { it.substringBefore('(') }.toSet()
-        require(names.none { it in setOf("Bash", "PowerShell", "Monitor") }) { "本地 eval 没有 OS shell 沙箱后端，拒绝 shell grant" }
-        val tools = desktopTools(interactive = false).filter { it.name in names }
-        require(names.all { it in readOnly || it in ALL_BUILTIN_TOOL_NAMES }) { "未知 allow-tools 名称" }
+        require(names.none { it in setOf("Bash", "PowerShell", "Monitor") }) { "${System.getProperty("os.name")} 桌面 eval 没有等价 OS shell 沙箱后端，拒绝 shell grant" }
+        val tools = desktopTools(interactive = false).filter { it.name in names } + mockTools
+        require(names.all { it in readOnly || it in ALL_BUILTIN_TOOL_NAMES || it in mockTools.map { mock -> mock.name } }) { "未知 allow-tools 名称" }
         val shellPaths = DesktopPaths(work, root.resolve("shell-root"))
         val logs = Files.createDirectories(root.resolve("exec-logs"))
         val env = (case.execution["env"] as? JsonObject).orEmpty().mapValues { it.value.jsonPrimitive.content }
         val shellEnv = mapOf("PATH" to System.getenv("PATH").orEmpty(), "HOME" to shellPaths.guestOfHost(home).value,
             "TMPDIR" to shellPaths.guestOfHost(root.resolve("tmp")).value, "TERM" to "dumb") + env
-        val settings = buildJsonObject { put("disableBundledSkills", true); put("permissions", buildJsonObject { put("allow", JsonArray(permitted.map(::JsonPrimitive))) }) }
+        val settings = buildJsonObject { put("disableBundledSkills", true); put("permissions", buildJsonObject { put("allow", JsonArray(permitted.map(::JsonPrimitive))); put("additionalDirectories", JsonArray(mounts.map { JsonPrimitive(it.guest.value) })) }) }
         val deps = KernelDeps(clock = { System.currentTimeMillis() }, ids = { "$it-${UUID.randomUUID()}" },
             models = { ref -> resolve(ref).let { resolved -> ResolvedModel(resolved.profile, ModelClient { req ->
                 resolved.client.stream(req.copy(system = req.system + case.execution.string("append_system_prompt").takeIf { it.isNotBlank() }.let(::listOfNotNull)))
@@ -73,7 +115,7 @@ internal class LocalEvalKernel(
                     Files.createDirectories(target.parent); Files.write(target, bytes); return name
                 }
             } }), platform = "Min desktop plugin eval", zone = ZoneId.systemDefault(),
-            memoryHome = GuestPath("/home"), memoryEnabled = false, canonicalPath = fs::canonical, pluginDirs = if (withPlugin) listOf(GuestPath("/plugin")) else emptyList(),
+            memoryHome = GuestPath("/home"), memoryEnabled = false, canonicalPath = fs::canonical, pluginDirs = pluginDirs,
             pluginTrust = { _, _ -> true }, hookShellPath = { shellPaths.guestOfHost(fs.hostPath(it)).value },
             settingsInputs = SettingsInputs(CliSettings("plugin eval grants", settings.toString()), restricted = true),
             rootMaxTurns = case.turns, modelTimeoutMs = case.timeout * 1000L, env = env::get,
@@ -83,8 +125,9 @@ internal class LocalEvalKernel(
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val hub = SessionHub(store, deps, scope)
         // SessionStart hook 也算用例时间，不能让启动阶段绕过 timeout。
-        val runtime = try { withTimeoutOrNull(remainingMs()) { hub.create(GuestPath("/workspace"), model.profile.ref, PermissionMode.DontAsk, effort = args.effort, headless = true) } ?: error("case startup timed out") }
+        val runtime = try { withTimeoutOrNull(remainingMs()) { hub.create(GuestPath("/workspace"), model.profile.ref, PermissionMode.DontAsk, effort = args.effort, initial = listOfNotNull(case.history()), headless = true) } ?: error("case startup timed out") }
             catch(e: Throwable) { scope.cancel(); throw e }
+        stopMockRun = { scope.launch { hub.stopTree(runtime.sessionId) }; Unit }
         val ui = ConsoleUi(runtime, ApprovalAnswer.No, "".reader().buffered(), java.io.PrintStream(java.io.OutputStream.nullOutputStream()), hub).attach(scope)
         var error: String? = null
         try {
@@ -111,8 +154,10 @@ internal class LocalEvalKernel(
             val trace = treeRecords.filter { it.event is AssistantMessageCompleted || it.event is ToolOutcome || it.event is InputReceived }
                 .joinToString("\n") { AgentJson.encodeToString(SessionEvent.serializer(), it.event) }
             val calls = treeRecords.mapNotNull { it.event as? AssistantMessageCompleted }.flatMap { it.parts.filterIsInstance<ToolCallPart>() }
-            return EvalEvidence(result.resultText.orEmpty(), trace, calls, files, error ?: result.errors.firstOrNull(),
-                result.cost.usd.takeIf { result.cost.allUsd }, root.toString().takeIf { keep }, authFailed = treeRecords.any { (it.event as? ModelRequestFailed)?.kind == ModelFailureKind.Auth })
+            return EvalEvidence(result.resultText.orEmpty(), trace, calls, files, if (mocks.aborted != null) null else error ?: result.errors.firstOrNull(),
+                (result.cost.usd + mockCost).takeIf { result.cost.allUsd && mockCostKnown }, root.toString().takeIf { keep }, authFailed = mockAuthFailed || treeRecords.any { (it.event as? ModelRequestFailed)?.kind == ModelFailureKind.Auth },
+                createdFiles = files.keys - scaffoldFiles, mockCalls = mocks.calls.toList(), aborted = mocks.aborted,
+                mockRecordings = if (error == null && result.errors.isEmpty() && mocks.aborted == null) mocks.recordings.toMap() else emptyMap())
         } finally { ui.cancel(); withContext(NonCancellable) { hub.stopTree(runtime.sessionId); hub.close(runtime.sessionId) }; scope.cancel() }
     }
 }

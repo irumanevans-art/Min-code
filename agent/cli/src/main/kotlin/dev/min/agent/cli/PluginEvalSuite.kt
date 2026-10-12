@@ -111,8 +111,9 @@ internal object PluginEval {
         require(execution.int("max_turns", 10) in 1..200 && execution.int("timeout_seconds", 300) in 1..3600) { "回合或超时超出范围" }
         require(fields.int("runs", 3) in 1..50) { "runs 必须为 1..50" }
         val context = (yaml["context"] as? JsonObject).orEmpty()
-        require(context.isEmpty()) { "本地 eval 暂不支持 context（scaffold/history/add_dirs）；不能静默忽略" }
-        require(fields.strings("plugins").isEmpty()) { "本地 eval 仅加载目标插件，不支持覆盖 plugins" }
+        require(context.keys.all { it in setOf("scaffold_script", "history_file", "add_dirs") }) { "未知 context 字段" }
+        for (key in listOf("scaffold_script", "history_file")) context[key]?.let { require(it is JsonPrimitive && it.isString) { "$key 必须是字符串" } }
+        context["add_dirs"]?.let { require(it is JsonArray && it.all { value -> value is JsonPrimitive && value.isString }) { "add_dirs 必须是目录列表" } }
         require((execution["env"] as? JsonObject).orEmpty().all { (k,v) -> k.matches(Regex("EVAL_[A-Z0-9_]*")) && v is JsonPrimitive && v.isString }) { "env 只接受 EVAL_* 字符串" }
         val graders = (yaml["graders"] as? JsonArray).orEmpty().map { it.jsonObject }.toMutableList()
         dir.resolve("graders").takeIf(Files::isDirectory)?.let { root -> Files.list(root).use { stream -> stream.sorted().filter { it.toString().endsWith(".md") }.forEach {
@@ -156,8 +157,4 @@ internal object PluginEval {
     }
 }
 
-internal fun evalRegex(pattern: String, flags: String = ""): Regex {
-    require(flags.all { it in "imsug" } && !Regex("\\(\\?[a-z-]+[):]").containsMatchIn(pattern)) { "仅支持可移植的 JavaScript regex 子集；flags: i/m/s/u/g" }
-    val options = buildSet { if ('i' in flags) add(RegexOption.IGNORE_CASE); if ('m' in flags) add(RegexOption.MULTILINE); if ('s' in flags) add(RegexOption.DOT_MATCHES_ALL) }
-    return Regex(pattern, options)
-}
+internal fun evalRegex(pattern: String, flags: String = ""): JsEvalRegex = JsEvalRegex(pattern, flags)

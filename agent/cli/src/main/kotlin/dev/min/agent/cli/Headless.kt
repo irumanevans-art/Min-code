@@ -108,6 +108,18 @@ internal suspend fun runPrompt(
         val ok = advisorCommand(runtime, command.removePrefix("/advisor").trim(), app.settingsUserFile(), app::validateAdvisor, stderr)
         return PromptRun.Early(if (ok) 0 else 1, "advisor")
     }
+    // `/reload-plugins`：先补齐插件依赖，再按插件当前的样子重载（回合之间才生效，见 reloadPlugins）。
+    // 与 `/advisor` 一样是本地命令：结果写 stderr，不进对话；stream-json 输入的每条消息也走这里
+    if (command == "/reload-plugins" || command.startsWith("/reload-plugins ")) {
+        val option = command.removePrefix("/reload-plugins").trim()
+        if (option !in setOf("", "force", "--force")) {
+            stderr.println("用法：/reload-plugins [--force]")
+            return PromptRun.Early(1, "reload-plugins")
+        }
+        app.pluginMarketplace().reconcileDependencies().forEach(stderr::println)
+        stderr.println(runtime.reloadPlugins(force = option.isNotEmpty()))
+        return PromptRun.Early(0, "reload-plugins")
+    }
     val fromSeq = runtime.state.value.lastSeq + 1
     val goalLine = goalArgumentOf(effective)
     val parsed = goalLine?.let(::parseGoalCommand)

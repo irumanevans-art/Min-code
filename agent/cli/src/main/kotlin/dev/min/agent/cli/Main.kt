@@ -71,6 +71,14 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
     }
     app.applyChannels(developmentConfirmed)
     val runtime = app.openSession()
+    if (args.prompt == null && runtime.state.value.created.loadingModes?.let { !it.bare && !it.safe && !it.restricted } != false) scope.launch {
+        val notices = app.pluginMarketplace().rerunCommandSources(System.getenv())
+        if (notices.isNotEmpty()) {
+            runtime.awaitIdle()
+            notices.forEach(System.err::println)
+            System.err.println(runtime.reloadPlugins(reconnectServers = true))
+        }
+    }
     val telemetry = app.telemetry(runtime)
     // 遥测（默认关，telemetry 为 null）：会话进行中按间隔导出，进程退出时补一次。
     // NonCancellable：取消退出时也要把已有的事件送出去
@@ -229,6 +237,14 @@ internal suspend fun interact(
                 else say(subtaskPrompt(task))
             }
             trimmed == "/list-agents" || trimmed == "/peers" -> System.err.println(listAgentsText(app, runtime))
+            trimmed == "/reload-plugins" || trimmed.startsWith("/reload-plugins ") -> {
+                val option = trimmed.removePrefix("/reload-plugins").trim()
+                if (option !in setOf("", "force", "--force")) System.err.println("用法：/reload-plugins [--force]")
+                else {
+                    app.pluginMarketplace().reconcileDependencies().forEach(System.err::println)
+                    System.err.println(runtime.reloadPlugins(force = option.isNotEmpty(), reconnectServers = true))
+                }
+            }
             trimmed == "/plugin" || trimmed.startsWith("/plugin ") -> {
                 uiConsole?.mainOwnsInput = true
                 try { pluginCommand(app.pluginMarketplace(), trimmed.removePrefix("/plugin").trim().split(Regex("\\s+")).filter { it.isNotEmpty() }, stdin, System.out) }

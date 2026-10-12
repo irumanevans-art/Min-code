@@ -2,6 +2,7 @@ package dev.min.agent.cli
 
 import dev.min.agent.ext.plugins.*
 import dev.min.agent.host.FilePluginSources
+import dev.min.agent.host.PrivatePluginProcess
 import dev.min.agent.spi.GuestPath
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -16,9 +17,16 @@ internal fun desktopMarketplace(cwd: Path, trust: Boolean, userHome: Path = Path
     val paths = DesktopPaths(cwd, userHome.resolve(".min-agent/root"))
     val logs = Files.createDirectories(userHome.resolve(".min-agent/exec-logs"))
     val home = paths.guestOfHost(userHome)
-    return PluginMarketplace(paths.fs, FilePluginSources(paths.fs, LocalExec(paths::hostOf, logs, paths.guestOfHost(logs)), GuestPath(home.value + "/.claude/plugins")), home,
+    return PluginMarketplace(paths.fs, FilePluginSources(paths.fs, LocalExec(paths::hostOf, logs, paths.guestOfHost(logs)), GuestPath(home.value + "/.claude/plugins"),
+        desktopPluginProcess(paths), { paths.hostOf(it).toString() }, { raw -> require(Path.of(raw).isAbsolute) { "command 必须输出绝对目录" }; paths.guestOfHost(Path.of(raw)) }, paths.guestOfHost(cwd)), home,
         paths.guestOfHost(cwd), { trust }, canonical = paths.fs::canonical, installationPath = { paths.hostOf(it).toString() })
 }
+
+internal fun desktopPluginProcess(paths: DesktopPaths, environment: () -> Map<String, String> = System::getenv) = PrivatePluginProcess(
+    launch = { script, cwd, env ->
+        val shell = if (System.getProperty("os.name").startsWith("Windows")) listOf("cmd.exe", "/d", "/s", "/c") else listOf("sh", "-c")
+        ProcessBuilder(shell + script).directory(paths.hostOf(cwd).toFile()).apply { this.environment().clear(); this.environment().putAll(env) }.start()
+    }, reap = { process -> process.toHandle().descendants().toList().asReversed().forEach { it.destroyForcibly() }; process.destroyForcibly(); Unit }, environment = environment)
 
 internal suspend fun pluginCommand(manager: PluginMarketplace, arguments: List<String>, stdin: BufferedReader, output: PrintStream,
     sourcePath: (String) -> String = { it }): Int {
@@ -41,11 +49,11 @@ internal suspend fun pluginCommand(manager: PluginMarketplace, arguments: List<S
                     val raw = args.getOrNull(2) ?: throw UsageException("plugin marketplace add <source> [--yes]")
                     var source = PluginMarketplace.sourceInput(raw)
                     if ((source["source"] as? JsonPrimitive)?.content in setOf("file", "directory")) source = JsonObject(source + ("path" to JsonPrimitive(sourcePath(source.getValue("path").jsonPrimitive.content))))
-                    val accepted = source == OFFICIAL_MARKETPLACE_SOURCE || confirm(THIRD_PARTY_PLUGIN_WARNING + "\n$source")
+                    val accepted = source == OFFICIAL_MARKETPLACE_SOURCE || confirm(THIRD_PARTY_PLUGIN_WARNING + "\n${redactedPluginSource(source)}")
                     if (!accepted) return 1
                     output.println("已添加市场：${manager.add(source, confirmed = accepted).name}")
                 }
-                "list" -> manager.markets().forEach { output.println("${it.name}  ${it.source}  autoUpdate=${it.autoUpdate}") }
+                "list" -> manager.markets().forEach { output.println("${it.name}  ${redactedPluginSource(it.source)}  autoUpdate=${it.autoUpdate}") }
                 "remove", "rm" -> { manager.removeMarket(args.getOrNull(2) ?: throw UsageException("marketplace remove <name>")); output.println("市场已移除") }
                 "update" -> { for (name in args.getOrNull(2)?.let(::listOf) ?: manager.markets().map { it.name }) { manager.refresh(name); output.println("市场已更新：$name") } }
                 "auto-update" -> { manager.setAutoUpdate(args.getOrNull(2) ?: throw UsageException("auto-update <name> on|off"), args.getOrNull(3) == "on"); output.println("自动更新设置已保存") }
@@ -61,7 +69,11 @@ internal suspend fun pluginCommand(manager: PluginMarketplace, arguments: List<S
                     require(manager.installed().any { it.id == id && it.scope == scope }) { "该作用域未安装插件" }
                     manager.refresh(PluginMarketplace.parseId(id).marketplace!!)
                 }
-                val preview = manager.preview(id)
+                val accepted = manager.commandsToAccept(id).map { request ->
+                    if (!confirm("插件命令：${request.command}\n目标：${redactedPluginCommandTarget(request.target)}")) return 1
+                    request.sha256
+                }.toSet()
+                val preview = manager.preview(id, accepted)
                 try {
                     if (command == "details") output.println(preview.componentSummary())
                     else if (confirm(preview.componentSummary() + "\n插件能跑命令、能访问网络。作用域：$scope")) output.println("已安装：${manager.install(preview, scope, confirmed = true).id}；下个会话加载")

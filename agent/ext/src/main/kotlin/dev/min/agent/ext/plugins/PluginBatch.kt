@@ -43,10 +43,10 @@ suspend fun PluginLoader.loadAll(requests: List<PluginRequest>, lockedNames: Set
         if (id in visiting) {
             val cycle = visiting.dropWhile { it != id }
             failed += cycle
-            errors += "插件循环依赖：${cycle.joinToString(" → ")}"
+            errors += "Dependency cycle detected: ${cycle.joinToString(" → ")}（插件循环依赖）"
             return false
         }
-        val plugin = winners[id] ?: return false.also { errors += "插件依赖不存在：$id" }
+        val plugin = winners[id] ?: return false.also { errors += "Dependency \"$id\" is not installed" }
         visiting += id
         var ok = true
         for (dependency in plugin.manifest?.dependencies.orEmpty()) {
@@ -54,7 +54,10 @@ suspend fun PluginLoader.loadAll(requests: List<PluginRequest>, lockedNames: Set
             val market = dependency.marketplace ?: dependency.name.substringAfter('@', "").ifEmpty { plugin.ref.marketplace }
             val depId = PluginRef(depName, market).id
             val actual = winners.values.firstOrNull { it.ref.name == depName && it.ref.marketplace == "inline" }?.ref?.id ?: depId
-            if (!enable(actual, dependency = true)) ok = false
+            val version = winners[actual]?.manifest?.version
+            if (actual != depId || dependency.version == null || pluginVersionSatisfies(version, dependency.version)) {
+                if (!enable(actual, dependency = true)) ok = false
+            } else { errors += "Requires \"$depId\" ${dependency.version}, installed ${version ?: "unknown"}"; ok = false }
         }
         visiting.removeAt(visiting.lastIndex)
         if (!ok || id in failed) { failed += id; return false }

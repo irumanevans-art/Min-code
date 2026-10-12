@@ -16,9 +16,31 @@ const val OFFICIAL_MARKETPLACE = "claude-plugins-official"
 data class Marketplace(val name: String, val source: JsonObject, val installLocation: String?, val confirmed: Boolean, val autoUpdate: Boolean)
 data class MarketplaceCatalog(val name: String, val owner: String, val plugins: List<JsonObject>)
 data class InstalledPlugin(val id: String, val scope: String, val installPath: String, val projectPath: String?, val version: String, val enabled: Boolean)
+data class PluginCommandRequest(val id: String, val command: String, val target: String, val sha256: String) {
+    override fun toString() = "PluginCommandRequest(id=$id, target=${redactedPluginCommandTarget(target)}, sha256=$sha256)"
+}
+
+fun redactedPluginSource(source: JsonObject): JsonObject = JsonObject(source.mapValues { (key, value) ->
+    when {
+        key.lowercase() in setOf("headers", "token", "password", "authorization") -> JsonPrimitive("[已设置]")
+        value is JsonObject -> redactedPluginSource(value)
+        key in setOf("url", "registry") && value is JsonPrimitive && value.isString -> try {
+            val uri = URI(value.content)
+            JsonPrimitive(URI(uri.scheme, null, uri.host, uri.port, uri.path,
+                uri.rawQuery?.split('&')?.joinToString("&") { part -> if (Regex("(?i)token|key|secret|password|signature|credential").containsMatchIn(java.net.URLDecoder.decode(part.substringBefore('='), Charsets.UTF_8.name()))) part.substringBefore('=') + "=[已设置]" else part }, null).toString())
+        } catch (_: Exception) { JsonPrimitive("[地址]") }
+        else -> value
+    }
+})
+
+// 目标可含 archive URL 的认证参数；人工确认也不能成为凭据的显示或日志出口。
+fun redactedPluginCommandTarget(target: String): String =
+    if (target.startsWith("https://", true) || target.startsWith("http://", true))
+        redactedPluginSource(buildJsonObject { put("url", target) })["url"]!!.jsonPrimitive.content
+    else target
 
 /** 预览只能由管理器产生；安装使用已拉取的同一份文件，确认后不能换成另一版远端内容。 */
-class PluginInstallPreview internal constructor(val id: String, val components: LoadedPlugin, internal val staging: GuestPath, internal val entry: JsonObject, internal val owner: String, internal val fingerprint: String, internal val container: GuestPath)
+class PluginInstallPreview internal constructor(val id: String, val components: LoadedPlugin, internal val staging: GuestPath, internal val entry: JsonObject, internal val owner: String, internal val fingerprint: String, internal val container: GuestPath, internal val resolvedVersion: String? = null)
 
 class PluginMarketplace(
     private val fs: WorkspaceFs,
@@ -78,7 +100,7 @@ class PluginMarketplace(
         return when (type) {
             "hostPattern" -> {
                 val hostname = if (source.text("source") == "github") "github.com" else source.text("url")?.let { url ->
-                    if (url.startsWith("git@")) url.substringAfter('@').substringBefore(':') else URI(url).host
+                    if (url.startsWith("git@")) url.substringAfter('@').substringBefore(':') else pluginUri(url).host
                 }
                 hostname != null && Regex(rule.text("hostPattern") ?: return false).containsMatchIn(hostname)
             }
@@ -104,11 +126,12 @@ class PluginMarketplace(
         return result
     }
     private fun fresh(label: String) = path(".staging/$label-${UUID.randomUUID()}")
-    private suspend fun fetchedCatalog(source: JsonObject): Pair<GuestPath, MarketplaceCatalog> {
+    private suspend fun fetchedCatalog(source: JsonObject, name: String? = null): Pair<GuestPath, MarketplaceCatalog> {
         allowed(source)
+        if (source.text("headersHelper") != null) checkCommandPolicy(source)
         val staging = fresh("market")
         try {
-            host.fetch(fetchSource(source, plugin = false), staging, limits)
+            host.fetch(fetchSource(source, plugin = false).let { fetch -> if (name == null) fetch else fetch.copy(helperEnvironment = fetch.helperEnvironment + ("CLAUDE_CODE_MARKETPLACE_NAME" to name)) }, staging, limits)
             val raw = readObject(GuestPath(staging.value + "/.claude-plugin/marketplace.json"))
             val catalog = parseCatalog(raw)
             require(catalog.name != OFFICIAL_MARKETPLACE || source == OFFICIAL_MARKETPLACE_SOURCE) { "官方市场名不能被第三方冒用" }
@@ -145,7 +168,7 @@ class PluginMarketplace(
     suspend fun refresh(name: String): MarketplaceCatalog = host.locked { refreshUnlocked(name) }
     private suspend fun refreshUnlocked(name: String): MarketplaceCatalog {
         val market = market(name)
-        val (staging, catalog) = fetchedCatalog(market.source)
+        val (staging, catalog) = fetchedCatalog(market.source, name)
         if (catalog.name != name) { host.remove(staging); error("市场更新改变了名字") }
         val previous = marketsRaw().getValue(name).jsonObject
         val location = path("marketplaces/$name/${UUID.randomUUID()}")
@@ -163,25 +186,80 @@ class PluginMarketplace(
         if (market.installLocation == null) refreshUnlocked(name)
         else parseCatalog(readObject(GuestPath(market.installLocation + "/.claude-plugin/marketplace.json")))
     }
-    suspend fun preview(id: String): PluginInstallPreview = host.locked {
+    private suspend fun checkCommandPolicy(marketSource: JsonObject? = null) {
+        val snapshot = settings()
+        require(!snapshot.managedPolicyBroken) { "托管市场策略不可用" }
+        val managed = JsonObject(snapshot.layers.lastOrNull { it.source == ConfigSource.Managed }?.raw.orEmpty())
+        if (marketSource != null && (managed["extraKnownMarketplaces"] as? JsonObject)?.values?.any { (it as? JsonObject)?.get("source") == marketSource } == true) return
+        require(managed.bool("disableCommandPluginSources") != true && (managed.bool("allowManagedHooksOnly") != true || managed.bool("disableCommandPluginSources") == false)) { "托管设置禁止插件 command / headersHelper" }
+    }
+    private fun commandRequests(id: String, entry: JsonObject): List<PluginCommandRequest> {
+        val source = entry["source"] as? JsonObject
+        val commands = buildList {
+            if (source?.text("source") == "command") add(source.text("command")!! to "plugin directory")
+            entry.text("headersHelper")?.let { add(it to (source?.text("url") ?: error("headersHelper 需要 archive URL"))) }
+        }
+        return commands.map { (command, target) ->
+            require(command.isNotBlank() && command.length <= 500 && command.all { it.code in 32..126 } && "    " !in command) { "无效插件命令" }
+            PluginCommandRequest(id, command, target, MessageDigest.getInstance("SHA-256").digest("$id\u0000$command\u0000$target".toByteArray()).joinToString("") { "%02x".format(it) })
+        }
+    }
+    suspend fun commandsToAccept(id: String): List<PluginCommandRequest> = host.locked {
+        val ref = parseId(id)
+        var market = market(ref.marketplace!!)
+        if (market.installLocation == null) { refreshUnlocked(market.name); market = market(market.name) }
+        val entry = parseCatalog(readObject(GuestPath(market.installLocation + "/.claude-plugin/marketplace.json"))).plugins.singleOrNull { it.text("name") == ref.name } ?: error("市场没有插件 $id")
+        commandRequests(id, entry).also { if (it.isNotEmpty()) checkCommandPolicy() }
+    }
+    suspend fun preview(id: String, acceptedCommands: Set<String> = emptySet()): PluginInstallPreview = host.locked { previewUnlocked(id, acceptedCommands) }
+    private suspend fun previewUnlocked(id: String, acceptedCommands: Set<String> = emptySet(), ranges: List<String> = emptyList()): PluginInstallPreview {
         val ref = parseId(id)
         var market = market(requireNotNull(ref.marketplace))
         if (market.installLocation == null) { refreshUnlocked(market.name); market = market(market.name) }
         val catalog = parseCatalog(readObject(GuestPath(market.installLocation + "/.claude-plugin/marketplace.json")))
         val entry = catalog.plugins.singleOrNull { it.text("name") == ref.name } ?: error("市场没有插件 $id")
         val source = entry.getValue("source")
+        val commands = commandRequests(id, entry)
+        if (commands.isNotEmpty()) {
+            checkCommandPolicy()
+            require(commands.all { it.sha256 in acceptedCommands }) { "请先确认命令与目标；command 或 headersHelper 已变化时必须重新确认" }
+        }
         val stage = fresh("plugin")
+        var resolvedVersion: String? = null
+        suspend fun tagSource(fetch: PluginFetchSource, relative: Boolean): PluginFetchSource? {
+            if (ranges.isEmpty() || fetch.type !in setOf("git", "github", "directory")) return null
+            val tags = host.tags(fetch, ref.name).filter { tag -> ranges.all { pluginVersionSatisfies(tag.version, it) } }
+            val tag = tags.maxWithOrNull { a, b -> comparePluginVersions(a.version, b.version) }
+            require(tag != null || relative) { "Dependency \"$id\" has no git tag satisfying ${ranges.joinToString(" & ")}" }
+            if (tag == null) return null
+            resolvedVersion = tag.version
+            val git = if (fetch.type == "directory") fetch.copy(type = "git", location = installationPath(GuestPath(fetch.location))) else fetch
+            return git.copy(ref = tag.ref, sha = tag.sha)
+        }
         try {
             if (source is JsonPrimitive && source.isString) {
                 require(market.source.text("source") != "url") { "URL 清单不提供相对路径插件" }
                 val relative = relativeSource(source.content, catalog = readObject(GuestPath(market.installLocation + "/.claude-plugin/marketplace.json")))
-                host.copy(GuestPath(market.installLocation + relative.removePrefix(".")), stage, limits)
-            } else host.fetch(fetchSource(source as? JsonObject ?: error("无效插件 source"), plugin = true), stage, limits)
+                val tagged = tagSource(fetchSource(market.source, false).copy(path = relative.removePrefix("./").takeUnless { it == "." }), true)
+                if (tagged == null) host.copy(GuestPath(market.installLocation + relative.removePrefix(".")), stage, limits)
+                else host.fetch(tagged, stage, limits)
+            } else {
+                val raw = source as? JsonObject ?: error("无效插件 source")
+                var fetch = fetchSource(raw, plugin = true)
+                if (fetch.type == "archive") {
+                    val inherited = if (market.source.text("source") == "url" && sameOrigin(market.source.text("url")!!, fetch.location)) fetchSource(market.source, false) else null
+                    entry.text("headersHelper")?.let { require(entry.bool("strict") == false) { "headersHelper 的条目必须 strict: false" } }
+                    fetch = fetch.copy(headers = headerValues(entry), headersHelper = entry.text("headersHelper"), inheritedAuthentication = inherited?.copy(
+                        helperEnvironment = inherited.helperEnvironment + ("CLAUDE_CODE_MARKETPLACE_NAME" to market.name)),
+                        helperEnvironment = buildMap { put("CLAUDE_CODE_PLUGIN_NAME", ref.name); put("CLAUDE_CODE_PLUGIN_ARCHIVE_URL", fetch.location) }, scrubCredentials = true)
+                }
+                host.fetch(tagSource(fetch, false) ?: fetch, stage, limits)
+            }
             val pluginRoot = archiveRoot(stage)
             val outcome = PluginLoader(fs, canonical).load(PluginRequest(pluginRoot.value, ref, entry))
             val plugin = outcome.plugin ?: error("插件清单无效：${outcome.errors.joinToString()}")
             require(outcome.errors.isEmpty()) { "插件组件无效：${outcome.errors.joinToString()}" }
-            PluginInstallPreview(id, plugin, pluginRoot, entry, owner, fingerprint(pluginRoot, entry), stage).also { previews += it }
+            return PluginInstallPreview(id, plugin, pluginRoot, entry, owner, fingerprint(pluginRoot, entry), stage, resolvedVersion).also { previews += it }
         } catch (e: Exception) { withContext(NonCancellable) { host.remove(stage) }; throw e }
     }
     private suspend fun archiveRoot(stage: GuestPath): GuestPath {
@@ -227,27 +305,111 @@ class PluginMarketplace(
         require(preview.owner == owner && preview in previews) { "安装预览已过期" }
         require(fingerprint(preview.staging, preview.entry) == preview.fingerprint) { "预览文件已变化，请重新核对组件" }
         installationScope(scope)
-        val ref = parseId(preview.id); market(requireNotNull(ref.marketplace))
+        val ref = parseId(preview.id)
+        val rootMarket = market(requireNotNull(ref.marketplace))
+        val rootCatalog = readObject(GuestPath(rootMarket.installLocation + "/.claude-plugin/marketplace.json"))
+        val cross = (rootCatalog["allowCrossMarketplaceDependenciesOn"] as? JsonArray).orEmpty().map { it.jsonPrimitive.content }.toSet()
         val managed = settings().layers.lastOrNull { it.source == ConfigSource.Managed }?.enabledPlugins.orEmpty()
-        require(managed[preview.id] != false) { "插件被托管设置禁用" }
-        val enabledIds = installedUnlocked().filter { it.enabled }.map { it.id }.toSet()
-        for (dependency in preview.components.manifest?.dependencies.orEmpty()) {
-            val depId = if ('@' in dependency.name) dependency.name else dependency.name + "@" + (dependency.marketplace ?: ref.marketplace)
-            require(depId in enabledIds) { "请先安装并启用依赖 $depId，再核对本插件组件" }
+        val indexPath = path("installed_plugins.json")
+        val oldIndex = readObject(indexPath)
+        fun installedRequest(record: InstalledPlugin): PluginRequest {
+            val ref = parseId(record.id)
+            val metadata = ((oldIndex["plugins"] as? JsonObject)?.get(record.id) as? JsonArray)?.filterIsInstance<JsonObject>()?.lastOrNull { sameScope(it, scope) }
+            return PluginRequest(path("cache/${ref.marketplace}/${ref.name}/${record.version}").value, ref, resolvedVersion = metadata?.text("resolvedVersion"))
         }
-        // 内容散列用于区分同版本变更；始终复制预览，绝不在确认后重新拉取远端包。
-        val version = (preview.components.manifest?.version?.takeIf { validPluginName(it) } ?: "unversioned") + "-" + preview.fingerprint.take(12)
-        val target = path("cache/${ref.marketplace}/${ref.name}/$version")
-        if (fs.stat(target) == null) host.copy(preview.staging, target, limits)
-        require(fingerprint(target, preview.entry) == preview.fingerprint) { "缓存文件与已确认预览不一致" }
-        val record = buildJsonObject { put("scope", scope); put("installPath", installationPath(target)); put("version", version); if (scope != "user") put("projectPath", installationPath(canonical(cwd))); put("installedAt", System.currentTimeMillis()); put("lastUpdated", System.currentTimeMillis()); put("marketplaceEntry", preview.entry); put("componentInventory", preview.componentSummary()) }
-        val raw = readObject(path("installed_plugins.json")); val records = (raw["plugins"] as? JsonObject).orEmpty()
-        val prior = (records[preview.id] as? JsonArray).orEmpty().filterNot { it is JsonObject && sameScope(it, scope) }
-        writeObject(path("installed_plugins.json"), JsonObject(raw + mapOf("version" to JsonPrimitive(2), "plugins" to JsonObject(records + (preview.id to JsonArray(prior + record))))))
-        val priorFlag = (readObject(settingsFile(scope))["enabledPlugins"] as? JsonObject)?.get(preview.id) as? JsonPrimitive
-        setEnabledUnlocked(preview.id, priorFlag?.booleanOrNull ?: (preview.components.manifest?.defaultEnabled != false), scope)
-        previews.remove(preview); host.remove(preview.container)
-        installedRecord(preview.id, record)
+        val enabled = installedUnlocked().filter { it.enabled && it.scope == scope }.associateBy { it.id }
+        val requirements = linkedMapOf<String, MutableList<String>>()
+        // 已安装的约束也参与求交，更新一个插件不能偷偷破坏另一插件的依赖。
+        for (record in installedUnlocked().filter { it.scope == scope && it.id != preview.id }) {
+            val r = parseId(record.id)
+            val loaded = PluginLoader(fs, canonical).load(installedRequest(record)).plugin
+            loaded?.manifest?.dependencies.orEmpty().forEach { dep -> dep.version?.let { range ->
+                val depId = if ('@' in dep.name) dep.name else dep.name + "@" + (dep.marketplace ?: r.marketplace)
+                requirements.getOrPut(depId) { mutableListOf() }.add(range)
+            } }
+        }
+        val ordered = linkedMapOf<String, PluginInstallPreview>()
+        val visiting = mutableListOf<String>()
+        val fetched = mutableListOf<PluginInstallPreview>()
+        suspend fun visit(item: PluginInstallPreview) {
+            require(item.id !in visiting) { "Dependency cycle detected: ${(visiting + item.id).joinToString(" -> ")}" }
+            // 直接更新依赖本身时，也必须满足已有调用者的约束，不能只检查新图中的边。
+            require(requirements[item.id].orEmpty().all { pluginVersionSatisfies(item.resolvedVersion ?: item.components.manifest?.version, it) }) { "Dependency \"${item.id}\" has conflicting version requirements" }
+            if (item.id in ordered) return
+            require(managed[item.id] != false) { "Dependency \"${item.id}\" is disabled by managed settings" }
+            market(parseId(item.id).marketplace!!)
+            visiting += item.id
+            for (dependency in item.components.manifest?.dependencies.orEmpty()) {
+                val depId = if ('@' in dependency.name) dependency.name else dependency.name + "@" + (dependency.marketplace ?: parseId(item.id).marketplace)
+                val depRef = parseId(depId)
+                require(depId !in visiting) { "Dependency cycle detected: ${(visiting + depId).joinToString(" -> ")}" }
+                dependency.version?.let { range -> requirements.getOrPut(depId) { mutableListOf() }.also { if (range !in it) it += range } }
+                val ranges = requirements[depId].orEmpty()
+                require(managed[depId] != false) { "Dependency \"$depId\" is disabled by managed settings" }
+                val scopeFlags = readObject(settingsFile(scope))["enabledPlugins"] as? JsonObject
+                require(scopeFlags?.get(depId)?.jsonPrimitive?.booleanOrNull != false) { "Dependency \"$depId\" is disabled — enable it or remove the dependency" }
+                if (depId in enabled) {
+                    market(depRef.marketplace!!)
+                    val record = enabled.getValue(depId)
+                    val result = PluginLoader(fs, canonical).load(installedRequest(record))
+                    if (ranges.all { pluginVersionSatisfies(result.plugin?.manifest?.version, it) }) continue
+                }
+                require(depRef.marketplace == parseId(item.id).marketplace || depRef.marketplace in cross) {
+                    "Dependency \"$depId\" (required by ${item.id}) is in marketplace \"${depRef.marketplace}\", which is not in the allowlist. Set allowCrossMarketplaceDependenciesOn in the root marketplace."
+                }
+                require(managed[depId] != false) { "Dependency \"$depId\" is disabled by managed settings" }
+                val prior = ordered[depId]
+                val next = prior?.takeIf { ranges.all { range -> pluginVersionSatisfies(it.resolvedVersion ?: it.components.manifest?.version, range) } } ?: try {
+                    ordered.remove(depId)
+                    previewUnlocked(depId, ranges = ranges).also { fetched += it }
+                }
+                    catch(e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch(e: Exception) { error("Dependency \"$depId\" is not installed — ${e.message}") }
+                require(ranges.all { pluginVersionSatisfies(next.resolvedVersion ?: next.components.manifest?.version, it) }) { "Dependency \"$depId\" has conflicting version requirements" }
+                visit(next)
+            }
+            visiting.removeAt(visiting.lastIndex)
+            ordered[item.id] = item
+        }
+        val settingsPath = settingsFile(scope)
+        val oldSettings = readObject(settingsPath)
+        var publishing = false
+        try {
+            // 先解析整个图再发布索引；缺失、环和授权失败不会留下半套启用状态。
+            visit(preview)
+            val records = (oldIndex["plugins"] as? JsonObject).orEmpty().toMutableMap()
+            val flags = (oldSettings["enabledPlugins"] as? JsonObject).orEmpty().toMutableMap()
+            var installed: InstalledPlugin? = null
+            for ((id, item) in ordered) {
+                require(fingerprint(item.staging, item.entry) == item.fingerprint) { "预览文件已变化，请重新核对组件" }
+                val itemRef = parseId(id)
+                val version = ((item.resolvedVersion ?: item.components.manifest?.version)?.takeIf { validPluginName(it) } ?: "unversioned") + "-" + item.fingerprint.take(12)
+                val target = path("cache/${itemRef.marketplace}/${itemRef.name}/$version")
+                if (fs.stat(target) == null) host.copy(item.staging, target, limits)
+                require(fingerprint(target, item.entry) == item.fingerprint) { "缓存文件与已确认预览不一致" }
+                val record = buildJsonObject {
+                    put("scope", scope); put("installPath", installationPath(target)); put("version", version)
+                    if (scope != "user") put("projectPath", installationPath(canonical(cwd)))
+                    put("installedAt", System.currentTimeMillis()); put("lastUpdated", System.currentTimeMillis())
+                    item.resolvedVersion?.let { put("resolvedVersion", it) }; put("marketplaceEntry", item.entry); put("componentInventory", item.componentSummary())
+                    if ((item.entry["source"] as? JsonObject)?.text("source") == "command") put("commandSha256", commandRequests(id, item.entry).first().sha256)
+                }
+                val prior = (records[id] as? JsonArray).orEmpty().filterNot { it is JsonObject && sameScope(it, scope) }
+                records[id] = JsonArray(prior + record)
+                flags[id] = if (id == preview.id) flags[id] ?: JsonPrimitive(item.components.manifest?.defaultEnabled != false) else JsonPrimitive(true)
+                if (id == preview.id) installed = InstalledPlugin(id, scope, installationPath(target), record.text("projectPath"), version, flags[id]!!.jsonPrimitive.boolean)
+            }
+            publishing = true
+            writeObject(settingsPath, JsonObject(oldSettings + ("enabledPlugins" to JsonObject(flags))))
+            writeObject(indexPath, JsonObject(oldIndex + mapOf("version" to JsonPrimitive(2), "plugins" to JsonObject(records))))
+            requireNotNull(installed)
+        } catch(e: Exception) {
+            if (publishing) withContext(NonCancellable) { writeObject(settingsPath, oldSettings); writeObject(indexPath, oldIndex) }
+            throw e
+        } finally {
+            withContext(NonCancellable) { (fetched + preview).forEach { previews.remove(it); host.remove(it.container) } }
+        }
+
     }
     private fun sameScope(record: JsonObject, scope: String) = record.text("scope") == scope && (scope == "user" || record.text("projectPath") == installationPath(canonical(cwd)))
     private fun settingsFile(scope: String) = when (scope) { "user" -> GuestPath(home.value + "/.claude/settings.json"); "project" -> GuestPath(cwd.value + "/.claude/settings.json"); else -> GuestPath(cwd.value + "/.claude/settings.local.json") }
@@ -264,6 +426,35 @@ class PluginMarketplace(
         return InstalledPlugin(id, record.text("scope") ?: "user", record.text("installPath") ?: error("安装记录缺路径"), record.text("projectPath"), record.text("version") ?: "unknown", enabled)
     }
     suspend fun installed(): List<InstalledPlugin> = host.locked { installedUnlocked() }
+    /** 每个会话由宿主调用一次；只复用已安装记录的命令指纹，目录输出改变不构成命令重新授权。 */
+    suspend fun rerunCommandSources(environment: Map<String, String>): List<String> {
+        if (environment["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1") return emptyList()
+        val notices = mutableListOf<String>()
+        for (record in installed().filter { it.enabled }) try {
+            val saved = host.locked { (readObject(path("installed_plugins.json"))["plugins"]?.jsonObject?.get(record.id) as? JsonArray)?.filterIsInstance<JsonObject>()?.firstOrNull { sameScope(it, record.scope) } } ?: continue
+            if ((saved["marketplaceEntry"]?.jsonObject?.get("source") as? JsonObject)?.text("source") != "command") continue
+            val requests = commandsToAccept(record.id)
+            if (requests.size != 1 || requests.single().sha256 != saved.text("commandSha256")) { notices += "${record.id} 命令已变化，请手动预览确认"; continue }
+            val next = preview(record.id, setOf(requests.single().sha256))
+            if (next.fingerprint.take(12) == record.version.substringAfterLast('-')) discard(next)
+            else { install(next, record.scope, true); notices += "${record.id} command 输出已更新" }
+        } catch(e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { notices += "${record.id} command 重跑失败，请手动预览确认" }
+        return notices
+    }
+    /** 重载前只补已经启用插件的普通依赖；command/helper 仍走预览门禁，不能借重载偷偷执行。 */
+    suspend fun reconcileDependencies(): List<String> {
+        val notices = mutableListOf<String>()
+        for (record in installed().filter { it.enabled }) {
+            val ref = parseId(record.id)
+            val loaded = host.locked { PluginLoader(fs, canonical).load(PluginRequest(path("cache/${ref.marketplace}/${ref.name}/${record.version}").value, ref)).plugin }
+            if (loaded?.manifest?.dependencies.isNullOrEmpty()) continue
+            try { install(preview(record.id), record.scope, confirmed = true) }
+            catch(e: kotlinx.coroutines.CancellationException) { throw e }
+            catch(e: Exception) { notices += "${record.id} 依赖未就绪：${e.message}" }
+        }
+        return notices
+    }
     private suspend fun installedUnlocked(): List<InstalledPlugin> {
         val result = mutableListOf<InstalledPlugin>()
         (readObject(path("installed_plugins.json"))["plugins"] as? JsonObject).orEmpty().forEach { (id, records) ->
@@ -386,6 +577,7 @@ class PluginMarketplace(
         fun fetchSource(raw: JsonObject, plugin: Boolean): PluginFetchSource {
             val type = raw.text("source") ?: error("source 对象缺类型")
             val location = when (type) { "github" -> raw.text("repo"); "file", "directory" -> raw.text("path"); "npm" -> raw.text("package"); "command" -> raw.text("command"); else -> raw.text("url") }?.takeIf { it.isNotBlank() } ?: error("source 缺位置字段")
+            if (!plugin && type == "npm") error("NPM marketplace sources not yet implemented")
             require(type in (if (plugin) setOf("github", "url", "git-subdir", "archive", "npm", "command") else setOf("github", "git", "url", "file", "directory"))) { "source 类型不适用于此处" }
             if (type == "github") require(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+").matches(location)) { "无效 github repo" }
             val subdir = raw.text("path").takeIf { type in setOf("git", "github", "git-subdir") }
@@ -394,7 +586,19 @@ class PluginMarketplace(
             raw.text("sha256")?.let { require(Regex("[0-9a-fA-F]{64}").matches(it)) { "无效 SHA256" } }
             return PluginFetchSource(if (plugin && type in setOf("url", "git-subdir")) "git" else type,
                 if (type == "git-subdir" && Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+").matches(location)) "https://github.com/$location.git" else location,
-                raw.text("ref"), raw.text("sha"), subdir, raw.text("sha256"))
+                raw.text("ref"), raw.text("sha"), subdir, raw.text("sha256"), raw.text("version"), raw.text("registry"),
+                (raw["timeout"] as? JsonPrimitive)?.intOrNull ?: 60, raw.text("mode") ?: "copy", headerValues(raw), raw.text("headersHelper"),
+                helperEnvironment = buildMap { if (type == "url" && !plugin) put("CLAUDE_CODE_MARKETPLACE_URL", location) }, scrubCredentials = false)
+        }
+        private fun pluginUri(value: String): URI = try { URI(value) } catch (_: Exception) { error("插件源 URL 格式无效") }
+        private fun sameOrigin(a: String, b: String): Boolean {
+            fun origin(raw: String) = pluginUri(raw).let { listOf(it.scheme?.lowercase(), it.host?.lowercase(), if (it.port >= 0) it.port else if (it.scheme.equals("https", true)) 443 else 80) }
+            return origin(a) == origin(b)
+        }
+        private fun headerValues(raw: JsonObject): Map<String, String> {
+            val headers = raw["headers"] ?: return emptyMap()
+            require(headers is JsonObject && headers.values.all { it is JsonPrimitive && it.isString }) { "headers 必须是字符串值对象" }
+            return headers.mapValues { it.value.jsonPrimitive.content }
         }
     }
 }

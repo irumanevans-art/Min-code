@@ -5,6 +5,7 @@ plugins {
 
 dependencies {
     api(project(":agent:spi"))
+    implementation(libs.kotlinx.serialization.json)
     testImplementation(project(":agent:testkit"))
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

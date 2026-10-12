@@ -74,6 +74,7 @@ interface MinSessionHost {
 
     /** 把「总是允许」的规则写进某一层 settings 文件，返回给人看的结局 */
     suspend fun persistAllowRule(layer: RuleLayer, rule: String, cwd: String): PersistRule
+    suspend fun reconcilePluginDependencies(cwd: String): List<String> = emptyList()
     suspend fun readTaskOutput(taskId: String, maxChars: Int): String?
     suspend fun searchFiles(cwd: String, query: String, limit: Int): List<String>
 
@@ -152,6 +153,7 @@ class MinAgentSession(
                     is PersistRule.Failed -> _signals.tryEmit(SessionSignal.Notice(host.text.ruleNotSaved(result.reason), isError = true))
                 }
             }
+            override suspend fun reconcilePluginDependencies(cwd: String) = host.reconcilePluginDependencies(cwd)
             override fun emit(signal: SessionSignal) {
                 // 撤回的话不能丢：没人在收信号（界面不在）就落成草稿
                 if (signal is SessionSignal.Withdrawn && _signals.subscriptionCount.value == 0) host.saveWithdrawnDraft(ref, signal.input)

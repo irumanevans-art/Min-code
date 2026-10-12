@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -64,6 +66,7 @@ private val KEY_WEB_SEARCH = stringPreferencesKey("web_search")
 private val KEY_TELEMETRY_ENABLED = booleanPreferencesKey("telemetry_enabled")
 private val KEY_TELEMETRY_ENDPOINT = stringPreferencesKey("telemetry_endpoint")
 private val KEY_TELEMETRY_HEADERS = stringPreferencesKey("telemetry_headers")
+private val KEY_PLUGIN_HEADERS = stringPreferencesKey("plugin_headers_encrypted")
 private val KEY_CRON_ENABLED = booleanPreferencesKey("cron_enabled")
 private val KEY_MIN_AGENT_ENABLED = booleanPreferencesKey("min_agent_enabled")
 private val KEY_LAST_START_ENGINE = stringPreferencesKey("last_start_engine")
@@ -946,6 +949,18 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
     /** 解密后的头部，只给导出用。Keystore 解不开（换机、改过锁屏）返回空串，不抛——遥测不许拦住设置页 */
     suspend fun telemetryHeaders(): String =
         TokenCipher.decrypt(context.dataStore.data.first()[KEY_TELEMETRY_HEADERS].orEmpty()).orEmpty()
+
+    /** 每个源的认证只存密文；设置页没有读取明文的入口，插件下载时才解密。 */
+    suspend fun setPluginHeaders(origin: String, headers: String) = context.dataStore.edit { prefs ->
+        val stored = prefs[KEY_PLUGIN_HEADERS]?.let { kotlinx.serialization.json.Json.parseToJsonElement(it).jsonObject }.orEmpty().toMutableMap()
+        if (headers.isBlank()) stored.remove(origin) else stored[origin] = kotlinx.serialization.json.JsonPrimitive(TokenCipher.encrypt(headers))
+        prefs[KEY_PLUGIN_HEADERS] = kotlinx.serialization.json.JsonObject(stored).toString()
+    }
+    suspend fun pluginHeaders(origin: String): String {
+        val stored = context.dataStore.data.first()[KEY_PLUGIN_HEADERS] ?: return ""
+        val value = kotlinx.serialization.json.Json.parseToJsonElement(stored).jsonObject[origin]?.jsonPrimitive?.content ?: return ""
+        return TokenCipher.decrypt(value) ?: error("插件认证密文无法解密")
+    }
 
     suspend fun setMinAgentEnabled(enabled: Boolean) =
         context.dataStore.edit { it[KEY_MIN_AGENT_ENABLED] = enabled }

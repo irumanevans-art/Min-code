@@ -1,4 +1,6 @@
 package dev.min.code.core.engine.min
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 import android.content.Context
 import android.util.Log
@@ -337,6 +339,11 @@ class MinAgentEngine(
             fs = fs, search = dev.min.agent.host.JvmSearch(fs), exec = ProotExec(base, AndroidProotProcessHost(runner)),
             mountKey = mounts.joinToString(";") { "${it.source}->${it.target}" },
             processes = ProotProcessPort(base, AndroidProotLiveHost(runner)),
+            pluginProcess = dev.min.agent.host.PrivatePluginProcess(launch = { script, cwd, env ->
+                runner.launch(agentCommandContext(base, cwd, script).copy(env = env, isolation = null)) ?: error("无法启动插件进程")
+            }, reap = { process -> me.rerere.workspace.ProcessTreeKill.reap(process) }, environment = {
+                System.getenv() + mapOf("HOME" to MinKernelDeps.MEMORY_HOME.value, "PATH" to "/usr/local/bin:/usr/bin:/bin:/system/bin")
+            }),
         )
     }
 
@@ -348,12 +355,50 @@ class MinAgentEngine(
         val current = generation
         val home = MinKernelDeps.MEMORY_HOME
         return dev.min.agent.ext.plugins.PluginMarketplace(current.fs,
-            dev.min.agent.host.FilePluginSources(current.fs, current.exec, GuestPath(home.value + "/.claude/plugins")), home,
+            dev.min.agent.host.FilePluginSources(current.fs, current.exec, GuestPath(home.value + "/.claude/plugins"), current.pluginProcess,
+                sessionCwd = GuestPath(cwd), storedHeaders = { url ->
+                    val raw = settings.pluginHeaders(pluginOrigin(url))
+                    if (raw.isBlank()) emptyMap() else kotlinx.serialization.json.Json.parseToJsonElement(raw).jsonObject.mapValues { it.value.jsonPrimitive.content }
+                }), home,
             GuestPath(cwd), { trust.isTrusted(GuestPath(cwd)) }, canonical = current.fs::canonical)
+    }
+    suspend fun protectPluginSource(source: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject {
+        val rawUrl = source["url"]?.jsonPrimitive?.content ?: return source
+        if (!rawUrl.startsWith("https://") && !rawUrl.startsWith("http://")) return source
+        val uri = privatePluginUri(rawUrl)
+        require(uri.rawQuery?.split('&')?.none { Regex("(?i)token|secret|password|signature|credential|api[_-]?key").containsMatchIn(java.net.URLDecoder.decode(it.substringBefore('='), Charsets.UTF_8.name())) } != false) { "URL 查询凭据请改用认证头，以便加密保存" }
+        val values = (source["headers"] as? kotlinx.serialization.json.JsonObject).orEmpty().toMutableMap()
+        require(values.values.all { it is kotlinx.serialization.json.JsonPrimitive && it.isString }) { "认证头必须是字符串值的 JSON" }
+        uri.userInfo?.let { values["Authorization"] = kotlinx.serialization.json.JsonPrimitive("Basic " + java.util.Base64.getEncoder().encodeToString(it.toByteArray())) }
+        val url = java.net.URI(uri.scheme, null, uri.host, uri.port, uri.path, uri.query, uri.fragment).toString()
+        if (values.isNotEmpty()) settings.setPluginHeaders(pluginOrigin(url), kotlinx.serialization.json.JsonObject(values).toString())
+        return kotlinx.serialization.json.JsonObject(source - "headers" + ("url" to kotlinx.serialization.json.JsonPrimitive(url)))
+    }
+    suspend fun savePluginHeaders(url: String, headers: String) {
+        // JSON 解析异常包含原始输入，不能把认证值带回界面的错误消息。
+        val obj = try { kotlinx.serialization.json.Json.parseToJsonElement(headers).jsonObject }
+            catch(e: kotlinx.coroutines.CancellationException) { throw e }
+            catch(_: Exception) { throw IllegalArgumentException("认证头必须是字符串值的 JSON") }
+        require(obj.values.all { it is kotlinx.serialization.json.JsonPrimitive && it.isString }) { "认证头必须是字符串值的 JSON" }
+        settings.setPluginHeaders(pluginOrigin(url), obj.toString())
+    }
+    private fun privatePluginUri(url: String): java.net.URI = try { java.net.URI(url) }
+        catch(_: java.net.URISyntaxException) { throw IllegalArgumentException("插件源 URL 格式无效") }
+    private fun pluginOrigin(url: String): String = privatePluginUri(url).let {
+        require(it.scheme in setOf("https", "http") && it.host != null) { "认证源需要 HTTP(S) URL" }
+        "${it.scheme.lowercase()}://${it.host.lowercase()}:${if (it.port < 0) if (it.scheme == "https") 443 else 80 else it.port}"
     }
     val pluginNotices = MutableStateFlow<List<String>>(emptyList())
     fun discardPluginPreview(manager: dev.min.agent.ext.plugins.PluginMarketplace, preview: dev.min.agent.ext.plugins.PluginInstallPreview) {
         scope.launch { try { manager.discard(preview) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { } }
+    }
+    private val commandSessions = java.util.concurrent.ConcurrentHashMap.newKeySet<SessionId>()
+    private fun scheduleCommandSources(runtime: dev.min.agent.kernel.SessionRuntime) {
+        if (runtime.state.value.created.loadingModes?.let { it.bare || it.safe || it.restricted } == true || !commandSessions.add(runtime.sessionId)) return
+        scope.launch {
+            val notices = pluginMarketplace(runtime.state.value.created.cwd.value).rerunCommandSources(System.getenv())
+            if (notices.isNotEmpty()) { runtime.awaitIdle(); pluginNotices.value = notices + runtime.reloadPlugins(reconnectServers = true) }
+        }
     }
     private var pluginUpdateJob: Job? = null
     private fun schedulePluginUpdates(cwd: String) {
@@ -391,6 +436,7 @@ class MinAgentEngine(
             loadingModes = options.loadingModes ?: dev.min.agent.spi.SessionLoadingModes(),
         )
         lastUsed.remember(profile.id, modelId)
+        scheduleCommandSources(runtime)
         schedulePluginUpdates(runtime.state.value.created.cwd.value)
         register(runtime, pin = true).also { index.update(runtime.state.value) }
     }
@@ -403,6 +449,7 @@ class MinAgentEngine(
         openLock.withLock {
             sessions.value[sid]?.let { touch(sid, pin = true); return@withLock it }
             val runtime = checkNotNull(hub.open(sid)) { text.sessionNotFound() }
+            scheduleCommandSources(runtime)
             register(runtime, pin = true)
         }
     }
@@ -543,6 +590,8 @@ class MinAgentEngine(
         val tracked = tasks.find(taskId) ?: return
         ports.exec.kill(tracked.handle)
     }
+
+    override suspend fun reconcilePluginDependencies(cwd: String) = pluginMarketplace(cwd).reconcileDependencies()
 
     override suspend fun readTaskOutput(taskId: String, maxChars: Int): String? = withContext(Dispatchers.IO) {
         // watch 的输出文件在内核的任务表里（命令源是宿主日志，WebSocket 源是内核自己写的事件文件）

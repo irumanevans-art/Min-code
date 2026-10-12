@@ -2,6 +2,24 @@
 
 `formatVersion: 1`
 
+- 非持久 Git 环境（2026-10-11）：不再强制 GIT_CONFIG_NOSYSTEM=1，允许受信任源复用系统/用户凭据助手；仍禁交互并通过私有无日志端口运行。凭据不写事件或索引，不改事件版本。
+
+- 非持久确认文本（2026-10-11）：PluginCommandRequest.toString 隐藏命令并脱敏目标；CLI/App 的确认目标剔除 URL userinfo，并解码 query key 后脱敏凭据。确认指纹仍绑定完整原始 command/target，不改变授权或持久格式。
+
+- v1 快照语义（2026-10-11，热重载）：在回合边界写入现有 HooksLoaded/SkillsLoaded/OutputStyleLoaded 全量替换；Default+空 prompt+false 表示清除插件样式。ComponentHooksUpdated 的空对象撤销旧插件组件登记。MCP/LSP 变化经 --force 确认缓存成本再重连，当前请求不改，monitors 保留启动快照到下会话；不新增事件或改版本号。
+
+- 插件安装索引 v2 增量：record 可带 resolvedVersion（git tag 版本，覆盖 manifest 的滞后版本）与 commandSha256（人工确认的命令指纹）；version 仍为版本加内容散列的不可变缓存键。PluginRequest 新增可选 resolvedVersion。依赖图先完整解析再发布设置/索引，源受相同信任和托管策略限制；不改会话版本。
+
+- eval 报告 schemaVersion=1 新增 partialReason=interrupted，SIGINT 只取消运行/评分子任务，保留已完成 arms，落盘 JSON/HTML 后退出 2；外部 CancellationException 继续传播。信号控制器不写会话事件。
+
+- 交互 init 使用现有隔离评测与本地报告载荷，候选经加载校验和试跑后发布；不新增事件或改版本号。
+
+- v1 增量（2026-10-11，eval context）：新增 `history_imported {messages: SeedMessage[], results: SeedResult[]}`，只允许空根会话回合前导入；fold 强制 user 来源为 Hook(imported_history)，原文不能成为当前人类授权。eval 报告 schemaVersion=1 的 run 新增 mock_calls、aborted(server/tool/reason)、mockRecordings；abort 的 error=null、score=0。context 的 scaffold/history/只读 add_dirs 与 plugins 覆写不改变会话格式。
+
+- eval grader 正则载荷仍为 pattern/flags；解释器改为 QuickJS RegExp，新增 JS 捕获、Unicode、sticky 及零宽计数兼容，非法 flags 在加载时失败。不新增持久事件，报告 schemaVersion 保持 1。
+
+- 非持久插件拉取载荷（2026-10-11）：`PluginFetchSource` 新增 version/registry、commandTimeout/mode、headers/headersHelper、helperEnvironment/scrubCredentials/inheritedAuthentication；`PluginProcess` 私有 stdout 端口与 `PluginSourceTag` 不写会话事件。source 的 toString 不回显 URL、命令或认证；headers 在 Android 仅加密保存。安装前 command/helper 确认绑定 id/command/target 的 SHA256；索引格式仍为 v2。
+
 - 非持久执行载荷（2026-10-11，L1/L2）：`ShellCommand.network` 默认 `Offline`，只有宿主代理租约能授予 `ProxyOnly(ports)`；`Exec.guestIsolation` 与 `WorkspaceShellContext.isolation` 是当次进程启动策略，不写事件。代理端口、原生可写宿主路径与代理认证不写会话日志；恢复时从本机策略和新租约重建。事件格式及版本不变。
 
 - v1 增量（2026-10-10，LSP）：`tool_outcome.result.diagnostics` 缺省空数组，记录本次编辑新增的 severity=1 错误。每项为 path（guest 路径）、line / character（1 起 UTF-16 位置）、message、可选 code / source。模型正文附同一诊断，工具卡优先显示数量、位置及明细；旧日志按空数组读取。进程、文档版本与诊断基线不落盘，重开时重新握手取基线。插件配置按来源信任后惰性启动，不新增事件或改版本号。
