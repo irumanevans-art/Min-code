@@ -3,13 +3,19 @@ package dev.min.code.core.claudecode
 import dev.min.code.core.claudecode.ClaudeCodeManager.Companion.EscapeAction
 import dev.min.code.core.claudecode.ClaudeCodeManager.Companion.escapeAction
 import dev.min.code.core.session.ChatItem
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * 停止键（Esc 三档）的现行为（M2-B 的 B0）。
@@ -92,6 +98,125 @@ class ClaudeCodeEscapeBehaviorTest {
             assertTrue("first 应仍在流里：$users", "first" in users)
             assertEquals("", h.drafts.load(sessionId).text)
             h.process.releaseTurn()
+        }
+    }
+
+    // ---------------------------------------------------------------- interruptReturningQueued（■ 的默认档，设计 §10.2 拍板 2）
+
+    private fun ManagerHarness.userFrames() = process.written.count { it["type"]?.jsonPrimitive?.content == "user" }
+    private fun ManagerHarness.interruptRequests() = process.written.filter {
+        it["type"]?.jsonPrimitive?.content == "control_request" &&
+            it["request"]!!.jsonObject["subtype"]?.jsonPrimitive?.content == "interrupt"
+    }.map { it["request"]!!.jsonObject }
+
+    @Test
+    fun `interruptReturningQueued - queued messages leave the transcript, come back as one draft and are not resent`() = runBlocking<Unit> {
+        ManagerHarness("plain_reply").use { h ->
+            h.startAndHandshake()
+            val sessionId = h.manager.state.value.sessionId!!
+            h.process.holdTurns = true
+            h.manager.send("first")
+            h.awaitState("busy") { it.busy }
+            h.manager.send("second")
+            h.manager.send("third")
+            h.awaitCondition("两条追加都交棒") { h.userFrames() == 3 }
+            val got = CopyOnWriteArrayList<ComposerDraft>()
+            val collector = launch(start = CoroutineStart.UNDISPATCHED) { h.manager.withdrawnMessages.collect { got += it } }
+
+            h.manager.interruptReturningQueued()
+
+            h.awaitCondition("interrupt 写出") { h.interruptRequests().isNotEmpty() }
+            // CLI 侧的排队由 cancel_queued 清掉；我们这边不再留副本，否则收尾时会被原样重发
+            assertEquals("true", h.interruptRequests().single()["cancel_queued"]?.jsonPrimitive?.content)
+            h.awaitCondition("退回的草稿到了") { got.isNotEmpty() }
+            delay(200)
+            assertEquals("多条排队合成一次退回：$got", 1, got.size)
+            assertEquals("second\n\nthird", got.single().text)
+            val users = h.manager.state.value.items.filterIsInstance<ChatItem.UserText>()
+            assertEquals("开启本轮的那条留着，排队的摘掉：${users.map { it.text }}", listOf("first"), users.map { it.text })
+            assertTrue(users.none { it.queued })
+            h.process.releaseTurn()
+            h.awaitTurnEnd()
+            delay(200)
+            assertEquals("收尾后不该再把排队的发一遍", 3, h.userFrames())
+            assertEquals("有订阅者时不落盘", "", h.drafts.load(sessionId).text)
+            collector.cancel()
+        }
+    }
+
+    @Test
+    fun `interruptReturningQueued - with nobody listening the returned text lands in the draft store`() = runBlocking<Unit> {
+        ManagerHarness("plain_reply").use { h ->
+            h.startAndHandshake()
+            val sessionId = h.manager.state.value.sessionId!!
+            h.process.holdTurns = true
+            h.manager.send("first")
+            h.awaitState("busy") { it.busy }
+            h.manager.send("second")
+            h.awaitCondition("追加交棒") { h.userFrames() == 2 }
+
+            h.manager.interruptReturningQueued()
+
+            assertEquals("second", h.drafts.load(sessionId).text)
+            h.process.releaseTurn()
+            h.awaitTurnEnd()
+        }
+    }
+
+    @Test
+    fun `interruptReturningQueued - images from several queued messages are merged and renumbered`() = runBlocking<Unit> {
+        ManagerHarness("plain_reply").use { h ->
+            h.startAndHandshake()
+            h.process.holdTurns = true
+            h.manager.send("first")
+            h.awaitState("busy") { it.busy }
+            h.manager.send("a", listOf(ClaudeCodeImage("image/png", "AAA")))
+            h.manager.send("", listOf(ClaudeCodeImage("image/jpeg", "BBB")))
+            h.awaitCondition("追加交棒") { h.userFrames() == 3 }
+            val draft = async(start = CoroutineStart.UNDISPATCHED) { h.manager.withdrawnMessages.first() }
+
+            h.manager.interruptReturningQueued()
+
+            val merged = withTimeout(5_000) { draft.await() }
+            assertEquals("a", merged.text)
+            assertEquals(listOf("AAA", "BBB"), merged.images.map { it.base64 })
+            assertEquals("图片名按合并后的次序重排", listOf("图片 1", "图片 2"), merged.images.map { it.name })
+            h.process.releaseTurn()
+            h.awaitTurnEnd()
+        }
+    }
+
+    @Test
+    fun `interruptReturningQueued - on an idle session nothing is written and nothing comes back`() = runBlocking<Unit> {
+        ManagerHarness("plain_reply").use { h ->
+            h.startAndHandshake()
+            h.awaitState("用量读回") { it.contextTokens != null }
+            val got = CopyOnWriteArrayList<ComposerDraft>()
+            val collector = launch(start = CoroutineStart.UNDISPATCHED) { h.manager.withdrawnMessages.collect { got += it } }
+            h.manager.interruptReturningQueued()
+            delay(300)
+            assertTrue(h.interruptRequests().isEmpty())
+            assertTrue(got.isEmpty())
+            collector.cancel()
+        }
+    }
+
+
+    @Test
+    fun `interruptReturningQueued - with nothing queued the ordinary tiers apply, a turn that produced nothing is withdrawn as before`() = runBlocking<Unit> {
+        ManagerHarness("plain_reply").use { h ->
+            h.startAndHandshake()
+            val sessionId = h.manager.state.value.sessionId!!
+            h.process.holdTurns = true
+            h.manager.send("only")
+            h.awaitState("busy") { it.busy }
+            h.manager.interruptReturningQueued()
+            h.awaitCondition("interrupt 写出") { h.interruptRequests().isNotEmpty() }
+            // 与 interrupt() 完全一致：没有排队时不多做事，开启本轮的那条走撤回档退回草稿
+            assertEquals("only", h.drafts.load(sessionId).text)
+            assertTrue(h.manager.state.value.items.none { it is ChatItem.UserText && it.text == "only" })
+            h.process.releaseTurn()
+            h.awaitTurnEnd()
         }
     }
 }

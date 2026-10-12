@@ -19,12 +19,15 @@ import dev.min.code.core.service.LocalService
 import dev.min.code.core.service.LocalServiceStatus
 import dev.min.code.core.session.ChatItem
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
@@ -37,6 +40,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -144,7 +148,7 @@ class ClaudeCodeSessionCommandTest {
         rig("plain_reply").use { r ->
             r.start()
             assertTrue(r.session.submit(SessionCommand.Interrupt(id())) is CommandResult.Stale)
-            kotlinx.coroutines.delay(200)
+            delay(200)
             assertTrue(r.h.process.requests("interrupt").isEmpty())
         }
     }
@@ -206,19 +210,37 @@ class ClaudeCodeSessionCommandTest {
     }
 
     @Test
-    fun `Interrupt with a queued message and no explicit tier still stops the turn - the known B8 gap`() = runBlocking<Unit> {
-        // 默认档（InterruptReturnQueued）要 manager 提供「打断并交还排队消息」，现在没有，退回现行为：停止键必须能停。
-        // 这条测试把缺口钉住，B8 补完 manager 之后应当改成「排队消息从 items 里消失并经 Withdrawn 退回」
+    fun `Interrupt with queued messages and no explicit tier returns them through one Withdrawn signal and does not run them`() = runBlocking<Unit> {
+        // 设计 §10.2 拍板 2：■ = 全停，排队的输入退回输入框；与 Codex 同口径
         rig("plain_reply").use { r ->
             r.start()
             r.h.process.holdTurns = true
             r.session.submit(send("first"))
             r.h.awaitState("busy") { it.busy }
             r.session.submit(send("second"))
-            eventually("排队的那条在状态里") { r.session.state.value.queuedCount == 1 }
+            r.session.submit(send("third"))
+            eventually("两条排队") { r.session.state.value.queuedCount == 2 }
+            val signals = CopyOnWriteArrayList<SessionSignal.Withdrawn>()
+            val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+                r.session.signals.collect { if (it is SessionSignal.Withdrawn) signals += it }
+            }
+            delay(300) // WhileSubscribed 的上游订阅在后台线程接上，没接上时话会落盘而不是走信号，下面的断言会红
+
             assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.Interrupt(id())))
+
             r.h.awaitCondition("interrupt 写出") { r.h.process.requests("interrupt").isNotEmpty() }
+            r.h.awaitCondition("退回信号到了") { signals.isNotEmpty() }
+            delay(200)
+            assertEquals("合成一次：$signals", 1, signals.size)
+            assertEquals(UserInput("second\n\nthird"), signals.single().input)
+            eventually("排队的从映射状态里消失") { r.session.state.value.queuedCount == 0 }
+            val texts = r.session.state.value.items.filterIsInstance<ChatItem.UserText>().map { it.text }
+            assertEquals(listOf("first"), texts)
             r.h.process.releaseTurn()
+            r.h.awaitTurnEnd()
+            delay(200)
+            assertEquals("没有任何一条被放出去重发", 3, r.h.process.userFrames().size)
+            collector.cancel()
         }
     }
 

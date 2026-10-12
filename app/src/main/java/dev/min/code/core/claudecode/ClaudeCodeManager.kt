@@ -1851,11 +1851,54 @@ class ClaudeCodeManager(
      */
     fun interrupt() {
         val current = _state.value
-        val action = escapeAction(
-            busy = current.busy,
-            hasQueued = hasQueuedWork(),
-            turnProduced = current.turnProduced,
+        interruptWith(
+            escapeAction(
+                busy = current.busy,
+                hasQueued = hasQueuedWork(),
+                turnProduced = current.turnProduced,
+            ),
         )
+    }
+
+    /**
+     * 停止键的另一种默认：**全停，排队的话退回输入框**（设计 §10.2 拍板 2，与 Codex 的 ■ 同口径），
+     * 不是 [interrupt] 第 1 档那样「打断后排队的紧接着跑」。后者仍由 [interrupt] 保留，给显式的「打断后跑排队」用。
+     *
+     * 先把没被模型看见的消息（攥着的 + 已交棒未确认的）全部从发送队列取走，对话流里摘掉它们的「排队中」气泡，
+     * 合成**一份**草稿交给 [emitWithdrawn]（没人收就落盘，话不会丢），再写 interrupt 帧：
+     * 帧带 `cancel_queued`，CLI 侧队列随之清空，所以不会有哪一条还被偷偷跑掉，收尾时 [flushPendingSend] 也无副本可发。
+     * 开启本轮的那条留着（与第 1 档一致，不是第 2 档的撤回）。
+     *
+     * 取走与 CLI 确认之间有一道窄缝：某条恰在取走后、interrupt 帧到达前被 CLI 吃进请求，它会既在上下文里又退回了输入框。
+     * 比起「按了 ■ 排队的还照跑」这是更可接受的一边，且 [confirmHandedOff] 的窗口只有一个请求间隔。
+     *
+     * 没有排队的消息时就是普通的 [interrupt]（撤回 / 打断两档照旧）；没在跑则什么都不做。
+     */
+    fun interruptReturningQueued() {
+        val current = _state.value
+        if (!current.busy) return
+        val stranded = sendQueue.drain()
+        if (stranded.isEmpty()) {
+            interrupt()
+            return
+        }
+        val ids = stranded.mapTo(mutableSetOf()) { it.itemId }
+        _state.update { st -> st.copy(items = st.items.filterNot { it.id in ids }) }
+        // 它们从没被模型看见：带着的 `!` 输出放回去，等用户重发时再带走（与 refundHeldMessages 同口径）
+        stashShellContext(stranded.joinToString("\n") { it.shellContext }.trim())
+        emitWithdrawn(mergeDrafts(stranded.map { it.toComposerDraft() }))
+        // 排队的已经取走：hasQueued 恒为假，这里只在「撤回开启本轮的那条」与「打断」之间选，
+        // 而有排队时用户的意思是停这一轮，不是撤回它，所以一律按打断
+        interruptWith(EscapeAction.Interrupt)
+    }
+
+    /** 几条排队消息合成一份草稿：正文空一行隔开，图片按合并后的次序重排名字 */
+    private fun mergeDrafts(drafts: List<ComposerDraft>): ComposerDraft = ComposerDraft(
+        text = drafts.map { it.text }.filter { it.isNotBlank() }.joinToString("\n\n"),
+        images = drafts.flatMap { it.images }.mapIndexed { i, img -> img.copy(name = "图片 ${i + 1}") },
+    )
+
+    private fun interruptWith(action: EscapeAction) {
         if (action == EscapeAction.Nothing) return
         if (action == EscapeAction.Withdraw) withdrawInFlight()
         if (action == EscapeAction.InterruptThenQueued) sendQueue.reclaim()
