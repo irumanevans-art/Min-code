@@ -47,7 +47,10 @@ class McpRootsTest {
             other.commit(listOf(PermissionRulesLoaded(emptyList(), additionalDirectories = listOf(GuestPath("/secret")))), Durability.Sync)
             assertEquals(listOf("/a", "/b", "/project", "/shared"), hub.mcp.rootsFor(GuestPath("/project")).map { it.value })
             hub.close(a.sessionId)
-            assertEquals(listOf("/b", "/project", "/shared"), hub.mcp.rootsFor(GuestPath("/project")).map { it.value })
+            // 关会话时从 MCP 管理器摘下是异步的（不让关会话等连接收尾）：等它收敛，而不是紧跟着断言
+            val expected = listOf("/b", "/project", "/shared")
+            withTimeout(5_000) { while (hub.mcp.rootsFor(GuestPath("/project")).map { it.value } != expected) delay(10) }
+            assertEquals(expected, hub.mcp.rootsFor(GuestPath("/project")).map { it.value })
             val log = store.peek(b.sessionId)!!
             assertEquals(fold(log.header, log.read().toList()), b.state.value)
             hub.close(b.sessionId)
