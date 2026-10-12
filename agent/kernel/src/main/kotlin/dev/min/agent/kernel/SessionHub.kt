@@ -246,7 +246,7 @@ class SessionHub(
             if (doomed.isEmpty()) return@catchingNonCancellation
             // 路径必须过 hookShellPath（与 AsyncHooks.cleanup 同一条规矩）：桌面 guest 路径在宿主 shell 里不存在
             val rm = deps.host.exec.run(
-                ShellCommand("rm -rf -- " + doomed.joinToString(" ") { d -> "'${deps.hookShellPath(d)}'" }, root),
+                ShellCommand("rm -rf -- " + doomed.joinToString(" ") { d -> "'${deps.hookShellPath(d)}'" }, root, extraWritable = dev.min.agent.ext.hooks.hookWritableRoots()),
                 ExecOptions(15_000),
             )
             if (rm is ExecResult.Backgrounded) deps.host.exec.kill(rm.handle)

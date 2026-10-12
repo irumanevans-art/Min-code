@@ -13,6 +13,18 @@ class GuestIsolationPolicyTest {
             assertFalse(path, GuestIsolationPolicy.canWrite(policy, GuestPath(path)))
         assertEquals(GuestNetwork.Offline, policy.network)
     }
+    @Test fun onlyHookStagingAndEnvFileDirsCanBeGrantedOnTop() {
+        val policy = GuestIsolationPolicy.forCommand(extraWritable = listOf(GuestPath("/root/.min/hooks"), GuestPath("/root/.min/artifacts/s_1/env")))
+        for (path in listOf("/root/.min/hooks/batch/out.0", "/root/.min/artifacts/s_1/env/sessionstart-startup.sh", "/workspace/a"))
+            assertTrue(path, GuestIsolationPolicy.canWrite(policy, GuestPath(path)))
+        // 放行只限清单里的目录：附件目录的其余部分、.min 的其余部分仍不可写
+        for (path in listOf("/root/.min/artifacts/s_1/other.txt", "/root/.min/artifacts/s_2/env/a", "/root/.min/open/x", "/root/.min/hooks-evil/x"))
+            assertFalse(path, GuestIsolationPolicy.canWrite(policy, GuestPath(path)))
+        // 别的目录不能借这个口子放行：/etc、/root、整个 .min、附件根、越级路径、空段
+        for (bad in listOf("/etc", "/root", "/root/.min", "/root/.min/artifacts", "/root/.min/artifacts/s_1", "/root/.min/hooks/../open", "/root/.min/artifacts/s_1/env/sub",
+            "/root/.min/artifacts/s_1/../s_2/env", "/root/.min//hooks", "/root/.min/hooks/", "/sdcard", "/workspace-other"))
+            try { GuestIsolationPolicy.forCommand(extraWritable = listOf(GuestPath(bad))); fail("granted $bad") } catch (_: IllegalArgumentException) { }
+    }
     @Test fun proxyPortsAreExplicitCapabilities() {
         assertEquals(GuestNetwork.ProxyOnly(listOf(8123)), GuestIsolationPolicy.forCommand(GuestNetwork.ProxyOnly(listOf(8123))).network)
         try { GuestNetwork.ProxyOnly(listOf(0)); fail("invalid port") } catch (_: IllegalArgumentException) { }

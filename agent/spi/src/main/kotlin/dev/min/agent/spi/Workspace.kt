@@ -88,6 +88,12 @@ data class ShellCommand(
      * [script] 仍是模型写的原文，权限分析、网络批准卡、日志看到的都是它，不含前导。默认空
      */
     val preamble: String? = null,
+    /**
+     * 宿主要在隔离（只写 [GuestIsolation.writableRoots]）之外多放行写入的 guest 目录。只给内核自己的 hook 流程用：
+     * hook 的批目录（输出、退出码文件）与 `CLAUDE_ENV_FILE` 所在目录在隔离默认的可写范围之外，不放行的话 Android 上的 command hook 连输出文件都建不出来。
+     * 模型的 Bash 永远不带；哪些路径能放行由 [dev.min.agent.policy.GuestIsolationPolicy.forCommand] 把关。默认空，不隔离的宿主（桌面）忽略
+     */
+    val extraWritable: List<GuestPath> = emptyList(),
 )
 
 data class ExecOptions(

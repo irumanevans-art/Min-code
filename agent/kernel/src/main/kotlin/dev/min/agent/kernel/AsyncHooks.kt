@@ -97,7 +97,7 @@ internal class AsyncHookRunner(
         // Windows 的 ProcessBuilder -> Git Bash 会破坏复杂的 -c 参数；与同步批同一条路：脚本文本走文件端口（HookBatchRunner 同）。
         // timeoutMs 给到天级：Android 宿主会在到点时硬杀后台进程（桌面不设限），它是后台 hook 的寿命上限而不是本轮的等待
         val result = deps.host.exec.run(
-            ShellCommand("sh ${cq(deps.hookShellPath(child(dir, "start.sh")))}", cwd, dev.min.agent.ext.hooks.pluginProcessEnv(listOf(handler))),
+            ShellCommand("sh ${cq(deps.hookShellPath(child(dir, "start.sh")))}", cwd, dev.min.agent.ext.hooks.pluginProcessEnv(listOf(handler)), extraWritable = dev.min.agent.ext.hooks.hookWritableRoots(env)),
             ExecOptions(timeoutMs = MAX_LIFETIME_MS, foregroundBudgetMs = 1),
         )
         if (result !is ExecResult.Backgrounded) {
@@ -371,7 +371,7 @@ internal class AsyncHookRunner(
             val finished = fs.stat(child(dir, "code")) != null
             if (!finished && handle != null) deps.host.exec.kill(handle)
             val rm = deps.host.exec.run(
-                ShellCommand("rm -rf -- ${q(deps.hookShellPath(dir))}", rt.state.value.settings.cwd),
+                ShellCommand("rm -rf -- ${q(deps.hookShellPath(dir))}", rt.state.value.settings.cwd, extraWritable = dev.min.agent.ext.hooks.hookWritableRoots()),
                 ExecOptions(5_000),
             )
             if (rm is ExecResult.Backgrounded) deps.host.exec.kill(rm.handle)

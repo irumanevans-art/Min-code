@@ -59,7 +59,7 @@ class HookBatchRunner(
             // Exec 只运输一个安全引用的路径，Android 也走相同协议。
             val scriptPath = child(dir, "batch.sh")
             fs.writeAtomic(scriptPath, batch.script.encodeToByteArray())
-            val result = exec.run(ShellCommand("sh ${commandQuote(shellPathOf(scriptPath))}", cwd, pluginProcessEnv(handlers)),
+            val result = exec.run(ShellCommand("sh ${commandQuote(shellPathOf(scriptPath))}", cwd, pluginProcessEnv(handlers), extraWritable = hookWritableRoots(env)),
                 ExecOptions(timeouts.max().toLong() * 1_000 + 5_000))
             if (result is ExecResult.Exited && (result.exitCode != 0 || result.output.isNotBlank())) {
                 notes += "hook 批脚本诊断（退出码 ${result.exitCode}）：${result.output.lineSequence().firstOrNull().orEmpty().take(2_000)}"
@@ -92,7 +92,7 @@ class HookBatchRunner(
             // WorkspaceFs 没有删除端口；读完再用一次受限的维护命令，取消也不能留下 stdin。
             withContext(NonCancellable) {
                 try {
-                    val result = exec.run(ShellCommand("rm -rf -- ${commandQuote(shellPathOf(dir))}", cwd), ExecOptions(5_000))
+                    val result = exec.run(ShellCommand("rm -rf -- ${commandQuote(shellPathOf(dir))}", cwd, extraWritable = hookWritableRoots()), ExecOptions(5_000))
                     if (result is ExecResult.Backgrounded) exec.kill(result.handle)
                     if (result !is ExecResult.Exited || result.exitCode != 0) notes += "hook 批目录清理失败：$dir"
                 } catch (e: Exception) {
@@ -161,3 +161,16 @@ class HookBatchRunner(
 private fun child(dir: GuestPath, name: String) = GuestPath("${dir.value}/$name")
 private fun quote(text: String): String = "'" + text.replace("'", "'\"'\"'") + "'"
 private fun commandQuote(text: String): String = "'" + text.replace("'", "'\\''") + "'"
+
+/**
+ * hook 流程里的命令要额外写的 guest 目录（[ShellCommand.extraWritable]）：staging 根（批目录 / 后台 hook 目录的输出与退出码文件、
+ * 收尾的 `rm -rf`），以及 hook 要往里追加 `export` 的 `CLAUDE_ENV_FILE` 所在目录。Android 的命令沙箱默认只让写工作区、临时与缓存目录，
+ * 不放行这些的话 command hook 连 `out.0` 都建不出来、环境文件也写不进去。
+ * 环境文件不在 `/root/.min/artifacts/` 下的宿主（桌面是宿主路径）不需要放行，也不放进清单。
+ */
+fun hookWritableRoots(env: Map<String, String> = emptyMap()): List<GuestPath> {
+    val envDir = env["CLAUDE_ENV_FILE"]?.substringBeforeLast('/', "")?.takeIf { ENV_FILE_DIR.matches(it) }?.let(::GuestPath)
+    return listOfNotNull(GuestPath("/root/.min/hooks"), envDir)
+}
+
+private val ENV_FILE_DIR = Regex("/root/\\.min/artifacts/[A-Za-z0-9_-]+/env")
