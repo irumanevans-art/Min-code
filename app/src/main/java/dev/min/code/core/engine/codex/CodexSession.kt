@@ -25,6 +25,7 @@ import dev.min.code.core.engine.SessionSignal
 import dev.min.code.core.engine.StopAction
 import dev.min.code.core.engine.UserInput
 import dev.min.code.core.engine.stopActionFor
+import dev.min.code.core.session.SessionStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -36,7 +37,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.stateIn
 
 /**
@@ -73,7 +78,21 @@ class CodexSession internal constructor(
 
     private val deduper = CommandDeduper()
 
+    /** 被关掉了（[close] / [release]）：状态流已经停了，引擎不能再把它当活的会话交出去 */
+    @Volatile
+    private var closed = false
+    internal val isClosed: Boolean get() = closed
+
+    /** 把进程接回来要一次只有一个人在做：并发的两句话 / ▶ 不能各自 `start`（第二个会被拒） */
+    private val relaunchLock = Mutex()
+
     private fun fresh(): AgentSessionState = CodexStateMapper.map(ref, manager.state.value, externals.value)
+
+    /**
+     * 此刻的完整状态，现算、不经 [state] 那条流。引擎的在线摘要读它：会话被关掉时 [close] 立刻取消本会话的作用域，
+     * [state] 就停在关之前的那一帧（Running），摘要要是读它，关掉的会话会永远显示成「在线、要保活」。
+     */
+    internal fun snapshot(): AgentSessionState = fresh()
 
     override val state: StateFlow<AgentSessionState> = combine(manager.state, externals) { s, c ->
         CodexStateMapper.map(ref, s, c)
@@ -139,7 +158,7 @@ class CodexSession internal constructor(
             if (title.isBlank()) {
                 CommandResult.Rejected("标题不能为空")
             } else {
-                // 只动 App 侧元数据，rollout 文件不碰（与 CodexVM.renameSession 一致）
+                // 只动 App 侧元数据，rollout 文件不碰
                 metaStore?.update(ref.id) { it.copy(title = title) }
                 CommandResult.Accepted
             }
@@ -152,12 +171,15 @@ class CodexSession internal constructor(
         -> CommandResult.Unsupported
     }
 
-    private fun send(command: SessionCommand.Send): CommandResult {
+    private suspend fun send(command: SessionCommand.Send): CommandResult {
         val input = command.input
         if (input.isBlank) return CommandResult.Rejected("没有内容可发送")
         if (command.target != SendTarget.Main) return CommandResult.Unsupported
-        // 忙时 manager 把它放进 queued，回合正常完成后放出；没起好 / 已退出时 sendTurn 返回 false。
-        // 只读回放（打开的旧会话，没有进程）也是 false：接回进程（thread/resume）属 B8 的 RelaunchThenPrompted
+        // 没有进程的会话（打开的旧会话是只读回放、app-server 退出了）：发一句话就是「接着聊」，先 thread/resume 接回进程；
+        // 正在接回的（Starting）等它就绪再发，不然这句话会被 sendTurn 拒掉而丢在半路。
+        // 原 Codex 页顶栏那个只做 thread/resume 的「继续」键，B9 并页时由这条路与 ▶ 取代
+        if (!ensureRunning()) return CommandResult.Rejected(manager.state.value.errorMessage ?: "会话没能接回来，请稍后重试")
+        // 忙时 manager 把它放进 queued，回合正常完成后放出；没起好时 sendTurn 返回 false
         return if (manager.sendTurn(input.text)) CommandResult.Accepted else CommandResult.Rejected("会话没在运行")
     }
 
@@ -190,10 +212,27 @@ class CodexSession internal constructor(
     private suspend fun resume(command: SessionCommand.Resume): CommandResult {
         val offer = fresh().resume ?: return CommandResult.Stale("没有可继续的回合")
         if (offer.offerId != command.offerId) return CommandResult.Stale("续跑提议已过期")
-        if (offer.mode == ResumeMode.RelaunchThenPrompted && !relaunch(ref.id)) {
-            return CommandResult.Rejected("会话没能接回来，请稍后重试")
+        if (offer.mode == ResumeMode.RelaunchThenPrompted && !ensureRunning()) {
+            return CommandResult.Rejected(manager.state.value.errorMessage ?: "会话没能接回来，请稍后重试")
         }
         return if (manager.sendTurn(CONTINUE_PROMPT)) CommandResult.Accepted else CommandResult.Rejected("会话没在运行")
+    }
+
+    /**
+     * 进程在跑就直接返回；没有进程就 [relaunch]；别人正在接回（Starting）就等他。
+     * 串行化：并发的两句话各自 `start` 的话，第二个会被 manager 拒掉，话就丢了。
+     */
+    private suspend fun ensureRunning(): Boolean {
+        if (manager.state.value.status == SessionStatus.Running) return true
+        return relaunchLock.withLock {
+            when (manager.state.value.status) {
+                SessionStatus.Running -> true
+                SessionStatus.Starting -> withTimeoutOrNull(RELAUNCH_WAIT_MS) {
+                    manager.state.first { (it.status == SessionStatus.Running && it.threadId != null) || it.status == SessionStatus.Failed || it.status == SessionStatus.Closed }
+                }?.status == SessionStatus.Running
+                else -> relaunch(ref.id)
+            }
+        }
     }
 
     private fun withdrawQueued(command: SessionCommand.WithdrawQueued): CommandResult {
@@ -231,7 +270,17 @@ class CodexSession internal constructor(
 
     /** manager 是单例：不能 close()（那会取消它自己的作用域），只停进程；会话的订阅随本会话作用域一起取消 */
     override suspend fun close(reason: CloseReason) {
+        closed = true
         manager.stop()
         scope.cancel()
     }
+
+    /** 只撤掉本包装自己的订阅，**不动 manager**：引擎换掉当前会话（打开了另一条）时调，免得订阅一直留着 */
+    internal fun release() {
+        closed = true
+        scope.cancel()
+    }
 }
+
+/** 等 app-server 接回来的上限：握手上限再加一点余量（与引擎的 `handshakeWaitMs` 同口径） */
+private const val RELAUNCH_WAIT_MS = CodexAppServerManager.HANDSHAKE_TIMEOUT_MS + 5_000

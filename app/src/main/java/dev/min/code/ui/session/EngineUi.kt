@@ -7,6 +7,7 @@ import dev.min.code.core.engine.ConfigFiles
 import dev.min.code.core.engine.EngineCapabilities
 import dev.min.code.core.engine.EngineKind
 import dev.min.code.core.engine.SessionRef
+import dev.min.code.core.codex.CodexPermissionPreset
 import dev.min.code.core.engine.claude.ClaudeStateMapper
 import dev.min.code.core.claudecode.ClaudeCodeModelCatalog
 
@@ -47,24 +48,55 @@ internal object EngineUi {
         EngineKind.ClaudeCode, EngineKind.Codex -> ClaudeCodeModelCatalog.effectiveContextLimit(reported, model)
     }
 
-    /** 抽屉里会话行上的引擎标签。CC 是默认引擎，不标；Codex 在自己的页里，不在这个列表里 */
+    /** 抽屉里会话行上的引擎标签。CC 是默认引擎，不标 */
     @StringRes
     fun tag(kind: EngineKind): Int? = when (kind) {
         EngineKind.MinAgent -> R.string.engine_min
-        EngineKind.ClaudeCode, EngineKind.Codex -> null
+        EngineKind.Codex -> R.string.engine_codex
+        EngineKind.ClaudeCode -> null
     }
 
     /**
      * 抽屉里这一行是不是「当前打开的那个」。CC 一行的 `isActive` 来自旧注册表（它不知道页面现在显示的是谁），
-     * 所以页面显示别家会话时它不算；Min 一行没有这个字段，直接比 [shown]。
+     * 所以页面显示别家会话时它不算；Min / Codex 的行没有这个字段，直接比 [shown]。
      */
     fun isEntryActive(ref: SessionRef, legacyActive: Boolean, shown: SessionRef): Boolean = when (ref.engine) {
-        EngineKind.MinAgent -> ref == shown
+        EngineKind.MinAgent, EngineKind.Codex -> ref == shown
         EngineKind.ClaudeCode -> legacyActive && shown.engine == EngineKind.ClaudeCode
-        EngineKind.Codex -> false
     }
 
-    /** 设置面板里有哪些分区、各用哪种画法 */
+    /**
+     * 排队中的消息能不能点一下取回。能力位 [EngineCapabilities.withdrawQueued] 说引擎「能撤回」，但 CC 的适配器还没接上
+     * 按 id 撤回（manager 只有停止时整体撤回，设计 §4.1 的缺口，`ClaudeCodeSession.withdrawQueued` 返回 Unsupported），
+     * 给一个点了没反应的气泡比没有更糟，所以 CC 先不给。接上之后只需改这里
+     */
+    fun tapToWithdraw(capabilities: EngineCapabilities, kind: EngineKind): Boolean =
+        capabilities.withdrawQueued && kind != EngineKind.ClaudeCode
+
+    /**
+     * 权限档那一行的标题。Codex 的三档（`CodexPermissionPreset`）适配器里只给了协议 id，要本地化；
+     * 别的引擎的档位自带标签（CC 的 Manual / Accept edits 是官方术语不翻、Min 的由适配器给），返回 null 就用 [dev.min.code.core.engine.Choice.label]
+     */
+    @StringRes
+    fun modeLabelRes(kind: EngineKind, modeId: String): Int? = when (kind) {
+        EngineKind.Codex -> CodexPermissionPreset.entries.firstOrNull { it.id == modeId }?.let(::codexPresetLabel)
+        EngineKind.ClaudeCode, EngineKind.MinAgent -> null
+    }
+
+    /** 权限档那一行的说明；null = 用 CC 的说明表（[ClaudeCodePermissionMode.descRes]）或不写 */
+    @StringRes
+    fun modeDescRes(kind: EngineKind, modeId: String): Int? = when (kind) {
+        EngineKind.Codex -> CodexPermissionPreset.entries.firstOrNull { it.id == modeId }?.let(::codexPresetDesc)
+        EngineKind.ClaudeCode, EngineKind.MinAgent -> null
+    }
+
+    /** 会话设置面板用哪一张 */
+    fun settingsSheet(kind: EngineKind): SettingsSheetKind = when (kind) {
+        EngineKind.Codex -> SettingsSheetKind.Codex
+        EngineKind.ClaudeCode, EngineKind.MinAgent -> SettingsSheetKind.Generic
+    }
+
+    /** 设置面板里有哪些分区、各用哪种画法（通用那张面板用） */
     fun settingsLayout(kind: EngineKind, capabilities: EngineCapabilities, session: AgentSessionState): SettingsLayout {
         val settings = session.settings
         return SettingsLayout(
@@ -101,6 +133,14 @@ internal object EngineUi {
 /** 模型分区的两种画法：CLI 目录 + 中转站 + 别名（CC），或按供应商分的目录 + 手填（Min） */
 internal enum class ModelPickerStyle { Cli, Providers }
 
+/**
+ * 会话设置面板用哪一张。Codex 的设置项（逐轮覆盖的模型 / 权限档 / 思考强度 / 思考摘要 / 工作目录）与 CC、Min 的
+ * 形状差得远：没有模型目录、没有重启、没有 MCP / 信任 / 用量，多一个思考摘要和连接方式入口，
+ * 单独一张 [CodexSettingsSheet] 比往通用那张里塞一堆 `if` 清楚；两张都只读 [dev.min.code.core.engine.AgentSessionState]、
+ * 只发 [dev.min.code.core.engine.SessionCommand]，不碰引擎类型。
+ */
+internal enum class SettingsSheetKind { Generic, Codex }
+
 /** [EngineUi.settingsLayout] 的结果：设置面板各分区出不出现 */
 internal data class SettingsLayout(
     val modelPicker: ModelPickerStyle,
@@ -128,3 +168,25 @@ internal data class SettingsLayout(
     val schedule: Boolean,
     val advisor: Boolean = false,
 )
+
+@StringRes
+private fun codexPresetLabel(preset: CodexPermissionPreset): Int = when (preset) {
+    CodexPermissionPreset.READ_ONLY -> R.string.codex_permission_read_only
+    CodexPermissionPreset.AUTO -> R.string.codex_permission_auto
+    CodexPermissionPreset.FULL_ACCESS -> R.string.codex_permission_full_access
+}
+
+@StringRes
+private fun codexPresetDesc(preset: CodexPermissionPreset): Int = when (preset) {
+    CodexPermissionPreset.READ_ONLY -> R.string.codex_permission_read_only_desc
+    CodexPermissionPreset.AUTO -> R.string.codex_permission_auto_desc
+    CodexPermissionPreset.FULL_ACCESS -> R.string.codex_permission_full_access_desc
+}
+
+/**
+ * 权限档在界面上的名字：引擎给的档位自带标签的就用它，Codex 的三档只给了协议 id，要本地化（[EngineUi.modeLabelRes]）。
+ * 输入坞底栏的摘要与设置面板的权限分区共用。
+ */
+@androidx.compose.runtime.Composable
+internal fun modeTitle(kind: EngineKind, mode: dev.min.code.core.engine.Choice): String =
+    EngineUi.modeLabelRes(kind, mode.id)?.let { androidx.compose.ui.res.stringResource(it) } ?: mode.label

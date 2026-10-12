@@ -217,26 +217,21 @@ class ClaudeCodeSession internal constructor(
         if (offer.offerId != command.offerId) return CommandResult.Stale("续跑提议已过期")
         if (offer.mode == ResumeMode.RelaunchThenPrompted) {
             val sessionId = manager.state.value.sessionId ?: ref.id
-            manager.openSession(sessionId)
-            if (!awaitRunning()) return CommandResult.Rejected("会话没能接回来，请稍后重试")
+            val reopened = manager.openSession(sessionId)
+            if (!awaitRunning(reopened)) return CommandResult.Rejected(manager.state.value.errorMessage ?: "会话没能接回来，请稍后重试")
         }
         manager.send(CONTINUE_PROMPT)
         return CommandResult.Accepted
     }
 
     /**
-     * 等 `openSession` 把进程接回来。`openSession` 是异步的（先读 transcript 再复位状态），刚调用完状态可能还是旧的
-     * Closed / Failed，所以 Failed / Closed 要在**见过 Starting 之后**才算失败，否则会把旧状态误当成结果。
+     * 等 `openSession` 把进程接回来：等它的 [Job]（回放完、进程拉起或失败时结束），再看状态是不是 Running。
+     * 不盯状态流找 Starting 再找 Failed：StateFlow 会合并快速连变，`Starting → Failed` 可能一帧都看不到，那样会空等满上限。
+     * Running 之后握手还在后台跑（首条消息会被 manager 攥着等握手收尾），不影响这里发话。
      */
-    private suspend fun awaitRunning(): Boolean {
-        var sawStarting = false
-        val settled = withTimeoutOrNull(RELAUNCH_WAIT_MS) {
-            manager.state.first { s ->
-                if (s.status == SessionStatus.Starting) sawStarting = true
-                s.status == SessionStatus.Running || (sawStarting && (s.status == SessionStatus.Failed || s.status == SessionStatus.Closed))
-            }
-        }
-        return settled?.status == SessionStatus.Running
+    private suspend fun awaitRunning(reopened: Job): Boolean {
+        withTimeoutOrNull(RELAUNCH_WAIT_MS) { reopened.join() } ?: return false
+        return manager.state.value.status == SessionStatus.Running
     }
 
     /**

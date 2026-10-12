@@ -52,6 +52,9 @@ object CodexStateMapper {
     /** [SettingsView.extras] 的键，同时是 `SetEngineOption.key` */
     const val OPTION_SUMMARY = "summary"
 
+    /** 模型 / 强度 `Choice.id` 为空串 = 跟随默认（与 CC 同约定，界面把它本地化成「默认」） */
+    const val FOLLOW_DEFAULT = ""
+
     /** 权限档不在三档之内时的 `Choice.id` */
     const val MODE_CUSTOM = "custom"
 
@@ -99,6 +102,8 @@ object CodexStateMapper {
             slashCommands = SLASH_COMMANDS,
             plan = null,
             stopping = false, // 打断只停本轮、很快收场，不把「正在打断」当成会话在关闭（那会把键全收起，见 composerKeys）
+            // 只读回放（Idle，没有进程）也是一个打开着的会话：页面要把它显示出来、输入框要能收字（发一句就是接着聊，见 CodexSession.send）
+            open = true,
             errorMessage = state.errorMessage,
             connection = context.connection,
         )
@@ -214,7 +219,8 @@ object CodexStateMapper {
             models = emptyList(),
             modelsLoading = false,
             effort = options.effort?.let { Choice(it, it) },
-            efforts = CODEX_EFFORT_LEVELS.map { Choice(it, it) },
+            // 第一行 id 为空串 = 跟随默认（不传 effort），与 CC 的强度面板同一个约定，统一的强度分区照这个画
+            efforts = listOf(Choice(FOLLOW_DEFAULT, "")) + CODEX_EFFORT_LEVELS.map { Choice(it, it) },
             effortNeedsRestart = false, // 下一轮 turn/start 带上，不重启进程
             mode = current?.let { p -> presets.first { it.id == p.id } }
                 ?: Choice(MODE_CUSTOM, codexPermissionWire(options.approvalPolicy, options.sandbox)),
@@ -231,8 +237,10 @@ object CodexStateMapper {
     }
 
     /**
-     * 本地斜杠命令（`ui/codex/CodexSlash.kt`）：协议里没有斜杠命令，这几条是 Min 自己有对应动作的，
-     * 作用是拦下误发。表在 ui 里（core 不许引用），这里只抄名字；B6 并页时再决定由谁持有。
+     * 本地斜杠命令：app-server 协议里没有斜杠命令这回事（`turn/start` 收的是一段文本，打进去的 `/model` 会原样变成给模型的话），
+     * 这几条是 Min 自己有对应动作的，作用是**拦下误发**——习惯了 codex 终端的人会下意识打 `/model`，不拦住就是白花一轮的钱。
+     * 拦下之后做什么在统一会话页的输入栏里（`ClaudeCodeInputBar` 的本地命令表：model / effort / permissions·approvals → 对应设置分区，
+     * cd → 工作目录分区，new → 另起一条会话）；列一条做不到的命令比没有这条更糟，所以只列这六条。
      */
     private val SLASH_COMMANDS = listOf("model", "effort", "permissions", "approvals", "cd", "new").map { SlashCommandView(it, null) }
 }

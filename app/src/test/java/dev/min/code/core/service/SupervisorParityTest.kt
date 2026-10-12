@@ -1,6 +1,16 @@
 package dev.min.code.core.service
 
 import dev.min.code.core.claudecode.RegistryHarness
+import dev.min.code.core.engine.EngineKind
+import dev.min.code.core.engine.InteractionBrief
+import dev.min.code.core.engine.InteractionKind
+import dev.min.code.core.engine.InterruptCause
+import dev.min.code.core.engine.LiveSessionSummary
+import dev.min.code.core.engine.SessionRef
+import dev.min.code.core.engine.SupervisorEvent
+import dev.min.code.core.engine.TurnEnd
+import dev.min.code.core.engine.summary
+import dev.min.code.core.engine.supervisorDiff
 import dev.min.code.core.session.SessionStatus
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
@@ -10,7 +20,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -20,9 +29,9 @@ import org.junit.Test
  * B2 的新版 `supervisorDiff` 要对同一组输入给出和这里一致的结果（再加 Question / PlanReview /
  * Resume 的新边沿），B5 把 Claude / Codex 两路并成一路时靠它兜底。
  *
- * 和 [ClaudeSupervisorDiffTest] / [CodexSupervisorDiffTest] 的分工：那两份是写边沿时顺手钉的几条代表性用例，
- * 这份把两个函数的**输入空间逐格走完**（previous 有无 × 前后台 × 每个字段翻转），
- * 并把「一次观察里事件的先后与取舍」也钉上。标着「当前行为」的断言不代表那样是对的，
+ * 和 [ClaudeSupervisorDiffTest] 的分工：那份是写边沿时顺手钉的几条代表性用例，
+ * 这份把旧 Claude 函数的**输入空间逐格走完**（previous 有无 × 前后台 × 每个字段翻转；
+ * Codex 那半 B9 起改写成统一 supervisorDiff 的等价用例），并把「一次观察里事件的先后与取舍」也钉上。标着「当前行为」的断言不代表那样是对的，
  * 只是迁移时不许顺手改掉；看起来像缺陷的在注释里点了名，汇报里也列了。
  */
 class SupervisorParityTest {
@@ -221,126 +230,181 @@ class SupervisorParityTest {
         )
     }
 
-    // ------------------------------------------------------------------ Codex
+    // ------------------------------------------------------------------ Codex（B9 起走统一的 supervisorDiff）
+    //
+    // 旧 Codex 专用路径（codexSupervisorDiff / CodexSeen）已删，这里把它那套边沿用
+    // `LiveSessionSummary(ref = Codex)` 重写成等价用例。与旧版有三处有意差异，各有一条测试钉住：
+    // 失败一轮由 lastTurnEnd 判（不再看 errorMessage），审批撤掉与退出 / 完成落在同一帧时两件事都报，
+    // 审批到达与一轮结束同帧时两件事都报。
+
+    private val codexRef = SessionRef(EngineKind.Codex, "th-1")
 
     private fun codex(
         busy: Boolean = false,
-        approvalKey: String? = null,
+        approvalId: String? = null,
         status: SessionStatus = SessionStatus.Running,
         errorMessage: String? = null,
-    ) = SessionSupervisor.CodexSeen(busy, approvalKey, status, errorMessage)
+        end: TurnEnd? = null,
+    ) = summary(
+        ref = codexRef, status = status, busy = busy, error = errorMessage, end = end,
+        head = approvalId?.let { InteractionBrief(it, InteractionKind.Approval, "Bash", null) },
+    )
 
-    private fun codexDiff(
-        previous: SessionSupervisor.CodexSeen?,
-        current: SessionSupervisor.CodexSeen,
-        foreground: Boolean = false,
-    ) = codexSupervisorDiff(previous, current, foreground)
+    private fun codexDiff(previous: LiveSessionSummary?, current: LiveSessionSummary, foreground: Boolean = false) =
+        supervisorDiff(previous, current, foreground)
+
+    private fun approvalEvent(id: String) = SupervisorEvent.Interaction(InteractionBrief(id, InteractionKind.Approval, "Bash", null))
+
+    private val noEvents = emptyList<SupervisorEvent>()
 
     @Test
     fun `codex - the very first frame already asking notifies in the background, not in the foreground`() {
-        // 和 Claude 一样：previous == null 压住完成 / 死亡，不压审批
-        assertEquals(CodexSupervisorEvent.Approval, codexDiff(null, codex(approvalKey = "1")))
-        assertNull(codexDiff(null, codex(approvalKey = "1"), foreground = true))
+        assertEquals(listOf(approvalEvent("1")), codexDiff(null, codex(approvalId = "1")))
+        assertEquals(noEvents, codexDiff(null, codex(approvalId = "1"), foreground = true))
     }
 
     @Test
     fun `codex - a quiet first frame says nothing whatever it looks like`() {
-        assertNull(codexDiff(null, codex()))
-        assertNull(codexDiff(null, codex(busy = true)))
-        assertNull(codexDiff(null, codex(status = SessionStatus.Failed, errorMessage = "x")))
-        assertNull(codexDiff(null, codex(status = SessionStatus.Closed)))
+        assertEquals(noEvents, codexDiff(null, codex()))
+        assertEquals(noEvents, codexDiff(null, codex(busy = true)))
+        assertEquals(noEvents, codexDiff(null, codex(status = SessionStatus.Failed, errorMessage = "x")))
+        assertEquals(noEvents, codexDiff(null, codex(status = SessionStatus.Closed)))
     }
 
     @Test
-    fun `codex - approval swap re-raises in the background and is silent in the foreground`() {
-        assertEquals(CodexSupervisorEvent.Approval, codexDiff(codex(approvalKey = "1"), codex(approvalKey = "2")))
-        assertNull(codexDiff(codex(approvalKey = "1"), codex(approvalKey = "2"), foreground = true))
+    fun `codex - approval pending in the background raises, in the foreground stays silent`() {
+        assertEquals(listOf(approvalEvent("42")), codexDiff(codex(), codex(approvalId = "42")))
+        assertEquals(noEvents, codexDiff(codex(), codex(approvalId = "42"), foreground = true))
+    }
+
+    /** A 还挂着就直接换成 B：不重发的话状态栏上留着 A 的按钮，点下去应答的是没人等的请求 */
+    @Test
+    fun `codex - an approval swapped straight for another re-raises in the background and is silent in the foreground`() {
+        assertEquals(listOf(approvalEvent("43")), codexDiff(codex(approvalId = "42"), codex(approvalId = "43")))
+        assertEquals(noEvents, codexDiff(codex(approvalId = "42"), codex(approvalId = "43"), foreground = true))
     }
 
     @Test
-    fun `codex - the same approval on later frames does not repeat`() {
-        val a = codex(busy = true, approvalKey = "1")
-        assertNull(codexDiff(a, a))
-        assertNull(codexDiff(a, a.copy(errorMessage = "x")))
+    fun `codex - the same approval on later frames does not repeat, whatever else moves`() {
+        val a = codex(busy = true, approvalId = "42")
+        assertEquals(noEvents, codexDiff(a, a))
+        assertEquals(noEvents, codexDiff(a, a.copy(errorMessage = "x")))
+    }
+
+    /** 审批被清掉要撤通知：前台也得执行，状态栏还挂着那条 ongoing */
+    @Test
+    fun `codex - an approval cleared elsewhere cancels the notification in both foreground and background`() {
+        val a = codex(busy = true, approvalId = "42")
+        assertEquals(listOf(SupervisorEvent.InteractionCleared), codexDiff(a, codex(busy = true)))
+        assertEquals(listOf(SupervisorEvent.InteractionCleared), codexDiff(a, codex(busy = true), foreground = true))
     }
 
     @Test
-    fun `codex - approval cleared in both foreground and background`() {
-        val a = codex(busy = true, approvalKey = "1")
-        assertEquals(CodexSupervisorEvent.ApprovalCleared, codexDiff(a, codex(busy = true)))
-        assertEquals(CodexSupervisorEvent.ApprovalCleared, codexDiff(a, codex(busy = true), foreground = true))
+    fun `codex - busy falling cleanly is a finished turn, background only`() {
+        assertEquals(listOf(SupervisorEvent.TurnDone), codexDiff(codex(busy = true), codex()))
+        assertEquals(listOf(SupervisorEvent.TurnDone), codexDiff(codex(busy = true), codex(end = TurnEnd.Completed)))
+        assertEquals(noEvents, codexDiff(codex(busy = true), codex(), foreground = true))
+    }
+
+    /** 失败一轮进程还活着（status 仍是 Running）：靠 lastTurnEnd = Failed 区别于完成，通知带原因 */
+    @Test
+    fun `codex - busy falling with a failed turn end is incomplete, not done and not dead`() {
+        val end = TurnEnd.Failed(null, "401 Incorrect API key")
+        assertEquals(
+            listOf(SupervisorEvent.TurnIncomplete(end, null)),
+            codexDiff(codex(busy = true), codex(errorMessage = "401 Incorrect API key", end = end)),
+        )
+        // 前台不报
+        assertEquals(noEvents, codexDiff(codex(busy = true), codex(errorMessage = "401", end = end), foreground = true))
+    }
+
+    /** 失败的错误信息一直挂着，后面的帧不能再报一次 */
+    @Test
+    fun `codex - a failed turn does not re-notify while its error lingers`() {
+        val end = TurnEnd.Failed(null, "401")
+        val after = codex(errorMessage = "401", end = end)
+        assertEquals(noEvents, codexDiff(after, after))
     }
 
     @Test
-    fun `codex - turn done and turn failed are told apart by the error message, blank counts as none`() {
-        assertEquals(CodexSupervisorEvent.TurnDone, codexDiff(codex(busy = true), codex()))
-        assertEquals(CodexSupervisorEvent.TurnDone, codexDiff(codex(busy = true), codex(errorMessage = "")))
-        assertEquals(CodexSupervisorEvent.TurnDone, codexDiff(codex(busy = true), codex(errorMessage = "   ")))
-        assertEquals(CodexSupervisorEvent.TurnFailed("401"), codexDiff(codex(busy = true), codex(errorMessage = "401")))
+    fun `codex - a turn the user interrupted is silent`() {
+        assertEquals(
+            noEvents,
+            codexDiff(codex(busy = true), codex(end = TurnEnd.Interrupted(InterruptCause.User))),
+        )
     }
 
     @Test
     fun `codex - busy falling on a session that is not Running reports nothing`() {
-        // 当前行为：完成 / 失败只在 status == Running 时判；Idle 下 busy 落下是静默的
-        assertNull(codexDiff(codex(busy = true), codex(busy = false, status = SessionStatus.Idle)))
-        assertNull(codexDiff(codex(busy = true), codex(busy = false, status = SessionStatus.Starting)))
+        assertEquals(noEvents, codexDiff(codex(busy = true), codex(status = SessionStatus.Idle)))
+        assertEquals(noEvents, codexDiff(codex(busy = true), codex(status = SessionStatus.Starting)))
     }
 
     @Test
     fun `codex - other busy transitions are silent`() {
-        assertNull(codexDiff(codex(), codex(busy = true)))
-        assertNull(codexDiff(codex(busy = true), codex(busy = true)))
-        assertNull(codexDiff(codex(), codex()))
+        assertEquals(noEvents, codexDiff(codex(), codex(busy = true)))
+        assertEquals(noEvents, codexDiff(codex(busy = true), codex(busy = true)))
+        assertEquals(noEvents, codexDiff(codex(), codex()))
     }
 
     @Test
-    fun `codex - died fires on a flip into Failed or Closed, only once`() {
-        assertEquals(CodexSupervisorEvent.Died("x"), codexDiff(codex(), codex(status = SessionStatus.Failed, errorMessage = "x")))
-        assertEquals(CodexSupervisorEvent.Died(null), codexDiff(codex(), codex(status = SessionStatus.Closed)))
+    fun `codex - died fires on a flip into Failed or Closed, only once per flip`() {
+        assertEquals(
+            listOf(SupervisorEvent.Died("x", null)),
+            codexDiff(codex(), codex(status = SessionStatus.Failed, errorMessage = "x")),
+        )
+        assertEquals(listOf(SupervisorEvent.Died(null, null)), codexDiff(codex(), codex(status = SessionStatus.Closed)))
         val failed = codex(status = SessionStatus.Failed, errorMessage = "x")
-        assertNull(codexDiff(failed, failed))
-        // 当前行为：Failed → Closed 再报一次（同 Claude）
-        assertEquals(CodexSupervisorEvent.Died("x"), codexDiff(failed, failed.copy(status = SessionStatus.Closed)))
+        assertEquals(noEvents, codexDiff(failed, failed))
+        // 与 Claude 同：Failed -> Closed 也是一次翻转
+        assertEquals(listOf(SupervisorEvent.Died("x", null)), codexDiff(failed, failed.copy(status = SessionStatus.Closed)))
     }
 
     @Test
     fun `codex - busy falling together with death reports death, not completion`() {
         assertEquals(
-            CodexSupervisorEvent.Died("退出码 1"),
+            listOf(SupervisorEvent.Died("退出码 1", null)),
             codexDiff(codex(busy = true), codex(busy = false, status = SessionStatus.Failed, errorMessage = "退出码 1")),
         )
     }
 
     @Test
-    fun `codex - foreground suppresses turn done, turn failed and died`() {
-        assertNull(codexDiff(codex(busy = true), codex(), foreground = true))
-        assertNull(codexDiff(codex(busy = true), codex(errorMessage = "x"), foreground = true))
-        assertNull(codexDiff(codex(), codex(status = SessionStatus.Closed), foreground = true))
+    fun `codex - foreground suppresses turn done, incomplete and died`() {
+        assertEquals(noEvents, codexDiff(codex(busy = true), codex(), foreground = true))
+        assertEquals(noEvents, codexDiff(codex(), codex(status = SessionStatus.Closed), foreground = true))
+        assertEquals(noEvents, codexDiff(codex(), codex(status = SessionStatus.Failed), foreground = true))
     }
 
     /**
-     * 当前行为（看起来像缺陷）：Codex 一次观察最多一个事件，审批相关的先返回。
-     * 所以「待批的审批和会话死亡落在同一帧」时只会撤通知、**不报死亡** ——
-     * 而 [dev.min.code.core.codex.CodexAppServerManager] 退出时恰恰是在同一次状态更新里
-     * 同时清 pendingApproval 并置 Failed / Closed（见其 448-453 行）。Claude 一路同帧会两个都发。
+     * 有意差异：旧 Codex 一次观察最多一个事件，审批撤掉的同一帧里会吞掉退出 / 完成
+     * （app-server 退出时恰恰是同一次状态更新里清 pendingApproval 并置 Failed / Closed）。
+     * 统一路径同 Claude：先撤、再报，两件事都在。
      */
     @Test
-    fun `codex - an approval cleared in the same frame as death or turn end swallows that second event`() {
-        val asking = codex(busy = true, approvalKey = "1")
+    fun `codex - an approval cleared in the same frame as death or turn end no longer swallows the second event`() {
+        val asking = codex(busy = true, approvalId = "1")
         assertEquals(
-            CodexSupervisorEvent.ApprovalCleared,
+            listOf(SupervisorEvent.InteractionCleared, SupervisorEvent.Died("boom", null)),
             codexDiff(asking, codex(busy = false, status = SessionStatus.Failed, errorMessage = "boom")),
         )
-        assertEquals(CodexSupervisorEvent.ApprovalCleared, codexDiff(asking, codex(busy = false)))
+        assertEquals(
+            listOf(SupervisorEvent.InteractionCleared, SupervisorEvent.TurnDone),
+            codexDiff(asking, codex(busy = false)),
+        )
+        // 前台只剩「撤」
+        assertEquals(
+            listOf(SupervisorEvent.InteractionCleared),
+            codexDiff(asking, codex(busy = false, status = SessionStatus.Failed), foreground = true),
+        )
     }
 
     @Test
-    fun `codex - an approval arriving in the same frame as turn end wins over the turn event`() {
+    fun `codex - an approval arriving in the same frame as turn end notifies for both, approval first`() {
         assertEquals(
-            CodexSupervisorEvent.Approval,
-            codexDiff(codex(busy = true), codex(busy = false, approvalKey = "1")),
+            listOf(approvalEvent("1"), SupervisorEvent.TurnDone),
+            codexDiff(codex(busy = true), codex(busy = false, approvalId = "1")),
         )
-        assertNull(codexDiff(codex(busy = true), codex(busy = false, approvalKey = "1"), foreground = true))
+        assertEquals(noEvents, codexDiff(codex(busy = true), codex(busy = false, approvalId = "1"), foreground = true))
     }
 
     // ------------------------------------------------------------------ 通知上的「拒绝」

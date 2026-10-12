@@ -62,6 +62,7 @@ import dev.min.code.core.engine.EngineCapabilities
 import dev.min.code.core.engine.PendingResume
 import dev.min.code.core.engine.ResumeOffer
 import dev.min.code.core.engine.composerKeys
+import dev.min.code.core.engine.codex.CodexStateMapper
 import dev.min.code.core.engine.ImageInput
 import dev.min.code.core.engine.SlashCommandView
 import dev.min.code.core.session.SessionStatus
@@ -94,6 +95,14 @@ internal fun ClaudeCodeInputBar(
     onSetPermissionMode: (String) -> Unit,
     onApplyEffort: (String?, Boolean) -> Unit,
     onSetPromptCacheTtl: (String) -> Unit,
+    /** 引擎专有的设置项（Codex 的思考摘要）：(键, 值)，值为空串 = 跟随默认 */
+    onSetEngineOption: (String, String) -> Unit = { _, _ -> },
+    /** Codex 的连接方式面板（设置里的入口）；别的引擎不用 */
+    onOpenConnection: () -> Unit = {},
+    /** Codex 连接配置里的默认模型，设置里的模型栏要列出来 */
+    codexProfileModel: String? = null,
+    /** `/new`：另起一条会话（Codex 的本地命令） */
+    onNewSession: () -> Unit = {},
     onRequestModels: () -> Unit,
     /** 今天（设备本地日期）的累计花费，跨会话累加 */
     dailyCostUsd: Double = 0.0,
@@ -136,6 +145,7 @@ internal fun ClaudeCodeInputBar(
     // 面板开关要活得过转屏：recreate 之后 sheet 还开着，人才不会觉得点了没反应。
     // 正文（input）不在这里 saveable——草稿盘管它，两份事实会打架
     var settingsSection by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
+    var codexSection by rememberSaveable { mutableStateOf<CodexSettingsSection?>(null) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var importing by remember { mutableStateOf(false) }
     // 附件独立于输入框文本。之前是把路径直接拼进输入框，于是
@@ -297,11 +307,23 @@ internal fun ClaudeCodeInputBar(
         // 之前只在直接跳到「模型」分区时才拉，从摘要行进来再点开「模型」永远停在"正在查询"
         onRequestModels()
         settingsSection = section
+        codexSection = null
         settingsOpen = true
     }
 
     /** 本地接管的斜杠命令：会话设置类的开 sheet，配置编辑类的交给页面开专门的面板 */
     fun handleLocal(target: LocalSlash) {
+        if (target == LocalSlash.NEW) {
+            onNewSession()
+            return
+        }
+        if (EngineUi.settingsSheet(session.ref.engine) == SettingsSheetKind.Codex) {
+            // Codex 的面板有自己的分区（没有 MCP / 缓存 / 信任，多一个思考摘要）
+            onRequestModels()
+            codexSection = target.toCodexSection()
+            settingsOpen = true
+            return
+        }
         val section = target.toSection(capabilities)
         if (section != null) openSettings(section) else onOpenLocalCommand(target)
     }
@@ -330,7 +352,8 @@ internal fun ClaudeCodeInputBar(
             return
         }
         // 配置面板类命令（/mcp /agents …）是按 CC 的文件布局做的，引擎不支持就不接管，照普通消息发
-        val local = localSlashTarget(input)?.takeIf { it.toSection(capabilities) != null || EngineUi.configCommands(capabilities) }
+        val local = localSlashTarget(input, capabilities, session.slashCommands)
+            ?.takeIf { it == LocalSlash.NEW || it.toSection(capabilities) != null || it.toCodexSection() != null || EngineUi.configCommands(capabilities) }
         if (local != null) {
             handleLocal(local)
             input = ""
@@ -387,7 +410,8 @@ internal fun ClaudeCodeInputBar(
         AnimatedVisibility(visible = matchedCommands.isNotEmpty(), enter = InkMotion.expand, exit = InkMotion.collapse) {
             Column {
                 SlashCommandList(shownCommands) { picked ->
-                    val local = LOCAL_SLASH_HANDLERS[picked.name.lowercase()]
+                    // 与手打回车同一个判定：按引擎认（Codex 的 /permissions 是权限档，不是 CC 的 hooks 面板）
+                    val local = localSlashTarget("/${picked.name}", capabilities, session.slashCommands)
                     if (local != null) {
                         handleLocal(local)
                         input = ""
@@ -460,6 +484,8 @@ internal fun ClaudeCodeInputBar(
                     enabled = running && !importing,
                     busy = importing,
                     canPickImage = images.size < maxImages,
+                    // Codex 的 localImage 还没接：没有拍照 / 相册这两项（摆一个永远点不动的菜单项只会让人反复去点）
+                    showImageItems = capabilities.images,
                     onPickFile = { filePicker.launch(arrayOf("*/*")) },
                     onPickImage = {
                         imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -480,7 +506,7 @@ internal fun ClaudeCodeInputBar(
                     contextWarn = usage.warn,
                     costText = usage.costText,
                     modelText = session.settings.modelChipLabel(),
-                    modeText = "${session.settings.mode.label} · ${session.settings.effortChipLabel()}",
+                    modeText = "${modeTitle(session.ref.engine, session.settings.mode)} · ${session.settings.effortChipLabel()}",
                     onRefreshUsage = onRefreshUsage,
                     onOpenSettings = { openSettings(null) },
                     onRecap = if (capabilities.recap) extras?.let { { it.requestRecap() } } else null,
@@ -489,7 +515,23 @@ internal fun ClaudeCodeInputBar(
         )
     }
 
-    if (settingsOpen) {
+    if (settingsOpen && EngineUi.settingsSheet(session.ref.engine) == SettingsSheetKind.Codex) {
+        CodexSettingsSheet(
+            session = session,
+            profileModel = codexProfileModel,
+            initialSection = codexSection,
+            onDismiss = { settingsOpen = false },
+            // 点了就算数：值存在 manager 里、下一轮 turn/start 带上，不重启进程，所以不用像别的引擎那样点完就收起
+            onSetModel = { onSetModel(it, false) },
+            onSetPermission = onSetPermissionMode,
+            onSetEffort = { onApplyEffort(it, false) },
+            onSetSummary = { onSetEngineOption(CodexStateMapper.OPTION_SUMMARY, it.orEmpty()) },
+            onSetCwd = onSetCwd,
+            onListCwd = onListCwd,
+            onCreateCwd = onCreateCwd,
+            onOpenConnection = { settingsOpen = false; onOpenConnection() },
+        )
+    } else if (settingsOpen) {
         ClaudeCodeSettingsSheet(
             session = session,
             capabilities = capabilities,
@@ -621,6 +663,9 @@ private fun SlashCommandList(
 internal enum class LocalSlash {
     MODEL, EFFORT, PERMISSION, CWD,
     MCP, AGENTS, MEMORY, CONFIG, HOOKS,
+
+    /** 另起一条会话（Codex 的 `/new`；只有引擎的斜杠命令表里真有 `new` 才拦，见 [localSlashTarget]） */
+    NEW,
 }
 
 internal val LOCAL_SLASH_HANDLERS = mapOf(
@@ -639,6 +684,10 @@ internal val LOCAL_SLASH_HANDLERS = mapOf(
     "output-style" to LocalSlash.CONFIG,
     "hooks" to LocalSlash.HOOKS,
     "permissions" to LocalSlash.HOOKS,
+    // Codex 终端里的老叫法（`/approvals`、`/cd`）：习惯了它的人会下意识打，拦下来开对应设置栏，免得白花一轮的钱
+    "approvals" to LocalSlash.PERMISSION,
+    "cd" to LocalSlash.CWD,
+    "new" to LocalSlash.NEW,
 )
 
 /** 输入框内容是不是一条该本地接管的斜杠命令；带参数的（`/model opus`）不拦，原样发下去 */
@@ -647,6 +696,26 @@ internal fun localSlashTarget(input: String): LocalSlash? {
     if (!trimmed.startsWith("/") || trimmed.length < 2) return null
     if (trimmed.any { it.isWhitespace() }) return null
     return LOCAL_SLASH_HANDLERS[trimmed.drop(1).lowercase()]
+}
+
+/**
+ * 按引擎认的 [localSlashTarget]。差别只有两处，都是只对「没有 CC 配置面板」的引擎（Codex）才生效，CC / Min 的行为不变：
+ * - `/permissions`：CC 里它是 hooks / 权限规则的配置面板；Codex 里它就是权限档，开权限那一栏；
+ * - `/new`、`/approvals`、`/cd`：只有引擎自己的斜杠命令表里列着才拦（[commands]），别的引擎里它们是普通文字。
+ */
+internal fun localSlashTarget(
+    input: String,
+    capabilities: dev.min.code.core.engine.EngineCapabilities,
+    commands: List<dev.min.code.core.engine.SlashCommandView>,
+): LocalSlash? {
+    val base = localSlashTarget(input) ?: return null
+    val name = input.trim().drop(1).lowercase()
+    val listed = commands.any { it.name.equals(name, ignoreCase = true) }
+    return when {
+        name == "permissions" && capabilities.claudeConfigFiles == dev.min.code.core.engine.ConfigFiles.None -> LocalSlash.PERMISSION
+        (name == "new" || name == "approvals" || name == "cd") && !listed -> null
+        else -> base
+    }
 }
 
 /** `/model fable` 的参数；空参数仍由 [localSlashTarget] 打开模型面板。 */

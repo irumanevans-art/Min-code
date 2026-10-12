@@ -148,14 +148,19 @@ fun offerResume(
 /**
  * 这种结局本身就证明模型还欠一个回答，不必再看历史末尾长什么样（CC / Codex 共用，见两边的 `Resume.offer`）。
  *
- * 末尾在这几种情形下会误导：用户打断时已出的半截正文、失败时引擎合成的那条报错说明，都是助手条目，
- * 按 [HistoryTail.AssistantFinal] 会被当成「回答已完整」。但失败 / 打断 / 达到上限都发生在**请求还没得到完整回答**的时候。
- * 只有进程死亡 / 引擎退出要看条目（死在「最终回答已落盘」与收尾之间时回答其实完整，续跑会变成 assistant prefill）。
+ * 末尾在这几种情形下会误导：用户打断时已出的半截正文、失败时引擎合成的那条报错说明、工具调用前那句「我来跑一下」，
+ * 都是助手条目，按 [HistoryTail.AssistantFinal] 会被当成「回答已完整」。但失败 / 打断 / 达到上限 / 进程死亡 / 引擎退出，
+ * 都是回合**没有正常收尾**（没有 result / task_complete）。进程死亡的情形引擎已经按事件判过了
+ * （CC 的 `transcriptEndedMidTurn`、Codex 的 rollout 按 turn_id 配对：回合开着没收尾才会记这个结局），比条目末尾精确。
+ *
+ * 与 Min 不同，CC / Codex 的续跑是**发一条新的用户消息**（[CONTINUE_PROMPT]），不是让模型接着上一条助手消息写，
+ * 所以不存在 assistant prefill 的问题；Min 的原生续跑有自己的判定（`minResumeOffer`），不走这里。
  */
 internal fun TurnEnd.provesUnfinished(): Boolean = when (this) {
-    is TurnEnd.Failed -> true
-    is TurnEnd.Interrupted -> cause == InterruptCause.User || cause == InterruptCause.Limit
     TurnEnd.Completed -> false
+    is TurnEnd.Failed -> true
+    // 撤回与「模型结束了会话」本来就不续（[reasonOf] 返回 null），这里写不写都不影响
+    is TurnEnd.Interrupted -> cause != InterruptCause.Withdrawn && cause != InterruptCause.Ended
 }
 
 /** 结局 → 续跑原因；不该续的结局（完成 / 撤回 / 还没有结局）返回 null */

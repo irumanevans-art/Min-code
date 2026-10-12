@@ -2,7 +2,7 @@ package dev.min.code.core.engine.codex
 
 import dev.min.code.core.claudecode.ClaudeCodeSessionMetaStore
 import dev.min.code.core.codex.CodexAppServerManager
-import dev.min.code.core.codex.CodexDraftStore
+import dev.min.code.core.claudecode.ComposerDraftStore
 import dev.min.code.core.codex.CodexSessionSummary
 import dev.min.code.core.codex.deleteCodexSession
 import dev.min.code.core.codex.listCodexSessions
@@ -26,7 +26,7 @@ import java.io.OutputStream
 class CodexSessionCatalog(
     private val codexHome: () -> File,
     private val metaStore: ClaudeCodeSessionMetaStore?,
-    private val drafts: CodexDraftStore?,
+    private val drafts: ComposerDraftStore?,
     private val manager: CodexAppServerManager?,
 ) : SessionCatalog {
     override val engine: EngineKind = EngineKind.Codex
@@ -41,10 +41,12 @@ class CodexSessionCatalog(
                 ref = CodexStateMapper.codexRef(s.threadId),
                 title = metas[s.threadId]?.title?.takeIf { it.isNotBlank() } ?: s.preview.orEmpty(),
                 updatedAt = s.updatedAt,
-                messageCount = 0, // 摘要只读文件头部；数条数要把整个 rollout 读一遍，列个标题不值得
+                // 摘要只读文件头部；数条数要把整个 rollout 读一遍，列个标题不值得。有第一句话就至少说过一句：
+                // 开始面板的「继续最近的会话」据此认「不是空会话」
+                messageCount = if (s.preview.isNullOrBlank()) 0 else 1,
                 cwd = s.cwd,
                 model = null,
-                interrupted = false, // rollout 里回合没收尾的判定属 B8（CodexResume.rolloutEndedMidTurn 未校准）
+                interrupted = false, // 回合没收尾要读完整个 rollout（按 turn_id 配对），列表不读；打开会话时才判，▶ 自会出现
                 bodyText = s.preview.orEmpty(),
             )
         }
@@ -52,7 +54,7 @@ class CodexSessionCatalog(
 
     /**
      * 删：rollout 文件 + 元数据 + 草稿，并摘掉屏幕上的空闲回放。正跑着的那条不删（界面先让用户停掉它）：
-     * `CodexVM.deleteSession` 是自己先 stop 再删，这里把「先停」留给调用方，目录只管数据。
+     * 调用方（抽屉的删除）先把会话关掉再来删，这里只管数据。
      */
     override suspend fun delete(id: String): DeleteResult = withContext(Dispatchers.IO) {
         val current = manager?.state?.value
@@ -65,7 +67,7 @@ class CodexSessionCatalog(
         runCatching {
             val removed = summary?.let { deleteCodexSession(it.file) } ?: false
             metaStore?.forget(id)
-            drafts?.forget(id)
+            drafts?.forget(CodexStateMapper.codexRef(id).storageKey)
             manager?.clearIfIdle(id)
             if (removed) DeleteResult.Deleted else DeleteResult.NotFound
         }.getOrElse { DeleteResult.Failed(it.message ?: it.toString()) }

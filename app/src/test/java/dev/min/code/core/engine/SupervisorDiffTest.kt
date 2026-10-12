@@ -1,11 +1,8 @@
 package dev.min.code.core.engine
 
 import dev.min.code.core.service.SessionSupervisor.ClaudeSeen
-import dev.min.code.core.service.SessionSupervisor.CodexSeen
 import dev.min.code.core.service.ClaudeSupervisorEvent
-import dev.min.code.core.service.CodexSupervisorEvent
 import dev.min.code.core.service.claudeSupervisorDiff
-import dev.min.code.core.service.codexSupervisorDiff
 import dev.min.code.core.session.SessionStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,9 +12,10 @@ import org.junit.Test
 /**
  * 新版 [supervisorDiff]。
  *
- * 前半是与旧版的对拍：把旧 `ClaudeSeen` / `CodexSeen` 翻成 [LiveSessionSummary]（适配器将来做的就是这个翻译），
+ * 前半是与旧 Claude 版的对拍：把旧 `ClaudeSeen` 翻成 [LiveSessionSummary]（适配器做的就是这个翻译），
  * 在小值域上穷举「上一帧 × 这一帧 × 前后台」，要求新版给出与旧版同样的事件。两处有意差异在
  * [SupervisorDiff.kt] 头注释里，这里各有一条测试钉住。后半是新边沿：Question / PlanReview / 未完成 / 续跑。
+ * 旧 Codex 版（codexSupervisorDiff）B9 已删，它那套边沿的等价用例在 SupervisorParityTest 的 codex 一节。
  */
 class SupervisorDiffTest {
 
@@ -70,43 +68,6 @@ class SupervisorDiffTest {
         val after = claudeSeen(null, busy = false, status = SessionStatus.Starting, error = null)
         assertEquals(listOf<ClaudeSupervisorEvent>(ClaudeSupervisorEvent.TurnDone), claudeSupervisorDiff(before, after, false))
         assertEquals(emptyList<SupervisorEvent>(), supervisorDiff(fromClaude(before), fromClaude(after), false))
-    }
-
-    private val codexStatuses = statuses
-    private fun codexSeen(key: String?, busy: Boolean, status: SessionStatus, error: String?) = CodexSeen(busy, key, status, error)
-
-    /** Codex 的「一轮失败」不换状态，只在 errorMessage 里带原因：适配器把它翻成 lastTurnEnd = Failed */
-    private fun fromCodex(s: CodexSeen) = summary(
-        ref = SessionRef(EngineKind.Codex, "th-1"), status = s.status, busy = s.busy, error = s.errorMessage,
-        head = s.approvalKey?.let { InteractionBrief(it, InteractionKind.Approval, null, null) },
-        end = if (s.errorMessage.isNullOrBlank()) null else TurnEnd.Failed(null, s.errorMessage),
-    )
-
-    private fun asOldCodex(event: SupervisorEvent): CodexSupervisorEvent = when (event) {
-        is SupervisorEvent.Interaction -> CodexSupervisorEvent.Approval
-        SupervisorEvent.InteractionCleared -> CodexSupervisorEvent.ApprovalCleared
-        SupervisorEvent.TurnDone -> CodexSupervisorEvent.TurnDone
-        is SupervisorEvent.TurnIncomplete -> CodexSupervisorEvent.TurnFailed((event.end as TurnEnd.Failed).message)
-        is SupervisorEvent.Died -> CodexSupervisorEvent.Died(event.message)
-        SupervisorEvent.ResumeCleared -> error("旧输入没有 offer")
-    }
-
-    @Test
-    fun `codex inputs get the same first event as the old diff over the whole small domain`() {
-        val cases = buildList {
-            for (key in listOf(null, "1", "2")) for (busy in listOf(true, false)) for (st in codexStatuses) for (err in listOf(null, "", "boom")) {
-                add(codexSeen(key, busy, st, err))
-            }
-        }
-        var compared = 0
-        for (previous in listOf<CodexSeen?>(null) + cases) for (current in cases) for (fg in listOf(true, false)) {
-            val old = codexSupervisorDiff(previous, current, fg)
-            // 旧 Codex 一次最多一个事件；新版允许同帧多个，对拍取第一个（见头注释的有意差异 2）
-            val new = supervisorDiff(previous?.let(::fromCodex), fromCodex(current), fg).firstOrNull()?.let(::asOldCodex)
-            assertEquals("previous=$previous current=$current fg=$fg", old, new)
-            compared++
-        }
-        assertTrue(compared > 10_000)
     }
 
     @Test

@@ -127,11 +127,6 @@
       android:name=".core.service.SessionActionReceiver"
       android:exported="false" />
 
-    <!-- Codex 在 B9 前保留旧审批路径 -->
-    <receiver
-      android:name=".core.service.CodexApprovalReceiver"
-      android:exported="false" />
-
     <!-- 无线调试配对：通知栏行内输入配对码（单机自配对时对话框不能失焦，见 AdbPairingReceiver） -->
     <receiver
       android:name=".privileged.AdbPairingReceiver"

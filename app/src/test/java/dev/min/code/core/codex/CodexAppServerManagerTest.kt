@@ -972,6 +972,42 @@ class CodexAppServerManagerTest {
         clean.close()
     }
 
+    @Test
+    fun `a turn that ends - interrupted included - takes the pending approval with it`() = runBlocking {
+        val approval = """{"id":"ap-1","method":"item/commandExecution/requestApproval","params":{"itemId":"c1","command":"rm x"}}"""
+        val manager = interruptible(interruptAck, turnLines = BUSY_TURN + approval)
+        manager.sendTurn("第一问")
+        awaitOn(manager) { manager.state.value.pendingApproval != null }
+
+        assertTrue(manager.interruptTurn())
+        awaitOn(manager) { !manager.state.value.busy }
+
+        // 审批没人等了：弹层和通知不能一直留着，点了也只是回一个无主的应答
+        assertNull(manager.state.value.pendingApproval)
+        manager.close()
+    }
+
+    @Test
+    fun `restoring another thread starts clean - the queue of the previous one does not follow`() = runBlocking {
+        val manager = interruptible(interruptAck)
+        manager.sendTurn("第一问")
+        awaitOn(manager) { manager.state.value.busy }
+        manager.sendTurn("上一条线程排着的话")
+        manager.interruptTurn()
+        awaitOn(manager) { !manager.state.value.busy }
+        manager.stop()
+        awaitOn(manager) { manager.state.value.status == SessionStatus.Closed }
+        assertEquals(listOf("上一条线程排着的话"), manager.state.value.queued)
+
+        assertTrue(manager.restore(listOf(ChatItem.UserText("u", "另一条的历史")), "other-thread", endedMidTurn = false))
+
+        assertEquals(emptyList<String>(), manager.state.value.queued)
+        assertNull(manager.state.value.lastTurnEnd)
+        assertNull(manager.state.value.turnId)
+        // 同一条线程再 restore 不动排着的话
+        manager.close()
+    }
+
     /** 回归：以前 stop 之后 start 把整个状态重置，排着的话就这样丢了 */
     @Test
     fun `relaunching the same thread keeps the queue and the end, another thread starts clean`() = runBlocking {

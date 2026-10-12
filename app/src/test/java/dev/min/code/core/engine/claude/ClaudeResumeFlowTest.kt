@@ -263,7 +263,8 @@ class ClaudeResumeFlowTest {
             r.h.awaitState("busy") { it.busy }
             r.session.close(dev.min.code.core.engine.CloseReason.UserEnded)
             r.h.awaitState("已结束") { it.status == dev.min.code.core.session.SessionStatus.Closed }
-            assertNull("用户有意停的不记 EngineExited", r.h.manager.state.value.lastTurnEnd?.takeIf { it.kind == ClaudeTurnEnd.Kind.EngineExited })
+            assertNull("用户有意结束会话：不记结局，也就没有 ▶（否则已结束的会话会留在会话页上）", r.h.manager.state.value.lastTurnEnd)
+            assertNull(r.session.state.value.resume)
         }
     }
 

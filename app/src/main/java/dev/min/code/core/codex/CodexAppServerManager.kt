@@ -49,7 +49,7 @@ fun interface CodexProcessLauncher {
  *
  * ## 进程生命周期不归界面管
  *
- * 这个类以前 new 在 CodexVM 里，转个屏或退出页面就 `onCleared` → 进程被杀，
+ * 这个类以前 new 在页面的 ViewModel 里，转个屏或退出页面就 `onCleared` → 进程被杀，
  * 一轮跑到一半的活直接没了。现在它是 DI 里的单例，页面只是它的观察者。
  */
 class CodexAppServerManager(
@@ -280,7 +280,14 @@ class CodexAppServerManager(
         if (items.isEmpty() && threadId == null) return false
         // rollout 的最后一个回合没有收尾 = 上次被杀在半路：留一条结局，▶ 据此出现（先 thread/resume 接回进程再续）
         val tail = if (endedMidTurn) CodexTurnEnd(CodexTurnEnd.Kind.ProcessDeath) else null
-        _state.value = _state.value.copy(items = items, threadId = threadId, lastTurnEnd = tail)
+        val current = _state.value
+        // 换了一条线程就不能带着上一条的排队消息 / 回合号 / 错误：它们会显示在新会话里、还会被回合收尾时真的发进去
+        // 只读回放就是 Idle：上一次 stop / 失败留下的 Closed / Failed 不能带进来（页面按状态判「会话打开着」，Closed 的会话会被当成已结束而不显示）
+        _state.value = if (threadId != null && threadId == current.threadId) {
+            current.copy(status = SessionStatus.Idle, items = items, lastTurnEnd = tail)
+        } else {
+            State(status = SessionStatus.Idle, items = items, threadId = threadId, lastTurnEnd = tail, options = current.options)
+        }
         true
     }
 
@@ -619,6 +626,8 @@ class CodexAppServerManager(
                     turnId = event.turnId ?: current.turnId,
                     busy = false,
                     interrupting = false,
+                    // 回合收场了，挂着的审批没有人在等它了（打断时服务端会取消它）：不清的话审批弹层和通知会一直留着，点了也只是回一个无主的应答
+                    pendingApproval = null,
                     // 一轮结束时把没来得及 completed 的增量收尾，不然它会一直挂在那儿
                     streamingText = "",
                     streamingThinking = "",

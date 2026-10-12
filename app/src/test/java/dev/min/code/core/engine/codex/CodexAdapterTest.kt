@@ -406,9 +406,10 @@ class CodexAdapterTest {
         // 打断 / 失败时历史末尾可能是半截的助手文字：结局本身证明回答没写完，照样续
         val partial = recorded.copy(items = listOf(ChatItem.UserText("u", "hi"), ChatItem.AssistantText("a", "半截")))
         assertNotNull(CodexStateMapper.map(ref, partial).resume)
-        // 进程死在回答落盘之后：回答完整，不续
-        val answered = partial.copy(lastTurnEnd = dev.min.code.core.codex.CodexTurnEnd(dev.min.code.core.codex.CodexTurnEnd.Kind.ProcessDeath))
-        assertNull(CodexStateMapper.map(ref, answered).resume)
+        // 重开的 rollout 回合开着没收尾（被杀）：结局是按事件配对判出来的，比条目末尾精确——探针里「工具调用中被杀」的 rollout
+        // 就是以一条助手消息（「我来跑一下」）收尾的，按末尾判会把它当回答已完整而吞掉 ▶
+        val killed = partial.copy(lastTurnEnd = dev.min.code.core.codex.CodexTurnEnd(dev.min.code.core.codex.CodexTurnEnd.Kind.ProcessDeath))
+        assertNotNull(CodexStateMapper.map(ref, killed).resume)
     }
 
     @Test
@@ -658,6 +659,24 @@ class CodexAdapterTest {
     }
 
     private fun assertNotNull(any: Any?) = org.junit.Assert.assertNotNull(any)
+
+    /**
+     * B9：Codex 审批通知走统一的 SessionActionReceiver（只放 notificationSafe 的按钮，按钮应答带一句拒绝说明）。
+     * 通知上只有「允许 / 拒绝」，「本会话允许」「拒绝并停止」必须回 App 里看；
+     * 带说明的 Choose（接收端对拒绝就是这么发的）Codex 要照常受理 —— 它没有「说明」这个概念，直接忽略。
+     */
+    @Test
+    fun `notification buttons are allow and deny only and a deny that carries a note is accepted`() = runBlocking<Unit> {
+        rig("turn/start" to busyTurn + approvalFrame(9, """["accept","acceptForSession","decline","cancel"]""")).use { r ->
+            val card = r.approvalOf("notify")
+            assertEquals(listOf(ApprovalOption.ALLOW, ApprovalOption.DENY), card.notificationOptions.map { it.id })
+            assertEquals(
+                CommandResult.Accepted,
+                r.session.submit(SessionCommand.Answer(id(), card.id, InteractionAnswer.Choose(ApprovalOption.DENY, "用户在通知里拒绝"))),
+            )
+            await("应答写出 decline") { r.process.writtenLines().any { it.contains("ap-9") && it.contains("\"decline\"") } }
+        }
+    }
 
     @Test
     fun `settings commands change the options the next turn carries`() = runBlocking<Unit> {

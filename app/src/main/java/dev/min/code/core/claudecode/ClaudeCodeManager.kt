@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
@@ -2050,6 +2051,8 @@ class ClaudeCodeManager(
                 // 否则对话流里留下永远「排队中」的幽灵条目。dispose() 是刻意不退的（teardown 无接收方）
                 refundHeldMessages("会话已停止，排队的消息已退回输入框")
                 shutdown()
+                // lastTurnEnd 清掉：用户有意结束会话，不再给 ▶（否则「已结束」的会话会因为 ▶ 还留在会话页上）。
+                // 之后从抽屉重开会走回放，那时按 transcript 的尾巴重新判
                 _state.update {
                     if (it.status == SessionStatus.Running || it.status == SessionStatus.Starting) {
                         it.copy(
@@ -2058,6 +2061,7 @@ class ClaudeCodeManager(
                             permissionQueue = emptyList(),
                             stopping = false,
                             applyingSettings = false,
+                            lastTurnEnd = null,
                         )
                     } else {
                         it.copy(
@@ -2065,6 +2069,7 @@ class ClaudeCodeManager(
                             permissionQueue = emptyList(),
                             stopping = false,
                             applyingSettings = false,
+                            lastTurnEnd = null,
                         )
                     }
                 }
@@ -2776,44 +2781,45 @@ class ClaudeCodeManager(
      *
      * `shutdown()` 同样排在状态复位前面，理由和 [startSession] 一字不差（调用方给的是
      * 现造的 manager；何况这一路打的字属于上一个会话，该退回输入框而不是搬过来）。
+     *
+     * 返回的 [Job] 在「回放完、进程拉起（或失败）」时结束：▶ 先接回进程再续要等它，比盯着状态流判 Starting 可靠
+     * （StateFlow 会合并快速连变，`Starting → Failed` 可能一帧都看不到）。
      */
-    fun openSession(sessionId: String) {
-        scope.launch {
-            val linuxDir = currentLinuxDir ?: resolveLinuxDir()
-            val replayed = if (linuxDir != null) {
-                sessionStore.loadTranscript(linuxDir, sessionId)
-            } else {
-                emptyList()
+    fun openSession(sessionId: String): Job = scope.launch {
+        val linuxDir = currentLinuxDir ?: resolveLinuxDir()
+        val replayed = if (linuxDir != null) {
+            sessionStore.loadTranscript(linuxDir, sessionId)
+        } else {
+            emptyList()
+        }
+        sessionMutex.withLock {
+            shutdown()
+            // 这个 manager 是新建的，`_state.value.options` 全是默认值 ——
+            // 直接拿它续会话会把模型/effort 悄悄掉回 CLI 默认（opus[1m] → 200k）。
+            // 优先用这个会话上次记下的配置，没记过就退回最近一次用过的。
+            val remembered = sessionPrefs.load(sessionId) ?: sessionPrefs.loadLast()
+            val options = remembered.copy(resumeSessionId = sessionId, newSessionId = null)
+            _state.value = SessionState(
+                status = SessionStatus.Starting,
+                options = options,
+                cwd = CwdPath.normalize(options.cwd),
+            )
+            replaying = true
+            try {
+                // 回放来自磁盘，没有吐出它的进程；hook 回调不会出现在 transcript 里
+                replayed.forEach { dispatch(it, fromProcess = NullProcess) }
+                // transcript 停在半路 = 上次被杀 / 被打断后没来得及收尾：留一条结局，▶ 据此出现
+                val tail = if (transcriptEndedMidTurn(replayed)) ClaudeTurnEnd(ClaudeTurnEnd.Kind.ProcessDeath) else null
+                _state.update { it.copy(items = it.items.keepTurnEndStamps(), lastTurnEnd = tail) }
+            } finally {
+                replaying = false
             }
-            sessionMutex.withLock {
+            runCatching { launchCli(options) }.onFailure { e ->
+                // 和 startSession 一样：启动中攥着的消息先退回输入框，再让 shutdown 清队列
+                refundHeldMessages("会话启动失败，消息已退回输入框")
                 shutdown()
-                // 这个 manager 是新建的，`_state.value.options` 全是默认值 ——
-                // 直接拿它续会话会把模型/effort 悄悄掉回 CLI 默认（opus[1m] → 200k）。
-                // 优先用这个会话上次记下的配置，没记过就退回最近一次用过的。
-                val remembered = sessionPrefs.load(sessionId) ?: sessionPrefs.loadLast()
-                val options = remembered.copy(resumeSessionId = sessionId, newSessionId = null)
-                _state.value = SessionState(
-                    status = SessionStatus.Starting,
-                    options = options,
-                    cwd = CwdPath.normalize(options.cwd),
-                )
-                replaying = true
-                try {
-                    // 回放来自磁盘，没有吐出它的进程；hook 回调不会出现在 transcript 里
-                    replayed.forEach { dispatch(it, fromProcess = NullProcess) }
-                    // transcript 停在半路 = 上次被杀 / 被打断后没来得及收尾：留一条结局，▶ 据此出现
-                    val tail = if (transcriptEndedMidTurn(replayed)) ClaudeTurnEnd(ClaudeTurnEnd.Kind.ProcessDeath) else null
-                    _state.update { it.copy(items = it.items.keepTurnEndStamps(), lastTurnEnd = tail) }
-                } finally {
-                    replaying = false
-                }
-                runCatching { launchCli(options) }.onFailure { e ->
-                    // 和 startSession 一样：启动中攥着的消息先退回输入框，再让 shutdown 清队列
-                    refundHeldMessages("会话启动失败，消息已退回输入框")
-                    shutdown()
-                    _state.update {
-                        it.copy(status = SessionStatus.Failed, errorMessage = e.message ?: e.toString())
-                    }
+                _state.update {
+                    it.copy(status = SessionStatus.Failed, errorMessage = e.message ?: e.toString())
                 }
             }
         }

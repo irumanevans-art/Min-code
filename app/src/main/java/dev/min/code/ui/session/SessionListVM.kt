@@ -54,6 +54,8 @@ class SessionListVM(
     private val agents: AgentSessionRegistry,
     /** Min 会话的元数据（置顶、分类、改名），与 Min 引擎读标题的是同一个 */
     private val minMeta: ClaudeCodeSessionMetaStore,
+    /** Codex 会话的元数据（置顶、分类、改名），threadId 当 key，与 Codex 引擎读标题的是同一个 */
+    private val codexMeta: ClaudeCodeSessionMetaStore,
     settingsStore: SettingsStore,
 ) : ViewModel() {
     /** Min 实验开关。关着时抽屉里不列 Min 的会话（会话与日志都还在，开回来原样列出） */
@@ -62,6 +64,9 @@ class SessionListVM(
 
     /** Min 引擎目录里的会话摘要（内核日志的派生索引，含「中断」标记） */
     private val _minSessions = MutableStateFlow<List<SessionSummary>>(emptyList())
+
+    /** Codex 引擎目录里的会话摘要（rollout 文件的头部） */
+    private val _codexSessions = MutableStateFlow<List<SessionSummary>>(emptyList())
 
     /** 磁盘上的 transcript（CLI 自己写的） */
     private val _diskSessions = MutableStateFlow<List<ClaudeCodeSessionStore.SessionSummary>>(emptyList())
@@ -85,7 +90,7 @@ class SessionListVM(
         val onDisk: Boolean = true,
         /** 哪个引擎的会话。抽屉据此打「Min」标签、决定行菜单里有没有导出 */
         val engine: EngineKind = EngineKind.ClaudeCode,
-        /** 最后一个回合没结束（Min 启动扫描认出来的「中断」），打开后是 ▶ */
+        /** 最后一个回合没结束（Min 启动扫描认出来的「中断」；Codex 要读整个 rollout 才知道，列表里不判），打开后是 ▶ */
         val interrupted: Boolean = false,
         /** 进行中的定时任务数（Min）：抽屉里打「定时」标记 */
         val scheduledTasks: Int = 0,
@@ -114,7 +119,8 @@ class SessionListVM(
             combine(_minSessions, agents.live, minMeta.items, minEnabled) { min, live, meta, on ->
                 MinInputs(if (on) min else emptyList(), live, meta)
             },
-        ) { claude, min ->
+            combine(_codexSessions, agents.live, codexMeta.items) { codex, live, meta -> MinInputs(codex, live, meta) },
+        ) { claude, min, codex ->
             val (disk, live, active, meta) = claude
             val running = live.filter { it.isLive }
             val liveIds = running.map { it.key }.toSet()
@@ -180,7 +186,28 @@ class SessionListVM(
                     cwd = m.cwd,
                 )
             }
-            (orphanLive + fromDisk + fromMin).sortedWith(
+            val fromCodex = codex.sessions.map { c ->
+                val extra = codex.meta[c.ref.id] ?: SessionMeta()
+                val running = codex.live.firstOrNull { it.ref == c.ref }
+                SessionEntry(
+                    id = c.ref.id,
+                    title = extra.title?.takeIf { it.isNotBlank() } ?: c.title.ifBlank { context.getString(R.string.codex_session_untitled) },
+                    updatedAt = c.updatedAt,
+                    messageCount = c.messageCount,
+                    isLive = running?.keepAlive == true,
+                    // 谁是「正在看的」由页面按当前会话的引用盖上（与 Min 一样，两边各有一个活跃项）
+                    isActive = false,
+                    pinned = extra.pinned,
+                    category = extra.category,
+                    titled = true,
+                    bodyText = c.bodyText,
+                    // Codex 的 rollout 是它自己的文件，不走 CC 的导出 / 导入
+                    onDisk = false,
+                    engine = EngineKind.Codex,
+                    cwd = c.cwd,
+                )
+            }
+            (orphanLive + fromDisk + fromMin + fromCodex).sortedWith(
                 compareByDescending<SessionEntry> { it.pinned }
                     .thenByDescending { it.isLive }
                     .thenByDescending { it.updatedAt },
@@ -194,6 +221,7 @@ class SessionListVM(
         val meta: Map<String, SessionMeta>,
     )
 
+    /** Min 与 Codex 的输入同一个形状：目录摘要 + 在线摘要 + 元数据 */
     private data class MinInputs(
         val sessions: List<SessionSummary>,
         val live: List<dev.min.code.core.engine.LiveSessionSummary>,
@@ -201,10 +229,11 @@ class SessionListVM(
     )
 
     init {
-        // Min 的索引在会话事件之后异步更新：会话的回合起落时重列一次，标题、条数、「中断」标记才跟得上
+        // Min 的索引在会话事件之后异步更新：会话的回合起落时重列一次，标题、条数、「中断」标记才跟得上。
+        // Codex 的 rollout 也是回合里落盘的，同样重列（新建的会话要等第一轮才有文件）
         viewModelScope.launch {
-            agents.live.map { list -> list.filter { it.ref.engine == EngineKind.MinAgent }.map { it.ref to it.busy } }
-                .distinctUntilChanged().debounce(MIN_RELIST_DEBOUNCE_MS).collect { reloadMin() }
+            agents.live.map { list -> list.filter { it.ref.engine != EngineKind.ClaudeCode }.map { it.ref to it.busy } }
+                .distinctUntilChanged().debounce(MIN_RELIST_DEBOUNCE_MS).collect { reloadMin(); reloadCodex() }
         }
     }
 
@@ -219,10 +248,22 @@ class SessionListVM(
         }
     }
 
+    private suspend fun reloadCodex() {
+        // rollout 读不出来（环境还没装、目录不在）不该拖垮抽屉：当作没有 Codex 会话
+        _codexSessions.value = try {
+            agents.engine(EngineKind.Codex).catalog.list()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
     /** 历史会话直接读 CLI 自己写的 transcript，不依赖 App 侧持久化 */
     fun refreshSessions() {
         viewModelScope.launch {
             reloadMin()
+            reloadCodex()
             reloadSessions()
         }
     }
@@ -247,8 +288,8 @@ class SessionListVM(
      * 状态里还留着它 id 的那一帧）时回调 [onActiveDeleted]，由调用方清掉输入框。
      */
     fun deleteSession(ref: SessionRef, onActiveDeleted: () -> Unit = {}) {
-        if (ref.engine == EngineKind.MinAgent) {
-            deleteMin(ref, onActiveDeleted)
+        if (ref.engine != EngineKind.ClaudeCode) {
+            deleteAgent(ref, onActiveDeleted)
             return
         }
         val id = ref.id
@@ -265,15 +306,16 @@ class SessionListVM(
     }
 
     /**
-     * 删一个 Min 会话：先把它从「界面打开着的」里摘掉（顺带中断在跑的回合），再经目录连根带树删干净。
-     * 在用的会话被删时回调 [onActiveDeleted]，由调用方清输入框；仍在用 / 删不掉的留给界面一句提示
+     * 删一个 Min / Codex 会话：先把它从「界面打开着的」里摘掉（顺带中断在跑的回合 / 停掉 app-server），再经目录删干净
+     * （Min 连根带树；Codex 是 rollout 文件 + 元数据 + 草稿）。在用的会话被删时回调 [onActiveDeleted]，由调用方清输入框；
+     * 仍在用 / 删不掉的留给界面一句提示
      */
-    private fun deleteMin(ref: SessionRef, onActiveDeleted: () -> Unit) {
+    private fun deleteAgent(ref: SessionRef, onActiveDeleted: () -> Unit) {
         viewModelScope.launch {
             val wasActive = agents.activeRef.value == ref
             agents.close(ref, CloseReason.Deleted)
             // 删不掉（仍在用 / 失败）时列表重列后这一行还在，用户看得见；元数据只在真删掉之后才忘
-            if (agents.engine(EngineKind.MinAgent).catalog.delete(ref.id) == DeleteResult.Deleted) minMeta.forget(ref.id)
+            if (agents.engine(ref.engine).catalog.delete(ref.id) == DeleteResult.Deleted) metaOf(ref).forget(ref.id)
             if (wasActive) onActiveDeleted()
             refreshSessions()
         }
@@ -284,16 +326,18 @@ class SessionListVM(
     fun setSessionCategory(ref: SessionRef, category: String?) =
         metaOf(ref).update(ref.id) { it.copy(category = category?.trim()?.takeIf { name -> name.isNotBlank() }) }
 
-    /** 分类名两个引擎共用一张候选表：同一个分类下可以既有 Claude 会话也有 Min 会话 */
-    fun sessionCategories(): List<String> = (sessionMeta.categories() + minMeta.categories()).distinct()
+    /** 分类名三个引擎共用一张候选表：同一个分类下可以既有 Claude 会话也有 Min / Codex 会话 */
+    fun sessionCategories(): List<String> = (sessionMeta.categories() + minMeta.categories() + codexMeta.categories()).distinct()
 
     fun renameSession(ref: SessionRef, title: String) {
         val trimmed = title.trim()
-        if (trimmed.isBlank()) return
-        if (ref.engine == EngineKind.MinAgent) {
-            // Min 的名字写进内核日志（在线与否都行），列表与 CLI 读同一个；不再存 App 自己的元数据
+        // 空名字：Codex 的元数据里清掉人手改的标题（回到第一句话拟的那个）；别的引擎没有这个语义，照旧不处理
+        if (trimmed.isBlank() && ref.engine != EngineKind.Codex) return
+        if (ref.engine != EngineKind.ClaudeCode) {
+            // Min 的名字写进内核日志（在线与否都行），列表与 CLI 读同一个；Codex 只动 App 侧元数据（rollout 不碰）。
+            // 都经引擎的 renameSession，列表才不用知道名字存在哪儿
             viewModelScope.launch {
-                agents.engine(EngineKind.MinAgent).renameSession(ref.id, trimmed)
+                agents.engine(ref.engine).renameSession(ref.id, trimmed)
                 refreshSessions()
             }
             return
@@ -318,8 +362,11 @@ class SessionListVM(
         }
     }
 
-    private fun metaOf(ref: SessionRef): ClaudeCodeSessionMetaStore =
-        if (ref.engine == EngineKind.MinAgent) minMeta else sessionMeta
+    private fun metaOf(ref: SessionRef): ClaudeCodeSessionMetaStore = when (ref.engine) {
+        EngineKind.MinAgent -> minMeta
+        EngineKind.Codex -> codexMeta
+        EngineKind.ClaudeCode -> sessionMeta
+    }
 
     // --- 会话导出 / 导入（搬 CLI 的 transcript JSONL，规则见 ClaudeCodeSessionTransfer） ---
 

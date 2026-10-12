@@ -163,9 +163,11 @@
   <string name="session_sidebar_toggle">展开或收起会话列表</string>
   <string name="session_sidebar_resize">拖动调整会话列表宽度</string>
   <string name="session_queued">排队中 · 跑完这一步就插进去</string>
+  <string name="session_queued_withdraw">排队中 · 点一下取回</string>
   <string name="session_in_use">使用中</string>
   <string name="session_interrupted">中断</string>
   <string name="engine_min">Min</string>
+  <string name="engine_codex">Codex</string>
   <string name="session_copy_transcript">复制整个会话</string>
   <string name="session_drawer_files">工作区文件</string>
   <string name="session_drawer_maintenance">环境与更新</string>
@@ -1256,13 +1258,10 @@
     <string name="session_notification_stale">已在别处处理</string>
     <string name="session_notification_waiting">等待批准：%1$s</string>
     <string name="session_notification_interaction">交互</string>
-    <string name="session_notification_codex_waiting">Codex 等待批准</string>
     <string name="session_notification_local_services">%1$d 个本地服务</string>
     <string name="session_notification_starting">正在启动…</string>
     <string name="session_notification_running">%1$d 个会话 · 运行中</string>
     <string name="session_notification_idle">%1$d 个会话 · 空闲</string>
-    <string name="session_notification_codex_running">Codex · 运行中</string>
-    <string name="session_notification_codex_idle">Codex · 空闲</string>
     <string name="session_notification_services">%1$d 个服务</string>
     <string name="session_notification_login">正在登录 Claude 订阅</string>
     <string name="session_notification_background_running">后台运行中</string>
