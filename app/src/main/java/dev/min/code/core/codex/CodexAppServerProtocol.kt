@@ -411,6 +411,17 @@ fun encodeCodexThreadResume(requestId: String, threadId: String): String =
     rpcRequest(requestId, "thread/resume", buildJsonObject { put("threadId", threadId) })
 
 /**
+ * 打断进行中的回合，**进程不死**（设计 §6.5；codex-cli 0.162.1 实测）。`threadId` 与 `turnId` 都必填，
+ * 缺 turnId 报 `-32600 missing field turnId`；没有进行中的回合报 `-32600 no active turn to interrupt`。
+ * 应答是空对象，真正的收场是随后的 `turn/completed`（status = interrupted）。
+ */
+fun encodeCodexTurnInterrupt(requestId: String, threadId: String, turnId: String): String =
+    rpcRequest(requestId, "turn/interrupt", buildJsonObject {
+        put("threadId", threadId)
+        put("turnId", turnId)
+    })
+
+/**
  * 发一轮。
  *
  * [input] 是内容块数组而不是裸字符串 —— 将来贴图要走 `{type:"localImage", path}`，

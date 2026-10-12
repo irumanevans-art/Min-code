@@ -47,6 +47,12 @@ class CodexRuntime(
     val status: StateFlow<Status> = _status.asStateFlow()
     @Volatile private var launchProfile: CodexProfile? = null
 
+    /**
+     * 装了没有：只看 rootfs 里那个可执行文件在不在，不跑命令（[refresh] 才跑 `--version` / `login status`）。
+     * 注册表判引擎可用性、通知直达会话时用——它们不能为此每次起一个 proot 进程
+     */
+    fun isInstalled(): Boolean = File(workspaceRepository.linuxDir(), CODEX_BIN.removePrefix("/")).isFile
+
     suspend fun refresh() = withContext(Dispatchers.IO) {
         val profile = settingsStore.current().activeCodexProfile
         launchProfile = profile

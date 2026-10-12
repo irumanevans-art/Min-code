@@ -9,9 +9,6 @@ sealed interface Screen : NavKey {
     @Serializable
     data object Session : Screen
 
-    @Serializable
-    data object Codex : Screen
-
     /** 工作区文件页 */
     @Serializable
     data object Files : Screen

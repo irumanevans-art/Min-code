@@ -48,7 +48,6 @@ import androidx.navigation3.ui.NavDisplay
 import dev.min.code.core.device.MinAccessibilityService
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.service.EXTRA_OPEN_CLAUDE_CODE
-import dev.min.code.core.service.EXTRA_OPEN_CODEX
 import dev.min.code.core.settings.AppLanguage
 import dev.min.code.core.settings.AppLocale
 import dev.min.code.core.settings.LocalePrefs
@@ -65,7 +64,6 @@ import dev.min.code.ui.components.LocalToaster
 import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.components.rememberInkToaster
 import dev.min.code.ui.files.WorkspaceDetailPage
-import dev.min.code.ui.codex.CodexPage
 import dev.min.code.ui.files.WorkspaceFileEditorPage
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Navigator
@@ -178,13 +176,6 @@ class MainActivity : ComponentActivity() {
                 while (stack.size > 1) stack.removeLastOrNull()
             }
         }
-        // Codex 的通知落 Codex 页：清栈后把它顶上去
-        if (intent.getBooleanExtra(EXTRA_OPEN_CODEX, false)) {
-            navStack?.let { stack ->
-                while (stack.size > 1) stack.removeLastOrNull()
-                if (stack.lastOrNull() != Screen.Codex) stack.add(Screen.Codex)
-            }
-        }
     }
 
     /** B5 直达：先打开通用会话；CC 页面在 B6 前仍读旧注册表，同步它的活跃项。 */
@@ -192,7 +183,6 @@ class MainActivity : ComponentActivity() {
         val ref = intent.sessionRef() ?: return
         navStack?.let { stack ->
             while (stack.size > 1) stack.removeLastOrNull()
-            if (ref.engine == EngineKind.Codex) stack.add(Screen.Codex)
             lifecycleScope.launch {
                 val registry: AgentSessionRegistry by inject()
                 // 冷启动时 DI 的状态流尚在读取磁盘；等就绪再打开，不能把默认 NeedsInstall 当最终结论。
@@ -231,11 +221,6 @@ class MainActivity : ComponentActivity() {
             // 冷启动那一次：栈是在这里才有的，onCreate 时还没有，routeProviderLink 无处可推
             routeProviderLink(intent)
             routeSessionNotification(intent)
-            // 旧通知也支持冷启动路由，直到 B9 保留这两个 extra。
-            if (intent.getBooleanExtra(EXTRA_OPEN_CODEX, false) && backStack.lastOrNull() != Screen.Codex) {
-                while (backStack.size > 1) backStack.removeLastOrNull()
-                backStack.add(Screen.Codex)
-            }
         }
         // 人点了要看本机页面（rootfs 开网页那张卡、终端里的本机链接）：预览槽只长在会话页，
         // 把栈退回会话页。栈底总是会话页，它的 VM 一直活着，同一条总线上的 url 由它填位展开；
@@ -290,7 +275,6 @@ class MainActivity : ComponentActivity() {
                         },
                         entryProvider = entryProvider {
                             entry<Screen.Session> { ClaudeCodePage() }
-                            entry<Screen.Codex> { CodexPage() }
                             entry<Screen.Files> { WorkspaceDetailPage(workspaceId) }
                             entry<Screen.Terminal> { WorkspaceTerminalPage(workspaceId) }
                             entry<Screen.FileEditor> { key ->

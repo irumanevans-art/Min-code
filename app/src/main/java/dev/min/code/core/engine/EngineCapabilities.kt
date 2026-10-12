@@ -169,9 +169,9 @@ data class EngineCapabilities(
         )
 
         /**
-         * Codex **现状**：停止键仍是杀 app-server（`interruptTurn = false`），所以没有 ▶（`resume = None`）。
-         * 设计表里这两格写的是「B8 起 ✓ / Prompted（B8）」，那是终态，见 [CodexWithTurnInterrupt]。
-         * 适配器按 manager 里 `turn/interrupt` 接没接上选其一，不要自己 copy。
+         * Codex。B8 起停止键是 `turn/interrupt`（只停本轮，进程不死，`interruptTurn = true`），
+         * 停下后用续跑提示接着做（`resume = Prompted`）。随包的 codex 不认 `turn/interrupt` 时 manager 自己退回杀进程
+         * （见 `CodexAppServerManager.interruptTurn`），能力位不跟着变：停止键依然能停，只是之后要先接回进程再续。
          */
         val Codex = EngineCapabilities(
             maxConcurrent = 1,
@@ -179,8 +179,8 @@ data class EngineCapabilities(
             busySend = BusySend.Queue,
             withdrawQueued = true,
             withdrawInFlight = false,
-            interruptTurn = false,
-            resume = ResumeSupport.None,
+            interruptTurn = true,
+            resume = ResumeSupport.Prompted,
             approvalAlways = true,
             questions = false,
             planMode = false,
@@ -208,8 +208,8 @@ data class EngineCapabilities(
             claudeConfigFiles = ConfigFiles.None,
         )
 
-        /** B8 之后的 Codex：`turn/interrupt` 接上了，停止只停本轮，▶ 用续跑提示（设计表里的终态） */
-        val CodexWithTurnInterrupt = Codex.copy(interruptTurn = true, resume = ResumeSupport.Prompted)
+        /** B8 之前的 Codex（停止键杀整个 app-server，没有 ▶）。只留给测试对照「没有 ▶」的引擎，产品里没有人用 */
+        val CodexWithoutInterrupt = Codex.copy(interruptTurn = false, resume = ResumeSupport.None)
 
         /**
          * Min Agent。`questions` / `planMode` 设计表写「interact 合入后 ✓」，该分支已并进 agent/m0

@@ -18,8 +18,8 @@ class EngineCapabilitiesTest {
         "busySend" to Triple("Steer", "Queue", "Steer"),
         "withdrawQueued" to Triple("true", "true", "true"),
         "withdrawInFlight" to Triple("true", "false", "false"),
-        "interruptTurn" to Triple("true", "false", "true"),
-        "resume" to Triple("Prompted", "None", "Native"),
+        "interruptTurn" to Triple("true", "true", "true"),
+        "resume" to Triple("Prompted", "Prompted", "Native"),
         "approvalAlways" to Triple("true", "true", "true"),
         "questions" to Triple("true", "false", "true"),
         "planMode" to Triple("true", "false", "true"),
@@ -64,7 +64,7 @@ class EngineCapabilitiesTest {
     fun `Claude Code column`() = assertColumn(EngineCapabilities.ClaudeCode) { it.first }
 
     @Test
-    fun `Codex column is today's state, with turn interrupt and resume still off`() =
+    fun `Codex column is the B8 end state - turn interrupt wired, resume by continue prompt`() =
         assertColumn(EngineCapabilities.Codex) { it.second }
 
     @Test
@@ -76,9 +76,9 @@ class EngineCapabilitiesTest {
     }
 
     @Test
-    fun `Codex after turn interrupt is wired only flips the two cells the design marks B8`() {
-        val before = EngineCapabilities.Codex.toTable().toMap()
-        val after = EngineCapabilities.CodexWithTurnInterrupt.toTable().toMap()
+    fun `the pre-B8 Codex differs from today's only in the two cells the design marks B8`() {
+        val before = EngineCapabilities.CodexWithoutInterrupt.toTable().toMap()
+        val after = EngineCapabilities.Codex.toTable().toMap()
         val changed = after.filter { (k, v) -> before[k] != v }
         assertEquals(mapOf("interruptTurn" to "true", "resume" to "Prompted"), changed)
     }
@@ -107,9 +107,9 @@ class EngineCapabilitiesTest {
         assertFalse(codex.supports(SessionCommand.StopSubagent("1", "th")))
         assertTrue(min.supports(SessionCommand.StopSubagent("1", "th")))
         assertFalse(codex.supports(SessionCommand.StopTask("1", "t")))
-        assertFalse(codex.supports(SessionCommand.Resume("1", "o")))
+        assertFalse(EngineCapabilities.CodexWithoutInterrupt.supports(SessionCommand.Resume("1", "o")))
         assertTrue(min.supports(SessionCommand.Resume("1", "o")))
-        assertTrue(EngineCapabilities.CodexWithTurnInterrupt.supports(SessionCommand.Resume("1", "o")))
+        assertTrue(codex.supports(SessionCommand.Resume("1", "o")))
     }
 
     @Test

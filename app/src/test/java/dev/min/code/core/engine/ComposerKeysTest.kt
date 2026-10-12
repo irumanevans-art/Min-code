@@ -115,9 +115,9 @@ class ComposerKeysTest {
 
     @Test
     fun `an engine without resume support never shows the play key`() {
-        // Codex 在接上 turn/interrupt 之前 resume = None：即使状态里有 offer 也无视
-        assertEquals(LeftKey.Hidden, keys(resume = offer(), caps = codex).left)
-        assertTrue(keys(resume = offer(), caps = EngineCapabilities.CodexWithTurnInterrupt).left is LeftKey.Resume)
+        // B8 之前的 Codex resume = None：即使状态里有 offer 也无视
+        assertEquals(LeftKey.Hidden, keys(resume = offer(), caps = EngineCapabilities.CodexWithoutInterrupt).left)
+        assertTrue(keys(resume = offer(), caps = codex).left is LeftKey.Resume)
     }
 
     // ---- 停止的含义（§10.2 拍板 2 + Esc 三档） ----
@@ -159,8 +159,9 @@ class ComposerKeysTest {
 
     @Test
     fun `stop that ends the whole session is flagged when turn interrupt is not wired`() {
-        val left = keys(turn = turn(), caps = codex).left as LeftKey.Stop
+        val left = keys(turn = turn(), caps = EngineCapabilities.CodexWithoutInterrupt).left as LeftKey.Stop
         assertTrue(left.endsSession)
+        assertFalse("B8 起 Codex 的 ■ 只停本轮", (keys(turn = turn(), caps = codex).left as LeftKey.Stop).endsSession)
         assertFalse((keys(turn = turn(), caps = cc).left as LeftKey.Stop).endsSession)
     }
 

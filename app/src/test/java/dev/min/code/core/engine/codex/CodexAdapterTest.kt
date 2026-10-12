@@ -17,6 +17,8 @@ import dev.min.code.core.engine.InterruptCause
 import dev.min.code.core.engine.LiveStream
 import dev.min.code.core.engine.PendingInteraction
 import dev.min.code.core.engine.ResumeMode
+import dev.min.code.core.engine.ResumeReason
+import dev.min.code.core.engine.CONTINUE_PROMPT
 import dev.min.code.core.engine.SendTarget
 import dev.min.code.core.engine.SessionCommand
 import dev.min.code.core.engine.SessionSignal
@@ -36,6 +38,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -383,17 +386,30 @@ class CodexAdapterTest {
     }
 
     @Test
-    fun `no play key today - capabilities say no resume, and with turn interrupt it needs a known end`() {
+    fun `the play key needs a known end - none recorded means none offered`() {
         val state = CodexAppServerManager.State(
             status = SessionStatus.Running, threadId = "t", items = listOf(ChatItem.UserText("u", "hi")), lastTurnDurationMs = 5,
         )
         val stopped = TurnEnd.Interrupted(InterruptCause.User)
-        assertNull(CodexStateMapper.map(ref, state, CodexMapContext(lastTurnEnd = stopped)).resume)
-        val ctx = CodexMapContext(lastTurnEnd = stopped, capabilities = EngineCapabilities.CodexWithTurnInterrupt)
+        // B8 之前的 Codex（停止键杀进程）没有 ▶
+        assertNull(CodexStateMapper.map(ref, state, CodexMapContext(lastTurnEnd = stopped, capabilities = EngineCapabilities.CodexWithoutInterrupt)).resume)
+        val ctx = CodexMapContext(lastTurnEnd = stopped)
         assertEquals(ResumeMode.Prompted, CodexStateMapper.map(ref, state, ctx).resume!!.mode)
-        assertNull(CodexStateMapper.map(ref, state, ctx.copy(lastTurnEnd = null)).resume)
+        assertNull("manager 没记结局（从没跑过一轮）就不出", CodexStateMapper.map(ref, state, ctx.copy(lastTurnEnd = null)).resume)
         val exited = state.copy(status = SessionStatus.Failed)
         assertEquals(ResumeMode.RelaunchThenPrompted, CodexStateMapper.map(ref, exited, ctx).resume!!.mode)
+        // manager 记的结局直接就能映射出 ▶
+        val recorded = state.copy(lastTurnEnd = dev.min.code.core.codex.CodexTurnEnd(dev.min.code.core.codex.CodexTurnEnd.Kind.Failed, 9L, "unexpected status 401 Unauthorized"))
+        val failed = CodexStateMapper.map(ref, recorded)
+        assertTrue(failed.resume!!.reason is dev.min.code.core.engine.ResumeReason.Failed)
+        assertEquals(dev.min.code.core.engine.FailureKind.Auth, (failed.lastTurn!!.end as TurnEnd.Failed).kind)
+        // 打断 / 失败时历史末尾可能是半截的助手文字：结局本身证明回答没写完，照样续
+        val partial = recorded.copy(items = listOf(ChatItem.UserText("u", "hi"), ChatItem.AssistantText("a", "半截")))
+        assertNotNull(CodexStateMapper.map(ref, partial).resume)
+        // 重开的 rollout 回合开着没收尾（被杀）：结局是按事件配对判出来的，比条目末尾精确——探针里「工具调用中被杀」的 rollout
+        // 就是以一条助手消息（「我来跑一下」）收尾的，按末尾判会把它当回答已完整而吞掉 ▶
+        val killed = partial.copy(lastTurnEnd = dev.min.code.core.codex.CodexTurnEnd(dev.min.code.core.codex.CodexTurnEnd.Kind.ProcessDeath))
+        assertNotNull(CodexStateMapper.map(ref, killed).resume)
     }
 
     @Test
@@ -404,6 +420,24 @@ class CodexAdapterTest {
         assertFalse(CodexResume.rolloutEndedMidTurn(sequenceOf(line("task_started"), line("turn_aborted"))))
         assertTrue(CodexResume.rolloutEndedMidTurn(sequenceOf(line("task_started"), line("task_complete"), line("task_started"))))
         assertFalse(CodexResume.rolloutEndedMidTurn(emptySequence()))
+    }
+
+    @Test
+    fun `rollout turn tracking pairs by turn id, a late end event of the old turn does not close the new one`() {
+        fun ev(type: String, turn: String? = null): String {
+            val id = if (turn == null) "" else ",\"turn_id\":\"$turn\""
+            return "{\"type\":\"event_msg\",\"payload\":{\"type\":\"$type\"$id}}"
+        }
+        // 实测（codex-cli 0.162.1）：三种被杀的时刻都没有收尾行；失败也写 task_complete；打断写 turn_aborted
+        assertTrue(CodexResume.rolloutEndedMidTurn(sequenceOf(ev("task_started", "a"), ev("item_completed"), ev("token_count"))))
+        assertFalse(CodexResume.rolloutEndedMidTurn(sequenceOf(ev("task_started", "a"), ev("task_complete", "a"))))
+        assertFalse(CodexResume.rolloutEndedMidTurn(sequenceOf(ev("task_started", "a"), ev("turn_aborted", "a"))))
+        // 旧回合的收尾行迟到、落在新回合开始之后：新回合仍然开着
+        assertTrue(CodexResume.rolloutEndedMidTurn(sequenceOf(ev("task_started", "a"), ev("task_started", "b"), ev("turn_aborted", "a"))))
+        // 旧格式没有 turn_id：回退成直接清
+        assertFalse(CodexResume.rolloutEndedMidTurn(sequenceOf(ev("task_started"), ev("task_complete"))))
+        // 上游没有 task_aborted 这个名字，不认
+        assertTrue(CodexResume.rolloutEndedMidTurn(sequenceOf(ev("task_started", "a"), ev("task_aborted", "a"))))
     }
 
     // ---------------------------------------------------------------- 命令转发
@@ -466,21 +500,110 @@ class CodexAdapterTest {
         }
     }
 
+    /** 第 5 个请求 = 打断（4 被用户消息的本地 id 占了）；应答空对象后收场 interrupted（codex-cli 0.162.1 实测顺序） */
+    private val interruptAck = "turn/interrupt" to listOf("""{"id":"5","result":{}}""", completed("interrupted"))
+
+    private fun ScriptedProcess.interruptFrames() = writtenLines().filter { it.contains(""""method":"turn/interrupt"""") }
+
     @Test
-    fun `Interrupt stops the whole app-server today, idle is Stale, run-queued-after is Unsupported`() = runBlocking<Unit> {
-        rig("turn/start" to busyTurn).use { r ->
+    fun `Interrupt only stops the turn - idle is Stale, a stale turn id is Stale, the process lives`() = runBlocking<Unit> {
+        rig("turn/start" to busyTurn, interruptAck).use { r ->
             assertTrue(r.session.submit(SessionCommand.Interrupt(id())) is CommandResult.Stale)
             r.session.submit(send("第一问"))
-            await("busy") { r.manager.state.value.busy }
+            await("busy 且有 turnId") { r.manager.state.value.busy && r.manager.state.value.turnId == "turn-1" }
+            await("映射里有回合") { r.session.state.value.turn?.turnId == "turn-1" }
+            assertTrue(r.session.submit(SessionCommand.Interrupt(id(), expectedTurnId = "turn-other")) is CommandResult.Stale)
+            assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.Interrupt(id(), expectedTurnId = "turn-1")))
+            await("收场") { !r.manager.state.value.busy }
+            assertEquals(1, r.process.interruptFrames().size)
+            assertFalse("进程不死", r.process.destroyed)
+            assertEquals(SessionStatus.Running, r.manager.state.value.status)
+            // 映射出 ▶，原因是用户停止；进程还在，直接代发
+            await("▶ 出现") { r.session.state.value.resume != null }
+            assertEquals(ResumeReason.UserStopped, r.session.state.value.resume!!.reason)
+            assertEquals(ResumeMode.Prompted, r.session.state.value.resume!!.mode)
+        }
+    }
+
+    @Test
+    fun `Interrupt with queued messages returns them to the input box by default, nothing is lost`() = runBlocking<Unit> {
+        rig("turn/start" to busyTurn, interruptAck).use { r ->
+            r.session.submit(send("第一问"))
+            await("busy") { r.manager.state.value.busy && r.manager.state.value.turnId == "turn-1" }
+            r.session.submit(send("排队一"))
+            r.session.submit(send("排队二"))
+            await("排队进映射") { r.session.state.value.queuedCount == 2 }
+
+            val withdrawn = async { withTimeout(5_000) { r.session.signals.first { it is SessionSignal.Withdrawn } } }
+            delay(100)
+            assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.Interrupt(id())))
+            // §10.2 拍板 2：■ 默认打断并把排队的退回输入框，一次合成一段
+            assertEquals("排队一\n\n排队二", (withdrawn.await() as SessionSignal.Withdrawn).input.text)
+            await("收场") { !r.manager.state.value.busy }
+            assertEquals(emptyList<String>(), r.manager.state.value.queued)
+            assertEquals("没有新的一轮被放出去", 1, r.process.turnStarts())
+        }
+    }
+
+    @Test
+    fun `Interrupt with runQueuedAfter lets the queue run on after the interrupted turn`() = runBlocking<Unit> {
+        rig("turn/start" to busyTurn, interruptAck).use { r ->
+            r.session.submit(send("第一问"))
+            await("busy") { r.manager.state.value.busy && r.manager.state.value.turnId == "turn-1" }
             r.session.submit(send("排队一"))
             await("排队进映射") { r.session.state.value.queuedCount == 1 }
-            assertEquals(CommandResult.Unsupported, r.session.submit(SessionCommand.Interrupt(id(), runQueuedAfter = true)))
-            assertTrue(r.session.submit(SessionCommand.Interrupt(id(), expectedTurnId = "turn-other")) is CommandResult.Stale)
-            assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.Interrupt(id())))
-            await("进程被停") { r.process.destroyed }
-            await("状态 Closed") { r.manager.state.value.status == SessionStatus.Closed }
-            // 排队的话还在 queued 里，没丢（重启后由界面决定）
-            assertEquals(listOf("排队一"), r.manager.state.value.queued)
+            assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.Interrupt(id(), runQueuedAfter = true)))
+            await("排队的紧接着跑") { r.process.turnStarts() == 2 }
+            assertEquals("排队一", r.process.lastTurnStart()["input"]!!.jsonArray.first().jsonObject["text"]!!.jsonPrimitive.content)
+        }
+    }
+
+    // ---------------------------------------------------------------- ▶
+
+    @Test
+    fun `Resume sends the continue prompt as a new turn and the play key goes away`() = runBlocking<Unit> {
+        rig("turn/start" to busyTurn, interruptAck).use { r ->
+            r.session.submit(send("第一问"))
+            await("busy") { r.manager.state.value.busy && r.manager.state.value.turnId == "turn-1" }
+            r.session.submit(SessionCommand.Interrupt(id()))
+            await("▶ 出现") { r.session.state.value.resume != null }
+            val offer = r.session.state.value.resume!!
+
+            assertTrue(r.session.submit(SessionCommand.Resume(id(), "stale-offer")) is CommandResult.Stale)
+            assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.Resume(id(), offer.offerId)))
+            await("续跑提示写出") { r.process.turnStarts() == 2 }
+            assertEquals(CONTINUE_PROMPT, r.process.lastTurnStart()["input"]!!.jsonArray.first().jsonObject["text"]!!.jsonPrimitive.content)
+            await("▶ 收起") { r.session.state.value.resume == null }
+            // 转录里画成分隔线
+            assertTrue(r.session.state.value.items.any { it is ChatItem.UserText && it.continuation && it.text == CONTINUE_PROMPT })
+        }
+    }
+
+    @Test
+    fun `Resume on a session whose process is gone relaunches first, then sends the prompt`() = runBlocking<Unit> {
+        val relaunched = mutableListOf<String>()
+        val manager = CodexAppServerManager { error("不该起进程") }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        // 读回放、rollout 停在半路：没有进程，结局是 ProcessDeath
+        manager.restore(listOf(ChatItem.UserText("u", "旧问题")), "t", endedMidTurn = true)
+        val session = CodexSession(manager, "t", scope, relaunch = { threadId ->
+            relaunched += threadId
+            // 引擎的 relaunch 在真实里是 prepare + start(resume) + 等就绪；这里换一个起得来的 manager 不现实，
+            // 只验证会话在进程没了的时候先走 relaunch、relaunch 失败就不发话
+            false
+        })
+        try {
+            await("▶ 出现") { session.state.value.resume != null }
+            val offer = session.state.value.resume!!
+            assertEquals(ResumeMode.RelaunchThenPrompted, offer.mode)
+            assertEquals(ResumeReason.ProcessDeath(null), offer.reason)
+            val rejected = session.submit(SessionCommand.Resume(id(), offer.offerId))
+            assertTrue(rejected.toString(), rejected is CommandResult.Rejected)
+            assertEquals(listOf("t"), relaunched)
+            assertEquals("接不回来就不发话", emptyList<String>(), manager.state.value.items.filterIsInstance<ChatItem.UserText>().filter { it.text == CONTINUE_PROMPT }.map { it.text })
+        } finally {
+            scope.cancel()
+            manager.close()
         }
     }
 
@@ -537,6 +660,24 @@ class CodexAdapterTest {
 
     private fun assertNotNull(any: Any?) = org.junit.Assert.assertNotNull(any)
 
+    /**
+     * B9：Codex 审批通知走统一的 SessionActionReceiver（只放 notificationSafe 的按钮，按钮应答带一句拒绝说明）。
+     * 通知上只有「允许 / 拒绝」，「本会话允许」「拒绝并停止」必须回 App 里看；
+     * 带说明的 Choose（接收端对拒绝就是这么发的）Codex 要照常受理 —— 它没有「说明」这个概念，直接忽略。
+     */
+    @Test
+    fun `notification buttons are allow and deny only and a deny that carries a note is accepted`() = runBlocking<Unit> {
+        rig("turn/start" to busyTurn + approvalFrame(9, """["accept","acceptForSession","decline","cancel"]""")).use { r ->
+            val card = r.approvalOf("notify")
+            assertEquals(listOf(ApprovalOption.ALLOW, ApprovalOption.DENY), card.notificationOptions.map { it.id })
+            assertEquals(
+                CommandResult.Accepted,
+                r.session.submit(SessionCommand.Answer(id(), card.id, InteractionAnswer.Choose(ApprovalOption.DENY, "用户在通知里拒绝"))),
+            )
+            await("应答写出 decline") { r.process.writtenLines().any { it.contains("ap-9") && it.contains("\"decline\"") } }
+        }
+    }
+
     @Test
     fun `settings commands change the options the next turn carries`() = runBlocking<Unit> {
         rig("turn/start" to busyTurn).use { r ->
@@ -575,7 +716,8 @@ class CodexAdapterTest {
     @Test
     fun `commands Codex cannot do are Unsupported, Rename touches only the app-side meta`() = runBlocking<Unit> {
         rig().use { r ->
-            assertEquals(CommandResult.Unsupported, r.session.submit(SessionCommand.Resume(id(), "o")))
+            // ▶ 从 B8 起 Codex 也有：没有可继续的回合就是 Stale，不是 Unsupported
+            assertTrue(r.session.submit(SessionCommand.Resume(id(), "o")) is CommandResult.Stale)
             assertEquals(CommandResult.Unsupported, r.session.submit(SessionCommand.RunShell(id(), "ls")))
             assertEquals(CommandResult.Unsupported, r.session.submit(SessionCommand.StopSubagent(id(), "t")))
             assertEquals(CommandResult.Unsupported, r.session.submit(SessionCommand.StopTask(id(), "t")))

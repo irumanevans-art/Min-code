@@ -98,10 +98,27 @@ class EngineUiTest {
         assertFalse(EngineUi.dailyCost(EngineKind.Codex))
     }
 
-    @Test fun `only Min rows carry an engine tag in the drawer`() {
+    @Test fun `Min and Codex rows carry an engine tag in the drawer, Claude Code is the default and carries none`() {
         assertEquals(R.string.engine_min, EngineUi.tag(EngineKind.MinAgent))
+        assertEquals(R.string.engine_codex, EngineUi.tag(EngineKind.Codex))
         assertNull(EngineUi.tag(EngineKind.ClaudeCode))
-        assertNull(EngineUi.tag(EngineKind.Codex))
+    }
+
+    @Test fun `Codex has its own settings sheet, the others use the generic one`() {
+        assertEquals(SettingsSheetKind.Codex, EngineUi.settingsSheet(EngineKind.Codex))
+        assertEquals(SettingsSheetKind.Generic, EngineUi.settingsSheet(EngineKind.ClaudeCode))
+        assertEquals(SettingsSheetKind.Generic, EngineUi.settingsSheet(EngineKind.MinAgent))
+    }
+
+    @Test fun `Codex permission levels are localised by id, the other engines bring their own labels`() {
+        assertEquals(R.string.codex_permission_read_only, EngineUi.modeLabelRes(EngineKind.Codex, "read-only"))
+        assertEquals(R.string.codex_permission_auto, EngineUi.modeLabelRes(EngineKind.Codex, "auto"))
+        assertEquals(R.string.codex_permission_full_access, EngineUi.modeLabelRes(EngineKind.Codex, "full-access"))
+        assertEquals(R.string.codex_permission_full_access_desc, EngineUi.modeDescRes(EngineKind.Codex, "full-access"))
+        // 不在三档之内（custom）要显示两个协议值，不能被硬翻成某一档
+        assertNull(EngineUi.modeLabelRes(EngineKind.Codex, "custom"))
+        assertNull(EngineUi.modeLabelRes(EngineKind.ClaudeCode, "auto"))
+        assertNull(EngineUi.modeLabelRes(EngineKind.MinAgent, "auto"))
     }
 
     @Test fun `a drawer row is active by the page's shown session, not by the legacy flag alone`() {
@@ -109,8 +126,27 @@ class EngineUiTest {
         assertFalse(EngineUi.isEntryActive(claudeRef, legacyActive = true, shown = minRef))
         assertTrue(EngineUi.isEntryActive(claudeRef, legacyActive = true, shown = claudeRef))
         assertFalse(EngineUi.isEntryActive(claudeRef, legacyActive = false, shown = claudeRef))
-        // Min 行：只比引用
+        // Min / Codex 行：只比引用
         assertTrue(EngineUi.isEntryActive(minRef, legacyActive = false, shown = minRef))
         assertFalse(EngineUi.isEntryActive(minRef, legacyActive = true, shown = claudeRef))
+        val codexRef = SessionRef(EngineKind.Codex, "thread-1")
+        assertTrue(EngineUi.isEntryActive(codexRef, legacyActive = false, shown = codexRef))
+        assertFalse(EngineUi.isEntryActive(codexRef, legacyActive = false, shown = claudeRef))
+    }
+
+    @Test fun `the engine segment lists Claude Code, then Codex when it is wired, then Min when it is on`() {
+        assertEquals(listOf(EngineKind.ClaudeCode), StartEngines.ClaudeOnly.segments)
+        val codex = CodexStart(dev.min.code.core.codex.CodexRuntime.Status(), {}, {}, {})
+        val withCodex = StartEngines(minVisible = false, availability = emptyMap(), minChoices = null, initial = EngineKind.ClaudeCode, onChoose = {}, codex = codex)
+        assertEquals(listOf(EngineKind.ClaudeCode, EngineKind.Codex), withCodex.segments)
+        assertEquals(listOf(EngineKind.ClaudeCode, EngineKind.Codex, EngineKind.MinAgent), withCodex.copy(minVisible = true).segments)
+    }
+
+    @Test fun `tap-to-take-back on queued messages is offered where the adapter can really withdraw`() {
+        assertTrue(EngineUi.tapToWithdraw(EngineCapabilities.Codex, EngineKind.Codex))
+        assertTrue(EngineUi.tapToWithdraw(EngineCapabilities.MinAgent, EngineKind.MinAgent))
+        // CC 的适配器还没接按 id 撤回：不给一个点了没反应的气泡
+        assertFalse(EngineUi.tapToWithdraw(EngineCapabilities.ClaudeCode, EngineKind.ClaudeCode))
+        assertFalse(EngineUi.tapToWithdraw(EngineCapabilities.Codex.copy(withdrawQueued = false), EngineKind.Codex))
     }
 }

@@ -82,8 +82,8 @@ class OfferResumeTest {
 
     @Test
     fun `an engine without resume support never offers it`() {
-        assertNull(offer(caps = EngineCapabilities.Codex))
-        assertEquals("t7", offer(caps = EngineCapabilities.CodexWithTurnInterrupt)?.offerId)
+        assertNull(offer(caps = EngineCapabilities.CodexWithoutInterrupt))
+        assertEquals("t7", offer(caps = EngineCapabilities.Codex)?.offerId)
     }
 
     @Test

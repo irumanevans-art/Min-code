@@ -25,6 +25,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -254,8 +255,14 @@ class ClaudeAdapterPureTest {
         val exited = running.copy(status = SessionStatus.Closed)
         val offer = ClaudeStateMapper.map(ref, exited, ClaudeMapContext(lastTurnEnd = TurnEnd.Interrupted(InterruptCause.EngineExited))).resume!!
         assertEquals(ResumeMode.RelaunchThenPrompted, offer.mode)
-        // 回答已经完整落盘：不续（会变成 assistant prefill）
+        // 进程死亡 / 引擎退出：结局是引擎按**事件**判出来的（重开的 transcript 停在半路才会记这一条，见 transcriptEndedMidTurn），
+        // 比条目末尾精确——工具调用前那句「我来跑一下」、API 报错说明都是助手条目，按末尾判会把它们当成回答已完整而吞掉 ▶。
+        // 回答真完整的 transcript 根本不会记这个结局（ClaudeResumeFlowTest「…one that ended with an answer does not」）
         val answered = running.copy(items = listOf(ChatItem.UserText("u", "hi"), ChatItem.AssistantText("a", "ok")))
-        assertNull(ClaudeStateMapper.map(ref, answered, ClaudeMapContext(lastTurnEnd = TurnEnd.Interrupted(InterruptCause.User))).resume)
+        assertNotNull(ClaudeStateMapper.map(ref, answered, ClaudeMapContext(lastTurnEnd = TurnEnd.Interrupted(InterruptCause.ProcessDeath))).resume)
+        assertNotNull(ClaudeStateMapper.map(ref, answered, ClaudeMapContext(lastTurnEnd = TurnEnd.Interrupted(InterruptCause.EngineExited))).resume)
+        // 用户打断 / 请求失败：结局本身证明回答没写完（条目末尾的助手文字是半截或 CLI 合成的错误说明），照样续
+        assertNotNull(ClaudeStateMapper.map(ref, answered, ClaudeMapContext(lastTurnEnd = TurnEnd.Interrupted(InterruptCause.User))).resume)
+        assertNotNull(ClaudeStateMapper.map(ref, answered, ClaudeMapContext(lastTurnEnd = TurnEnd.Failed(null, "boom"))).resume)
     }
 }

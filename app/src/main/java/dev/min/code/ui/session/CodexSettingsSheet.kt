@@ -1,4 +1,4 @@
-package dev.min.code.ui.codex
+package dev.min.code.ui.session
 
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Column
@@ -11,23 +11,18 @@ import androidx.compose.ui.res.stringResource
 import dev.min.code.R
 import dev.min.code.core.codex.CODEX_EFFORT_LEVELS
 import dev.min.code.core.codex.CODEX_REASONING_SUMMARIES
-import dev.min.code.core.codex.CodexAppServerManager
 import dev.min.code.core.codex.CodexPermissionPreset
-import dev.min.code.core.codex.codexPermissionWire
-import dev.min.code.core.codex.permissionPreset
-import dev.min.code.ui.session.AccordionSection
-import dev.min.code.ui.session.CwdPickerSheet
-import dev.min.code.ui.session.OptionRow
-import dev.min.code.ui.session.SessionSettingsFrame
-import dev.min.code.ui.session.SettingsInlineInput
-import dev.min.code.ui.session.SettingsSubHeader
+import dev.min.code.core.engine.AgentSessionState
+import dev.min.code.core.engine.EngineKind
+import dev.min.code.core.engine.codex.CodexStateMapper
 import me.rerere.workspace.WorkspaceFileEntry
 
 /**
- * Codex 的会话设置：模型 / 权限 / 思考强度 / 思考摘要 / 工作目录。
+ * Codex 的会话设置：模型 / 权限 / 思考强度 / 思考摘要 / 工作目录，加一个连接方式入口。
  *
- * 和 Claude 那张（`ClaudeCodeSettingsSheet`）是同一种面板——外观件全在 `ui/session/SessionSettingsParts.kt`，
- * 这里只摆 Codex 自己有的几栏。理由也一样：几样低频设置收成一行行概览，点哪个展开哪个。
+ * 和 Claude 那张（`ClaudeCodeSettingsSheet`）是同一种面板——外观件全在 `SessionSettingsParts.kt`，
+ * 这里只摆 Codex 自己有的几栏（用哪一张由 [EngineUi.settingsSheet] 定）。B9 之前它住在 `ui/codex/`，读的是
+ * `CodexAppServerManager.Options`；现在读通用的 [AgentSessionState]、改动经回调变成 `SessionCommand`，不碰引擎类型。
  *
  * ## 和 Claude 那张的差别
  *
@@ -44,33 +39,19 @@ internal enum class CodexSettingsSection(@StringRes val labelRes: Int) {
     CWD(R.string.session_section_cwd),
 }
 
-/** 本地斜杠命令打开哪一栏；null = 不是会话设置的事（`/new`） */
-internal fun CodexSlash.toSection(): CodexSettingsSection? = when (this) {
-    CodexSlash.MODEL -> CodexSettingsSection.MODEL
-    CodexSlash.EFFORT -> CodexSettingsSection.EFFORT
-    CodexSlash.PERMISSIONS, CodexSlash.APPROVALS -> CodexSettingsSection.PERMISSIONS
-    CodexSlash.CD -> CodexSettingsSection.CWD
-    CodexSlash.NEW -> null
-}
-
-@StringRes
-internal fun CodexPermissionPreset.labelRes(): Int = when (this) {
-    CodexPermissionPreset.READ_ONLY -> R.string.codex_permission_read_only
-    CodexPermissionPreset.AUTO -> R.string.codex_permission_auto
-    CodexPermissionPreset.FULL_ACCESS -> R.string.codex_permission_full_access
-}
-
-@StringRes
-private fun CodexPermissionPreset.descRes(): Int = when (this) {
-    CodexPermissionPreset.READ_ONLY -> R.string.codex_permission_read_only_desc
-    CodexPermissionPreset.AUTO -> R.string.codex_permission_auto_desc
-    CodexPermissionPreset.FULL_ACCESS -> R.string.codex_permission_full_access_desc
+/** 本地斜杠命令（通用输入栏拦下的那几条）打开 Codex 面板的哪一栏；null = 不是设置的事 */
+internal fun LocalSlash.toCodexSection(): CodexSettingsSection? = when (this) {
+    LocalSlash.MODEL -> CodexSettingsSection.MODEL
+    LocalSlash.EFFORT -> CodexSettingsSection.EFFORT
+    LocalSlash.PERMISSION -> CodexSettingsSection.PERMISSIONS
+    LocalSlash.CWD -> CodexSettingsSection.CWD
+    LocalSlash.NEW, LocalSlash.MCP, LocalSlash.AGENTS, LocalSlash.MEMORY, LocalSlash.CONFIG, LocalSlash.HOOKS -> null
 }
 
 /** 权限那一栏的当前值：落在某一档就写档名，否则直接写两个协议值——宁可难看也不能写错 */
 @Composable
-internal fun CodexAppServerManager.Options.permissionLabel(): String =
-    permissionPreset?.let { stringResource(it.labelRes()) } ?: codexPermissionWire(approvalPolicy, sandbox)
+internal fun AgentSessionState.codexPermissionLabel(): String =
+    modeTitle(EngineKind.Codex, settings.mode)
 
 @Composable
 private fun summaryHint(summary: String): String? = when (summary) {
@@ -83,63 +64,64 @@ private fun summaryHint(summary: String): String? = when (summary) {
 
 @Composable
 internal fun CodexSettingsSheet(
-    /** 这条会话此刻的设置（manager 里那份），面板只读它、改动经回调回到 manager */
-    options: CodexAppServerManager.Options,
-    /** 一轮正在跑：改动要等下一轮 */
-    turnRunning: Boolean,
+    /** 这条会话此刻的设置（通用状态里那份），面板只读它、改动经回调变成命令 */
+    session: AgentSessionState,
     /** 连接配置里的模型，也就是新会话的默认；空 = 没设 */
     profileModel: String?,
     initialSection: CodexSettingsSection?,
     onDismiss: () -> Unit,
+    /** null = 不传，用 Codex 自己的默认 */
     onSetModel: (String?) -> Unit,
-    onSetPermission: (CodexPermissionPreset) -> Unit,
+    onSetPermission: (String) -> Unit,
     onSetEffort: (String?) -> Unit,
     onSetSummary: (String?) -> Unit,
     onSetCwd: (String) -> Unit,
     onListCwd: suspend (String) -> Result<List<WorkspaceFileEntry>>,
     onCreateCwd: (String, String, (Result<String>) -> Unit) -> Unit,
+    onOpenConnection: () -> Unit,
 ) {
     var open by remember { mutableStateOf(initialSection) }
     val unset = stringResource(R.string.codex_unset_sub)
+    val settings = session.settings
+    val model = settings.model?.id?.takeIf { it.isNotEmpty() }
+    val effort = settings.effort?.id?.takeIf { it.isNotEmpty() }
+    val summary = settings.extra(CodexStateMapper.OPTION_SUMMARY)?.value?.takeIf { it.isNotEmpty() }
     SessionSettingsFrame(
         title = stringResource(R.string.session_settings_title),
-        busy = turnRunning,
+        busy = session.busy,
         busyLabel = stringResource(R.string.codex_settings_busy_turn),
         onDismiss = onDismiss,
     ) {
         SettingsSubHeader(stringResource(R.string.codex_settings_scope))
 
-        Section(CodexSettingsSection.MODEL, options.model ?: stringResource(R.string.session_model_default), open, { open = it }) {
-            ModelPicker(current = options.model, profileModel = profileModel, unsetHint = unset, onPick = onSetModel)
+        Section(CodexSettingsSection.MODEL, model ?: stringResource(R.string.session_model_default), open, { open = it }) {
+            ModelPicker(current = model, profileModel = profileModel, unsetHint = unset, onPick = onSetModel)
         }
 
-        Section(CodexSettingsSection.PERMISSIONS, options.permissionLabel(), open, { open = it }) {
+        Section(CodexSettingsSection.PERMISSIONS, session.codexPermissionLabel(), open, { open = it }) {
             SettingsSubHeader(stringResource(R.string.codex_permission_wire_hint))
-            val current = options.permissionPreset
-            if (current == null) {
-                SettingsSubHeader(
-                    stringResource(R.string.codex_permission_custom, codexPermissionWire(options.approvalPolicy, options.sandbox)),
-                )
+            if (settings.mode.id == CodexStateMapper.MODE_CUSTOM) {
+                SettingsSubHeader(stringResource(R.string.codex_permission_custom, settings.mode.label))
             }
             CodexPermissionPreset.entries.forEach { preset ->
                 OptionRow(
-                    title = stringResource(preset.labelRes()),
-                    subtitle = stringResource(preset.descRes()) + "\n" + preset.wireSummary,
-                    selected = preset == current,
-                    onClick = { onSetPermission(preset) },
+                    title = stringResource(codexPresetLabelRes(preset)),
+                    subtitle = stringResource(codexPresetDescRes(preset)) + "\n" + preset.wireSummary,
+                    selected = preset.id == settings.mode.id,
+                    onClick = { onSetPermission(preset.id) },
                 )
             }
         }
 
         Section(
             CodexSettingsSection.EFFORT,
-            options.effort ?: stringResource(R.string.codex_effort_default),
+            effort ?: stringResource(R.string.codex_effort_default),
             open,
             { open = it },
         ) {
             ValueRows(
                 values = CODEX_EFFORT_LEVELS,
-                current = options.effort,
+                current = effort,
                 unsetHint = unset,
                 hint = { null },
                 onPick = onSetEffort,
@@ -148,25 +130,25 @@ internal fun CodexSettingsSheet(
 
         Section(
             CodexSettingsSection.SUMMARY,
-            options.summary ?: stringResource(R.string.codex_effort_default),
+            summary ?: stringResource(R.string.codex_effort_default),
             open,
             { open = it },
         ) {
             SettingsSubHeader(stringResource(R.string.codex_summary_hint))
             ValueRows(
                 values = CODEX_REASONING_SUMMARIES,
-                current = options.summary,
+                current = summary,
                 unsetHint = unset,
                 hint = { summaryHint(it) },
                 onPick = onSetSummary,
             )
         }
 
-        Section(CodexSettingsSection.CWD, options.cwd, open, { open = it }) {
+        Section(CodexSettingsSection.CWD, session.cwd, open, { open = it }) {
             SettingsSubHeader(stringResource(R.string.codex_cwd_hint))
             // asSheet = false：已经在一张 sheet 里了，再套一层两张会互相抢手势
             CwdPickerSheet(
-                current = options.cwd,
+                current = session.cwd,
                 onPick = onSetCwd,
                 onDismiss = {},
                 onList = onListCwd,
@@ -174,6 +156,14 @@ internal fun CodexSettingsSheet(
                 asSheet = false,
             )
         }
+
+        // 连接方式（API key / 中转 / CLI 登录、默认模型与强度）：设一次就不再看，所以只留一行入口，点开是另一张 sheet
+        OptionRow(
+            title = stringResource(R.string.codex_connection),
+            subtitle = stringResource(R.string.codex_connection_open),
+            selected = false,
+            onClick = onOpenConnection,
+        )
     }
 }
 

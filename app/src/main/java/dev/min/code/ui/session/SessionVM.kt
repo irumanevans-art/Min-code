@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import dev.min.code.R
 import dev.min.code.core.claudecode.ClaudeCodeCostLedger
 import dev.min.code.core.claudecode.ClaudeCodeManager
@@ -26,6 +28,12 @@ import dev.min.code.core.claudecode.ClaudeCodePermissionMode
 import dev.min.code.core.claudecode.ClaudeCodeSessionRegistry
 import dev.min.code.core.claudecode.ComposerDraft
 import dev.min.code.core.claudecode.ComposerDraftStore
+import dev.min.code.core.codex.CodexDraftStore
+import dev.min.code.core.codex.CodexRuntime
+import dev.min.code.core.settings.CodexAuthMode
+import dev.min.code.core.settings.CodexProfile
+import dev.min.code.core.engine.codex.CodexStateMapper
+import kotlinx.coroutines.Dispatchers
 import dev.min.code.core.claudecode.DraftImage
 import dev.min.code.core.engine.AgentSession
 import dev.min.code.core.engine.AgentSessionRegistry
@@ -68,6 +76,12 @@ import java.util.UUID
  * 从原来的 ClaudeCodeVM 拆出来（M2-B B6a），B6(b) 起页面读的是引擎无关的类型：状态是 [AgentSessionState]，
  * 逐字增量是 [LiveStream]，写入一律是 [SessionCommand] 经 [AgentSession.submit]。
  *
+ * ## B9：Codex 也经统一注册表
+ *
+ * Min 与 Codex 的会话由 [AgentSessionRegistry] 管，页面读的是同一个活跃会话（[agentSession]）；Codex 的安装 / 登录 / 连接方式
+ * （`CodexRuntime`、连接配置表）是它自己的环境，开始面板上的 Codex 一栏经本类读写。Codex 的输入框草稿并进统一的草稿盘
+ * （旧的 `codex-drafts.json` 一次性迁移，见 [migrateCodexDrafts]）。
+ *
  * ## 为什么建 / 开 / 关会话仍走旧注册表
  *
  * 设计 §3.10 写的是经 `AgentSessionRegistry.create/open/close`，但那条路和现行为有三处不一样，B6 要求行为不变：
@@ -88,24 +102,29 @@ class SessionVM(
     private val costLedger: ClaudeCodeCostLedger,
     private val settingsStore: SettingsStore,
     private val drafts: ComposerDraftStore,
-    /** Min 的会话由它管（B6 起 Claude Code 仍走 [registry]，见本类头注释） */
+    /** Min 与 Codex 的会话由它管（B6 起 Claude Code 仍走 [registry]，见本类头注释） */
     private val agents: AgentSessionRegistry,
     foreground: dev.min.code.core.service.AppForeground,
+    /** Codex 的安装 / 登录状态与 app-server 启动配置 */
+    private val codexRuntime: CodexRuntime,
+    /** 旧 Codex 页的输入框草稿盘：只在启动时一次性迁进 [drafts]，之后不再写 */
+    private val oldCodexDrafts: CodexDraftStore,
 ) : ViewModel() {
     /** Min 实验开关。关着时 Min 的会话不显示（引擎已被停下、会话文件还在，见 [dev.min.code.core.settings.AppSettings.minAgentEnabled]） */
     val minEnabled: StateFlow<Boolean> = settingsStore.settings.map { it.minAgentEnabled }
         .stateIn(viewModelScope, SharingStarted.Eagerly, settingsStore.snapshot?.minAgentEnabled ?: false)
 
-    private val minSession: StateFlow<AgentSession?> = combine(agents.active, minEnabled) { session, on ->
-        session?.takeIf { on && it.ref.engine == EngineKind.MinAgent }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, agents.active.value?.takeIf { minEnabled.value && it.ref.engine == EngineKind.MinAgent })
+    /** 统一注册表的活跃会话（Min 或 Codex）。Min 关着时它的会话不显示；Codex 没有开关 */
+    private val agentSession: StateFlow<AgentSession?> = combine(agents.active, minEnabled) { session, on ->
+        session?.takeIf { shownBy(it, on) }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, agents.active.value?.takeIf { shownBy(it, minEnabled.value) })
 
     /**
      * 显示哪一边。新建 / 打开时显式设（旧注册表的活跃项没变就不会发射），通知等外部切换由 [focusChanges] 跟上。
      * 初值：有 Claude 活跃会话就是它，否则看 Min。
      */
     private val focus = MutableStateFlow(
-        if (engine.activeSession.value == null && minSession.value != null) Shown.Min else Shown.ClaudeCode,
+        if (engine.activeSession.value == null && agentSession.value != null) Shown.Agents else Shown.ClaudeCode,
     )
 
     init {
@@ -114,11 +133,21 @@ class SessionVM(
 
     /** 当前活跃的会话（通用接口）。没有时 null */
     private val active: StateFlow<AgentSession?> =
-        combine(focus, engine.activeSession, minSession, ::shownSession)
-            .stateIn(viewModelScope, SharingStarted.Eagerly, shownSession(focus.value, engine.activeSession.value, minSession.value))
+        combine(focus, engine.activeSession, agentSession, ::shownSession)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, shownSession(focus.value, engine.activeSession.value, agentSession.value))
 
     /** 信任卡、MCP 批准 / 面板、登录确认的状态与动作（读页面此刻显示的会话的能力，见 [SessionExtras]） */
     internal val extras = SessionExtras(context, viewModelScope, active, agents, settingsStore, foreground)
+
+    /** Codex 的安装 / 登录状态（开始面板的 Codex 一栏读它） */
+    val codexStatus: StateFlow<CodexRuntime.Status> = codexRuntime.status
+
+    /** Codex 的全部连接配置与当前选中的那条（连接方式面板读它） */
+    val codexProfiles: StateFlow<List<CodexProfile>> = settingsStore.settings.map { it.codexProfiles }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val codexProfile: StateFlow<CodexProfile> = settingsStore.settings
+        .map { it.activeCodexProfile ?: CodexProfile(id = CODEX_DEFAULT_PROFILE_ID) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CodexProfile(id = CODEX_DEFAULT_PROFILE_ID))
 
     /** 开始面板上 Min 专有的选项（供应商档 / 模型 / 权限模式）；没有 Min 引擎时 null */
     val startChoices: StateFlow<StartChoices?> = (agents.engines.firstOrNull { it.kind == EngineKind.MinAgent }?.startChoices
@@ -132,11 +161,13 @@ class SessionVM(
     /** 开始面板默认选中的引擎 = 上次用的（没选过是 Claude Code）；Min 关着时退回 Claude Code */
     val startEngine: StateFlow<EngineKind> = combine(settingsStore.settings, minEnabled) { settings, minOn ->
         EngineKind.entries.firstOrNull { it.name == settings.lastStartEngine }
-            ?.takeIf { it != EngineKind.Codex && (it != EngineKind.MinAgent || minOn) } ?: EngineKind.ClaudeCode
+            ?.takeIf { it != EngineKind.MinAgent || minOn } ?: EngineKind.ClaudeCode
     }.stateIn(viewModelScope, SharingStarted.Eagerly, EngineKind.ClaudeCode)
 
     fun rememberStartEngine(kind: EngineKind) {
         viewModelScope.launch { settingsStore.setLastStartEngine(kind.name) }
+        // 选中 Codex 时读一次它的安装 / 登录状态（要在 proot 里跑两条命令，不在每次进页面时无谓地跑）
+        if (kind == EngineKind.Codex) refreshCodex()
     }
 
     /** 活跃会话所属引擎能做什么：页面按它决定哪些控件出现（设计 §3.8），不按引擎种类写分支 */
@@ -165,8 +196,8 @@ class SessionVM(
      * 但草稿必须立刻能落盘，所以输入框钉在这个 key 上。
      */
     val activeSessionKey: StateFlow<String?> = combine(active, registry.activeKey) { session, claudeKey ->
-        // Min 的会话没有「CLI 还没回报 id」那一段，草稿直接按 storageKey 钉
-        session?.ref?.takeIf { it.engine == EngineKind.MinAgent }?.storageKey ?: claudeKey
+        // Min / Codex 的会话没有「CLI 还没回报 id」那一段，草稿直接按 storageKey 钉
+        session?.ref?.takeIf { it.engine != EngineKind.ClaudeCode }?.storageKey ?: claudeKey
     }.stateIn(viewModelScope, SharingStarted.Eagerly, registry.activeKey.value)
 
     /**
@@ -251,6 +282,8 @@ class SessionVM(
         }
         // 进程被 FGS 保活、页面重建时，注册表里的会话还在，草稿要从磁盘接回来
         activeSessionKey.value?.let { attachComposer(it) }
+        // 旧 Codex 页的草稿并进统一草稿盘（一次性，之后旧盘是空的）
+        viewModelScope.launch(Dispatchers.IO) { migrateCodexDrafts(oldCodexDrafts, drafts) }
     }
 
     // --- 会话（多会话：注册表持有多个 manager，各自一个 CLI 进程） ---
@@ -264,6 +297,10 @@ class SessionVM(
             createMin(StartOptions(cwd = request.cwd, profileId = request.profileId, modelId = request.modelId, modeId = request.modeId, loadingModes = request.loadingModes))
             return
         }
+        if (request.engine == EngineKind.Codex) {
+            createAgentNow(EngineKind.Codex, StartOptions(cwd = request.cwd, modeId = request.modeId))
+            return
+        }
         val base = claudeStartBase()
         create(base.copy(cwd = request.cwd, modeId = if (request.skipPermissions) ClaudeCodePermissionMode.BYPASS.wire else base.modeId))
     }
@@ -275,7 +312,12 @@ class SessionVM(
         // 没有活跃会话时跟「上次开始面板选的引擎」走：刚启动 App、上次用的是 Min，点「新建会话」不能悄悄开出一个 Claude Code
         // （模拟器验收抓到的）。Min 没有活跃会话就没有可照搬的设置，档与模型由引擎取最近一次用的
         val engine = active.value?.ref?.engine ?: startEngine.value
-        if (engine == EngineKind.MinAgent) createMin(startOptionsOfActive()) else create(startOptionsOfActive())
+        when (engine) {
+            EngineKind.MinAgent -> createMin(startOptionsOfActive())
+            // Codex 只有一个 app-server：「新会话」就是结束手上这条、另起一条（`/new` 与抽屉的新建都是这个意思）
+            EngineKind.Codex -> createAgentNow(EngineKind.Codex, startOptionsOfActive(), endRunning = true)
+            EngineKind.ClaudeCode -> create(startOptionsOfActive())
+        }
     }
 
     private fun create(options: StartOptions) {
@@ -295,16 +337,54 @@ class SessionVM(
         extras.gateStart(options, ::createMinNow)
     }
 
-    private fun createMinNow(options: StartOptions) {
+    private fun createMinNow(options: StartOptions) = createAgentNow(EngineKind.MinAgent, options)
+
+    /** 经统一注册表建一个 Min / Codex 会话：先查引擎可用、再查名额，结果各有一句给人看的话 */
+    private fun createAgentNow(kind: EngineKind, options: StartOptions, endRunning: Boolean = false) {
         viewModelScope.launch {
-            when (val result = agents.create(EngineKind.MinAgent, options)) {
+            if (kind == EngineKind.Codex) {
+                if (endRunning) {
+                    agents.attached.value.filter { it.ref.engine == EngineKind.Codex }.forEach { agents.close(it.ref, CloseReason.UserEnded) }
+                    // 在线摘要是异步推出来的，刚关完它还报着「在线保活」，注册表会因此数满名额：等它落下再建
+                    withTimeoutOrNull(3_000) { agents.live.first { list -> list.none { it.ref.engine == EngineKind.Codex && it.keepAlive } } }
+                }
+                releaseIdleCodex(except = null)
+            }
+            when (val result = agents.create(kind, options)) {
                 is AttachResult.Ok -> {
-                    focus.value = Shown.Min
-                    attachComposer(result.session.ref.storageKey)
+                    focus.value = Shown.Agents
+                    val key = result.session.ref.storageKey
+                    // 旧 Codex 页里「还没起线程时打的字」记在一个固定的「新会话」键下：新会话一起来就把它领过来，原样放进输入框
+                    if (kind == EngineKind.Codex) adoptNewThreadDraft(key)
+                    attachComposer(key)
                 }
                 else -> _notice.value = attachFailureText(result)
             }
         }
+    }
+
+    /**
+     * Codex 同一时间只有一个 app-server，所以只有一个名额；而页面上打开着一个**不在跑**的只读回放（或已结束的会话）
+     * 也算占着它（统一注册表按「在线 ∪ 界面打开着」数）。新建 / 打开另一条之前先把没在跑的那个撤掉，
+     * 否则翻看旧会话一次就再也开不了第二条（旧 Codex 页没有这个问题：它只有一个屏幕，翻到哪条就是哪条）。
+     * 在跑的不动：它占名额是真的，由注册表返回「已满」，让用户先结束它。
+     *
+     * [except] 是接下来要打开的那条：它若已经在打开着就不用动（注册表直接切过去），**除非**它的进程已经没了（Closed / Failed）——
+     * 那是一个死壳，页面早已退回开始面板，再「切过去」什么也看不到，要关掉重新回放才打得开
+     */
+    private suspend fun releaseIdleCodex(except: SessionRef?) {
+        agents.attached.value
+            .filter { it.ref.engine == EngineKind.Codex }
+            .filter { it.state.value.status != SessionStatus.Running && it.state.value.status != SessionStatus.Starting }
+            .filter { it.ref != except || it.state.value.status != SessionStatus.Idle }
+            .forEach { agents.close(it.ref, CloseReason.Evicted) }
+    }
+
+    private fun adoptNewThreadDraft(storageKey: String) {
+        val carried = drafts.load(CODEX_NEW_THREAD_DRAFT_KEY)
+        if (carried.isEmpty) return
+        drafts.save(storageKey, carried)
+        drafts.forget(CODEX_NEW_THREAD_DRAFT_KEY)
     }
 
     /** 建 / 开会话没成时给人看的那句话 */
@@ -327,6 +407,16 @@ class SessionVM(
     private fun startOptionsOfActive(): StartOptions {
         val current = active.value?.state?.value ?: return StartOptions(cwd = registry.lastOptions().cwd)
         val settings = current.settings
+        if (current.ref.engine == EngineKind.Codex) {
+            // Codex：同一个工作目录与权限档；模型 / 强度没选过就是没选过（空串 = 明确跟随连接配置的默认）
+            return StartOptions(
+                cwd = current.cwd,
+                modelId = settings.model?.id ?: "",
+                modeId = settings.mode.id.takeIf { id -> settings.modes.any { it.id == id } },
+                effortId = settings.effort?.id ?: "",
+                engineOptions = settings.extras.filter { it.key == CodexStateMapper.OPTION_SUMMARY }.associate { it.key to it.value },
+            )
+        }
         if (current.ref.engine == EngineKind.MinAgent) {
             // Min：同一个供应商档、同一个模型 / 权限模式 / 思考强度（没选过强度就是没选过，空串 = 明确跟随默认）
             return StartOptions(
@@ -356,11 +446,11 @@ class SessionVM(
 
     /** 已在跑就直接切过去（不重启进程），否则新起一个并 --resume 续上 */
     fun openSession(ref: SessionRef) {
-        if (ref.engine == EngineKind.MinAgent) openMin(ref) else openClaude(ref.id)
+        if (ref.engine == EngineKind.ClaudeCode) openClaude(ref.id) else openAgent(ref)
     }
 
-    /** Min 的会话经统一注册表开（已经在线就直接切过去，不重开）。草稿按 storageKey 钉，规矩与 Claude 那边一样 */
-    private fun openMin(ref: SessionRef) {
+    /** Min / Codex 的会话经统一注册表开（已经在线就直接切过去，不重开）。草稿按 storageKey 钉，规矩与 Claude 那边一样 */
+    private fun openAgent(ref: SessionRef) {
         val key = ref.storageKey
         val existing = drafts.load(key)
         if (drafts.hasCarry() && !existing.isEmpty) {
@@ -368,9 +458,10 @@ class SessionVM(
             return
         }
         viewModelScope.launch {
+            if (ref.engine == EngineKind.Codex) releaseIdleCodex(except = ref)
             when (val result = agents.open(ref)) {
                 is AttachResult.Ok -> {
-                    focus.value = Shown.Min
+                    focus.value = Shown.Agents
                     if (drafts.hasCarry()) drafts.consumeCarry(key)
                     drafts.rememberActive(key)
                     _composerDraft.value = existing
@@ -403,7 +494,7 @@ class SessionVM(
      * 后台的直接从注册表摘掉 —— 不摘的话活跃项以外的死壳要等下一次 pruneDead 才走
      */
     fun endSession(ref: SessionRef) {
-        if (ref.engine == EngineKind.MinAgent) {
+        if (ref.engine != EngineKind.ClaudeCode) {
             viewModelScope.launch { agents.close(ref, CloseReason.UserEnded) }
             return
         }
@@ -469,13 +560,11 @@ class SessionVM(
         val input = UserInput(text.trim(), images)
         if (input.isBlank) return
         command({ SessionCommand.Send(it, input) }) { result ->
+            // 没发出去的话（会话关了 / 没起来 / 接不回来，或斜杠命令不存在、预执行被拒）：原样退回输入框，能改了再发；
+            // 并说一句为什么——只退回不说原因，人不知道为什么没发出去
             if (result is CommandResult.Rejected) {
-                // 被拒的原因要让人看见：斜杠命令不存在、预执行被拒、分身的结果都走这条路，只退回输入框会让人不知道为什么没发出去
+                returnedMessages.tryEmit(input.toComposerDraft())
                 if (result.message.isNotBlank()) _notice.value = result.message
-                // 会话已经关掉 / 没起来：没有 stdin 可写，话不能就这么吞掉 —— 原样退回输入框（原 manager.send 的做法）
-                if (session.value.status.let { it != SessionStatus.Running && it != SessionStatus.Starting }) {
-                    returnedMessages.tryEmit(input.toComposerDraft())
-                }
             }
         }
     }
@@ -488,7 +577,8 @@ class SessionVM(
     fun answer(interactionId: String, answer: InteractionAnswer) =
         command({ SessionCommand.Answer(it, interactionId, answer) })
 
-    fun interrupt() = command({ SessionCommand.Interrupt(it) })
+    /** ■。[runQueuedAfter] = 显式的「打断后跑排队」那一档（默认打断并把排队的退回输入框，§10.2 拍板 2） */
+    fun interrupt(runQueuedAfter: Boolean = false) = command({ SessionCommand.Interrupt(it, runQueuedAfter = runQueuedAfter) })
 
     /** ▶：按 offer 里的 id 续跑（主会话或子 agent 的 offer 都走这一条，适配器按 id 认） */
     fun resume(offer: ResumeOffer) {
@@ -499,6 +589,11 @@ class SessionVM(
                 if (result is CommandResult.Stale) _notice.value = context.getString(R.string.resume_stale)
             }
         }
+    }
+
+    /** 点一下排队中的那条：把它从队列里取回（话经 [SessionSignal.Withdrawn] 回到输入框）。[itemId] 是 `ChatItem.UserText.id` */
+    fun withdrawQueued(itemId: String) = command({ SessionCommand.WithdrawQueued(it, itemId) }) { result ->
+        if (result is CommandResult.Stale) _notice.value = context.getString(R.string.resume_stale)
     }
 
     /** 子 agent 视图里发的话。图片递不进子 agent（hook 只能带文字），适配器会让 manager 补一条说明 */
@@ -512,9 +607,9 @@ class SessionVM(
     /** 顶栏停止键：只停进程，会话留在页面上显示「已结束」（[CloseReason.UserEnded]） */
     fun stop() {
         val target = active.value ?: return
-        // Min 要经统一注册表关：它同时把会话从「界面打开着的」里摘掉，页面才会回到开始面板
+        // Min / Codex 要经统一注册表关：它同时把会话从「界面打开着的」里摘掉，页面才会回到开始面板
         viewModelScope.launch {
-            if (target.ref.engine == EngineKind.MinAgent) agents.close(target.ref, CloseReason.UserEnded)
+            if (target.ref.engine != EngineKind.ClaudeCode) agents.close(target.ref, CloseReason.UserEnded)
             else target.close(CloseReason.UserEnded)
         }
     }
@@ -529,6 +624,9 @@ class SessionVM(
         command({ SessionCommand.SetModel(it, model.orEmpty(), profileId = profileId, asDefault = asDefault) })
 
     fun setPermissionMode(modeId: String) = command({ SessionCommand.SetMode(it, modeId) })
+
+    /** 引擎专有的设置项（Codex 的思考摘要…），键同 [dev.min.code.core.engine.EngineOptionView.key] */
+    fun setEngineOption(key: String, value: String) = command({ SessionCommand.SetEngineOption(it, key, value) })
 
     /** [ultracode] 为真时 [effort] 无意义（ultracode 自己就是一档 effort，与强度互斥） */
     fun applyEffort(effort: String?, ultracode: Boolean = false) =
@@ -607,9 +705,53 @@ class SessionVM(
     /** `/init` 是 prompt 型内置命令，无头模式下当普通消息发过去就会执行 */
     fun runInit() = send("/init")
 
+    // --- Codex 的安装 / 登录 / 连接方式（开始面板的 Codex 一栏） ---
+
+    fun refreshCodex() {
+        viewModelScope.launch { codexRuntime.refresh() }
+    }
+
+    fun installCodex() {
+        viewModelScope.launch { codexRuntime.install() }
+    }
+
+    fun saveCodexProfile(profile: CodexProfile) {
+        viewModelScope.launch {
+            settingsStore.setCodexProfile(profile)
+            codexRuntime.refresh()
+        }
+    }
+
+    /**
+     * 换一条。app-server 的 env 是启动时固化的，所以这里只改「下次起的是哪条」；`refresh()` 把 config.toml 重写一遍，
+     * 真正生效要等下一次启动（面板上由 `codex_connection_restart_hint` 说明）。
+     * 明文风险的确认不在这儿放行：那道门归供应商页管，这里替用户点头会让他此后在那一页也看不到警告
+     */
+    fun activateCodexProfile(id: String) {
+        viewModelScope.launch {
+            settingsStore.setActiveCodexProfile(id)
+            codexRuntime.refresh()
+        }
+    }
+
+    /** 新建一条空的中转配置并切过去。内容在同一个面板的下半部分接着填 */
+    fun addCodexProfile() {
+        viewModelScope.launch {
+            settingsStore.addCodexProfile(CodexProfile(id = "", authMode = CodexAuthMode.RELAY))
+            codexRuntime.refresh()
+        }
+    }
+
     // 不在 onCleared 里杀会话：ClaudeCodeManager 是 Koin single，
     // 会话本就该比页面活得久（切到别的页面、转屏都会重建 VM）。
     // 结束会话由用户在标题栏显式点「停止」。
+
+    /** 这个统一注册表的会话页面显不显示：Min 看实验开关，Codex 没有开关。CC 不在这个注册表里 */
+    private fun shownBy(session: AgentSession, minOn: Boolean): Boolean = when (session.ref.engine) {
+        EngineKind.Codex -> true
+        EngineKind.MinAgent -> minOn
+        EngineKind.ClaudeCode -> false
+    }
 
     private companion object {
         /** 没有活跃会话时的占位：Idle，其余全空。和改造前 `SessionState()` 的默认值同一个作用 */
@@ -645,3 +787,29 @@ private fun UserInput.toComposerDraft() = ComposerDraft(
     text = text,
     images = images.mapIndexed { i, img -> DraftImage(name = "图片 ${i + 1}", mediaType = img.mediaType, base64 = img.base64) },
 )
+
+/** 没有任何 Codex 连接配置时界面用的占位（与旧 Codex 页同一个 id） */
+private const val CODEX_DEFAULT_PROFILE_ID = "default"
+
+/**
+ * 旧 Codex 页里「还没起线程时打的字」记在这个键下（那时线程要等第一轮才落会话文件，字只能先挂在「新会话」上）。
+ * 统一页里新会话一建就有 threadId，这份字在建好 Codex 会话时领走。键值照旧 Codex 页，迁移才对得上
+ */
+internal const val CODEX_NEW_THREAD_DRAFT_KEY = "__new_thread__"
+
+/**
+ * 旧 Codex 页的输入框草稿（`codex-drafts.json`：threadId → 正文）并进统一草稿盘（按 `SessionRef.storageKey` 存）。
+ * **一次性**：搬完就从旧盘里忘掉，所以重复调用什么都不做；统一盘里已经有内容的会话不覆盖（那是新打的）。
+ * 「新会话」键下的那份搬到 [CODEX_NEW_THREAD_DRAFT_KEY]，由下一次建 Codex 会话时领走。
+ */
+internal fun migrateCodexDrafts(old: CodexDraftStore, drafts: ComposerDraftStore) {
+    for ((key, text) in old.drafts.value) {
+        if (text.isBlank()) {
+            old.forget(key)
+            continue
+        }
+        val target = if (key == CODEX_NEW_THREAD_DRAFT_KEY) key else SessionRef(EngineKind.Codex, key).storageKey
+        if (drafts.load(target).isEmpty) drafts.save(target, ComposerDraft(text = text))
+        old.forget(key)
+    }
+}

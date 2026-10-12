@@ -19,9 +19,11 @@ import dev.min.code.core.engine.SessionCommand
 import dev.min.code.core.engine.SessionRef
 import dev.min.code.util.cancelNotification
 import dev.min.code.util.sendNotification
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.core.context.GlobalContext
 import java.util.UUID
 
@@ -65,7 +67,17 @@ class SessionActionReceiver : BroadcastReceiver() {
                             SessionCommand.Interrupt(commandId, expectedTurnId = target)
                         }
                     }
-                    val result = registry.submit(ref, command)
+                    val result = if (command is SessionCommand.Resume) {
+                        // 「继续」可能要先把进程接回来（proot + node 冷启动十几秒），超出广播预算也不能把续跑半路掐掉：
+                        // 放进 AppScope 里自己跑完，这里只等一会儿，等不到就让广播结束（通知会被「继续」之后的状态变化自己撤掉）
+                        val job = koin.get<AppScope>().async { registry.submit(ref, command) }
+                        withTimeoutOrNull(7_500) { job.await() } ?: run {
+                            Log.i("SessionAction", "${intent.action} $ref 还在接回进程，广播先结束")
+                            return@withTimeout
+                        }
+                    } else {
+                        registry.submit(ref, command)
+                    }
                     Log.i("SessionAction", "${intent.action} $ref result=$result")
                     // 不直接撤同会话的通知：应答期间下一张卡可能已覆盖它。撤销统一归 diff 管。
                     if (result is CommandResult.Stale) showStale(context, ref, target)

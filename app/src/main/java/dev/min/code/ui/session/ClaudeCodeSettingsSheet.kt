@@ -97,7 +97,7 @@ internal fun LocalSlash.toSection(): SettingsSection? = when (this) {
     LocalSlash.EFFORT -> SettingsSection.EFFORT
     LocalSlash.PERMISSION -> SettingsSection.MODE
     LocalSlash.CWD -> SettingsSection.CWD
-    LocalSlash.MCP, LocalSlash.AGENTS, LocalSlash.MEMORY,
+    LocalSlash.NEW, LocalSlash.MCP, LocalSlash.AGENTS, LocalSlash.MEMORY,
     LocalSlash.CONFIG, LocalSlash.HOOKS -> null
 }
 
@@ -176,7 +176,7 @@ internal fun ClaudeCodeSettingsSheet(
 
         Section(
             section = SettingsSection.MODE,
-            value = settings.mode.label,
+            value = modeTitle(session.ref.engine, settings.mode),
             open = open,
             onToggle = { open = it },
         ) {

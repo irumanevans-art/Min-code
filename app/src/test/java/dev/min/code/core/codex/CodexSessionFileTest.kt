@@ -257,4 +257,33 @@ class CodexSessionFileTest {
             preview = null,
         )
     }
+
+    // ---------------------------------------------------------------- B8：rollout 的最后一个回合有没有收尾
+
+    private fun started(turn: String) = """{"type":"event_msg","payload":{"type":"task_started","turn_id":"$turn"}}"""
+    private fun ended(kind: String, turn: String) = """{"type":"event_msg","payload":{"type":"$kind","turn_id":"$turn"}}"""
+
+    @Test
+    fun `readCodexRollout hands back the items and whether the last turn was left open - one pass`() {
+        // 实测形状（codex-cli 0.162.1）：被杀在工具调用中 = 有 task_started、有已完成的项、没有任何收尾行
+        val killed = rollout(sessionMeta, started("t1"), userMessage("跑一下"), agentMessage("好"))
+        val open = readCodexRollout(killed)
+        assertEquals(listOf("跑一下"), open.items.filterIsInstance<ChatItem.UserText>().map { it.text })
+        assertTrue(open.endedMidTurn)
+    }
+
+    @Test
+    fun `finished turns - complete, abort and a failure that is also written as complete - are not left open`() {
+        fun file(name: String, vararg lines: String) =
+            File(temp.newFolder(name), "rollout-2026-09-19T02-38-21-$threadId.jsonl").apply { writeText(lines.joinToString("\n")) }
+        for (end in listOf("task_complete", "turn_aborted")) {
+            val file = file(end, sessionMeta, started("t1"), userMessage("问"), agentMessage("答"), ended(end, "t1"))
+            assertTrue("$end 收尾的不算半路", !readCodexRollout(file).endedMidTurn)
+        }
+        // 续跑过：被杀的旧回合后面接了一个正常完成的新回合，整体不算半路
+        val resumed = file(
+            "resumed", sessionMeta, started("t1"), userMessage("问"), started("t2"), agentMessage("答"), ended("task_complete", "t2"),
+        )
+        assertTrue(!readCodexRollout(resumed).endedMidTurn)
+    }
 }

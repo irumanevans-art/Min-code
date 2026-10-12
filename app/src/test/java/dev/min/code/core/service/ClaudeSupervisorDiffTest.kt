@@ -6,8 +6,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Claude 会话管家的边沿判定。和 [CodexSupervisorDiffTest] 同一张矩阵，外加 Claude 这边
- * 独有的一格：待批请求从 A 直接换成 B（中间没有 null）也必须重新提醒。
+ * Claude 会话管家的边沿判定（旧版 claudeSupervisorDiff）。Claude 这边独有的一格：
+ * 待批请求从 A 直接换成 B（中间没有 null）也必须重新提醒。Codex 的同款矩阵见 SupervisorParityTest。
  */
 class ClaudeSupervisorDiffTest {
 

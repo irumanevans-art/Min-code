@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.min.code.R
+import dev.min.code.core.codex.CodexPermissionPreset
 import dev.min.code.core.engine.AgentSessionState
 import dev.min.code.core.engine.EngineAvailability
 import dev.min.code.core.engine.EngineKind
@@ -65,7 +66,8 @@ import me.rerere.hugeicons.stroke.ArrowTurnBackward
  * 开始面板顶部那条引擎分段要的东西（设计 §9.2 B7）。分开打包而不是散着传：它们是一个整体——
  * Min 关着（[minVisible] 为假）时分段里没有 Min，也不会选中它。
  *
- * Codex 的会话页在 B9 之前仍是单独一页，所以点「Codex」不是选中它，而是 [onOpenCodex] 直接过去。
+ * B9 起 Codex 与另两个引擎并列：点「Codex」选中它，下面出现安装 / 登录状态与开始（[codex]）。
+ * [codex] 为 null（测试、预览）时分段里没有 Codex。
  */
 internal data class StartEngines(
     val minVisible: Boolean,
@@ -74,11 +76,19 @@ internal data class StartEngines(
     /** 默认选中的引擎 = 上次用的 */
     val initial: EngineKind,
     val onChoose: (EngineKind) -> Unit,
-    val onOpenCodex: () -> Unit,
+    val codex: CodexStart? = null,
 ) {
+    /** 分段里有几个引擎可选：只有 Claude Code 时整条分段不出现 */
+    val segments: List<EngineKind>
+        get() = buildList {
+            add(EngineKind.ClaudeCode)
+            if (codex != null) add(EngineKind.Codex)
+            if (minVisible) add(EngineKind.MinAgent)
+        }
+
     companion object {
         /** 只有 Claude Code（Min 关着、测试、预览） */
-        val ClaudeOnly = StartEngines(false, emptyMap(), null, EngineKind.ClaudeCode, {}, {})
+        val ClaudeOnly = StartEngines(false, emptyMap(), null, EngineKind.ClaudeCode, {})
     }
 }
 
@@ -113,10 +123,11 @@ internal fun StartPanel(
     onContinue: (SessionListVM.SessionEntry) -> Unit = {},
     engines: StartEngines = StartEngines.ClaudeOnly,
 ) {
-    // Min 关掉时即使存着「上次选的是 Min」也回到 Claude Code
-    var engine by rememberSaveable(engines.initial, engines.minVisible) {
-        mutableStateOf(if (engines.initial == EngineKind.MinAgent && !engines.minVisible) EngineKind.ClaudeCode else engines.initial)
+    // 存着的「上次选的」不在这次的分段里（Min 关掉了、没有 Codex）就回到 Claude Code
+    var engine by rememberSaveable(engines.initial, engines.minVisible, engines.codex != null) {
+        mutableStateOf(engines.initial.takeIf { it in engines.segments } ?: EngineKind.ClaudeCode)
     }
+    var codexPresetId by rememberSaveable { mutableStateOf<String?>(null) }
     val minAvailability = engines.availability[EngineKind.MinAgent] ?: EngineAvailability.Ready
     var minProfileId by rememberSaveable { mutableStateOf<String?>(null) }
     var minModelId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -153,9 +164,9 @@ internal fun StartPanel(
                 modifier = Modifier
                     .widthIn(max = 480.dp)
                     .fillMaxWidth()
-                    // Min 一段比 Claude Code 的高得多，会一直长到字标的位置：垫一张近乎不透明的纸，字不压在水纹上
+                    // Min / Codex 一段比 Claude Code 的高得多，会一直长到字标的位置：垫一张近乎不透明的纸，字不压在水纹上
                     .then(
-                        if (engine == EngineKind.MinAgent) {
+                        if (engine == EngineKind.MinAgent || engine == EngineKind.Codex) {
                             Modifier
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(MaterialTheme.colorScheme.background.copy(alpha = 0.94f))
@@ -165,23 +176,20 @@ internal fun StartPanel(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 SectionTitle(stringResource(R.string.workspace_detail_workspace_info))
-                if (engines.minVisible) {
-                    // 引擎分段：Claude Code · Codex · Min。不可用的字变淡但仍可点，点了在下面写原因和去处
-                    val segments = listOf(EngineKind.ClaudeCode, EngineKind.Codex, EngineKind.MinAgent)
+                val segments = engines.segments
+                if (segments.size > 1) {
+                    // 引擎分段：Claude Code · Codex · Min。不可用的字变淡但仍可点，点了在下面写原因和去处。
+                    // Codex 的可用与否由它自己的安装 / 登录状态说（下面那一段），不看注册表的 availability
                     InkSegmented(
                         options = segments.map { engineName(it) },
-                        selected = segments.indexOf(engine),
+                        selected = segments.indexOf(engine).coerceAtLeast(0),
                         dimmed = segments.withIndex().filter { (_, kind) ->
-                            kind != EngineKind.ClaudeCode && engines.availability[kind]?.isReady == false
+                            kind == EngineKind.MinAgent && engines.availability[kind]?.isReady == false
                         }.map { it.index }.toSet(),
                         onSelect = { index ->
                             val picked = segments[index]
-                            if (picked == EngineKind.Codex) {
-                                engines.onOpenCodex()
-                            } else {
-                                engine = picked
-                                engines.onChoose(picked)
-                            }
+                            engine = picked
+                            engines.onChoose(picked)
                         },
                     )
                 }
@@ -194,6 +202,22 @@ internal fun StartPanel(
                 )
                 Spacer(Modifier.height(10.dp))
                 InkDivider()
+                val codexStart = engines.codex
+                if (engine == EngineKind.Codex && codexStart != null) {
+                    val recent = sessions.filter { it.engine == EngineKind.Codex && it.messageCount > 0 }.maxByOrNull { it.updatedAt }
+                    CodexStartSection(
+                        codex = codexStart,
+                        errorMessage = session.errorMessage,
+                        presetId = codexPresetId ?: CodexPermissionPreset.AUTO.id,
+                        onPreset = { codexPresetId = it },
+                        recentTitle = recent?.title,
+                        onContinue = { recent?.let(onContinue) },
+                        onStart = {
+                            onStart(StartRequest(engine = EngineKind.Codex, cwd = cwd, modeId = codexPresetId ?: CodexPermissionPreset.AUTO.id))
+                        },
+                    )
+                    return@Column
+                }
                 if (engine == EngineKind.MinAgent) {
                     MinStartSection(
                         availability = minAvailability,

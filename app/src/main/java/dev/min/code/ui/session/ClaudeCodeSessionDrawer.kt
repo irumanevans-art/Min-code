@@ -138,7 +138,6 @@ fun ClaudeCodeSessionDrawer(
     /** 题跋上的「导入」；null 时不给这个按钮 */
     onImportSession: (() -> Unit)? = null,
     onOpenFiles: () -> Unit = {},
-    onOpenCodex: () -> Unit = {},
     onOpenTerminal: () -> Unit = {},
     onOpenRuntime: () -> Unit = {},
     onOpenMaintenance: () -> Unit = {},
@@ -317,11 +316,6 @@ fun ClaudeCodeSessionDrawer(
                 stringResource(R.string.providers_title),
                 onClick = { quickProvider = true },
                 detail = providerName,
-            )
-            ActionRow(
-                ImageVector.vectorResource(R.drawable.ic_codex_mark),
-                stringResource(R.string.codex_title),
-                onOpenCodex,
             )
             ActionRow(HugeIcons.Folder01, stringResource(R.string.session_drawer_files), onOpenFiles)
             ActionRow(

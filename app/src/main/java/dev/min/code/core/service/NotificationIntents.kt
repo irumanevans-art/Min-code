@@ -26,16 +26,31 @@ internal fun Intent.sessionRef(): SessionRef? {
     return SessionRef(engine, id)
 }
 
+/*
+ * 通知 id 各占一段互不重叠的区间，各掩 19 位（52 万个槽）：
+ * CC 3M / 4M、Min 7M / 8M、Codex 10M / 11M（审批 / 完成）。
+ * 9M 起的两段已被「操作过期轻提示」和定时任务通知占用（9.5M 另有推送槽），所以 Codex 排到 10M 之后。
+ * Codex 以前是固定 id（5_000_001 / 5_000_002）——它现在和别的引擎一样可以有多个会话记录在册，
+ * 按会话 key 派生才不会互相覆盖。
+ */
+internal const val CC_INTERACTION_ID_BASE = 3_000_000
+internal const val CC_DONE_ID_BASE = 4_000_000
+internal const val MIN_INTERACTION_ID_BASE = 7_000_000
+internal const val MIN_DONE_ID_BASE = 8_000_000
+internal const val CODEX_INTERACTION_ID_BASE = 10_000_000
+internal const val CODEX_DONE_ID_BASE = 11_000_000
+private const val NOTIFICATION_ID_MASK = 0x7FFFF
+
 internal fun interactionNotificationId(ref: SessionRef): Int = when (ref.engine) {
-    EngineKind.ClaudeCode -> 3_000_000 + (stableKeyInt(ref.id) and 0x7FFFF)
-    EngineKind.Codex -> CODEX_APPROVAL_NOTIFICATION_ID
-    EngineKind.MinAgent -> 7_000_000 + (stableKeyInt(ref.storageKey) and 0x7FFFF)
+    EngineKind.ClaudeCode -> CC_INTERACTION_ID_BASE + (stableKeyInt(ref.id) and NOTIFICATION_ID_MASK)
+    EngineKind.Codex -> CODEX_INTERACTION_ID_BASE + (stableKeyInt(ref.storageKey) and NOTIFICATION_ID_MASK)
+    EngineKind.MinAgent -> MIN_INTERACTION_ID_BASE + (stableKeyInt(ref.storageKey) and NOTIFICATION_ID_MASK)
 }
 
 internal fun sessionDoneNotificationId(ref: SessionRef): Int = when (ref.engine) {
-    EngineKind.ClaudeCode -> 4_000_000 + (stableKeyInt(ref.id) and 0x7FFFF)
-    EngineKind.Codex -> CODEX_DONE_NOTIFICATION_ID
-    EngineKind.MinAgent -> 8_000_000 + (stableKeyInt(ref.storageKey) and 0x7FFFF)
+    EngineKind.ClaudeCode -> CC_DONE_ID_BASE + (stableKeyInt(ref.id) and NOTIFICATION_ID_MASK)
+    EngineKind.Codex -> CODEX_DONE_ID_BASE + (stableKeyInt(ref.storageKey) and NOTIFICATION_ID_MASK)
+    EngineKind.MinAgent -> MIN_DONE_ID_BASE + (stableKeyInt(ref.storageKey) and NOTIFICATION_ID_MASK)
 }
 
 internal fun Context.engineName(kind: EngineKind): String = getString(when (kind) {
@@ -58,10 +73,6 @@ internal fun Context.engineName(kind: EngineKind): String = getString(when (kind
 /** Claude Code 通知（保活常驻、权限请求、一轮结束）：清栈回根，落在 Claude Code 页 */
 internal fun openClaudeCodePageIntent(context: Context): PendingIntent =
     pageIntent(context, ClaudeCodeForegroundService.NOTIFICATION_ID) { putExtra(EXTRA_OPEN_CLAUDE_CODE, true) }
-
-/** Codex 通知：清栈回根，再顶上 Codex 页 */
-internal fun openCodexPageIntent(context: Context): PendingIntent =
-    pageIntent(context, CODEX_DONE_NOTIFICATION_ID) { putExtra(EXTRA_OPEN_CODEX, true) }
 
 private inline fun pageIntent(context: Context, requestCode: Int, extras: Intent.() -> Unit): PendingIntent {
     val intent = Intent(context, MainActivity::class.java).apply {

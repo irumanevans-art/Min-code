@@ -49,7 +49,6 @@ import dev.min.code.core.settings.ProviderPresetSource
 import dev.min.code.core.settings.ProviderSync
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.ui.files.WorkspaceDetailVM
-import dev.min.code.ui.codex.CodexVM
 import dev.min.code.ui.session.ClaudeConfigVM
 import dev.min.code.ui.session.MaintenanceVM
 import dev.min.code.ui.session.SessionListVM
@@ -216,13 +215,26 @@ val appModule = module {
         val runtime: CodexRuntime = get()
         val workspace: WorkspaceRepository = get()
         val scope: AppScope = get()
+        val settings: SettingsStore = get()
         CodexEngine(
             manager = get(), scope = scope,
-            availability = workspace.workspace.map { ws ->
-                if (ws.shellStatus == WorkspaceShellStatus.READY.name) EngineAvailability.Ready else EngineAvailability.NeedsInstall
-            }.stateIn(scope, SharingStarted.Eagerly, EngineAvailability.NeedsInstall),
+            // 环境就绪且装了 Codex 就算可用：登录与否不在这里判（要在 proot 里跑命令，不能在注册表每次查可用性时跑），
+            // 由开始面板的 Codex 一栏读 CodexRuntime.status 说明，真没登录时握手失败的原因会写在会话的错误提示里。
+            // 装完（status 变）要重算，所以把 status 也并进来
+            availability = combine(workspace.workspace, runtime.status) { ws, _ ->
+                if (ws.shellStatus == WorkspaceShellStatus.READY.name && runtime.isInstalled()) EngineAvailability.Ready else EngineAvailability.NeedsInstall
+            }.flowOn(Dispatchers.IO).stateIn(scope, SharingStarted.Eagerly, EngineAvailability.NeedsInstall),
             prepare = { runtime.prepare() }, codexHome = runtime::codexHome,
-            metaStore = get(named("codex")), drafts = get(), publishLive = false,
+            metaStore = get(named("codex")), drafts = get(),
+            // 新会话的默认模型 / 强度来自当前连接配置（旧 Codex 页的 threadOptions 做的同一件事）
+            defaultOptions = {
+                val profile = settings.snapshot?.activeCodexProfile
+                CodexAppServerManager.Options(
+                    model = profile?.model?.trim()?.takeIf { it.isNotBlank() },
+                    effort = profile?.effort?.trim()?.takeIf { it.isNotBlank() },
+                )
+            },
+            searchFiles = { query, limit -> workspace.mentionFiles(query, limit) },
         )
     } bind AgentEngine::class
     single {
@@ -257,7 +269,6 @@ val appModule = module {
             appScope = get(),
             registry = get(),
             localServices = get(),
-            codex = get(),
             subscription = get(),
         )
     }
@@ -271,21 +282,10 @@ val appModule = module {
     // 原来的 ClaudeCodeVM 按职责拆成五个（M2-B B6a）；ClaudeCodePage 一次取齐
     viewModelOf(::SessionVM)
     // Min 会话的元数据是 named("min") 那一份（与 Min 引擎读标题的是同一个），viewModelOf 按类型解析取不到它
-    viewModel { SessionListVM(get(), get(), get(), get(), get(), get(named("min")), get()) }
+    viewModel { SessionListVM(get(), get(), get(), get(), get(), get(named("min")), get(named("codex")), get()) }
     viewModelOf(::WorkspaceToolsVM)
     viewModelOf(::MaintenanceVM)
     viewModelOf(::ClaudeConfigVM)
-    viewModel {
-        CodexVM(
-            runtime = get(),
-            manager = get(),
-            settingsStore = get(),
-            // 上面 named("codex") 那份；不带 qualifier 会撞上 Claude 的那份
-            metaStore = get(named("codex")),
-            draftStore = get(),
-            workspaceRepository = get(),
-        )
-    }
     viewModelOf(::SetupVM)
     viewModelOf(::SettingsVM)
     viewModelOf(::ProvidersVM)

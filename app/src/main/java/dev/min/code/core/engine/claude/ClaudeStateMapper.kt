@@ -29,6 +29,7 @@ import dev.min.code.core.engine.TurnEnd
 import dev.min.code.core.engine.TurnProgress
 import dev.min.code.core.engine.TurnReceipt
 import dev.min.code.core.engine.UsageView
+import dev.min.code.core.engine.withContinuations
 import dev.min.code.core.engine.withPendingCounts
 import dev.min.code.core.service.LocalService
 import dev.min.code.core.session.ChatItem
@@ -46,8 +47,8 @@ import dev.min.code.core.session.ChatItem
  * - **settings.model / effort**：`Choice.id` 是用户**请求**的值（空串 = 跟随默认，选中行按它判），`Choice.label` 是
  *   页面底栏芯片显示的**实际生效**值（`appliedModel` 优先）。两个信息各占一个字段，界面不用再碰 `applied*`。
  * - **extras**：缓存 TTL（`cache_ttl`）与 ultracode 是 CC 独有的设置项，发 `SetEngineOption`。
- * - **lastTurn.end**：manager 还没有 `lastTurnEnd`（B8 加），[ClaudeMapContext.lastTurnEnd] 为 null 时回执一律写
- *   [TurnEnd.Completed]。这是「不知道」的占位，不是事实；▶ 因此永远不出（见 [ClaudeResume]）。
+ * - **lastTurn.end**：取 manager 的只读 `lastTurnEnd`（B8，见 `ClaudeTurnEnd`）；[ClaudeMapContext.lastTurnEnd] 给了就以它为准。
+ *   两边都没有时回执写 [TurnEnd.Completed]（「不知道」的占位，不是事实），▶ 此时不出（见 [ClaudeResume]）。
  */
 object ClaudeStateMapper {
 
@@ -69,10 +70,10 @@ object ClaudeStateMapper {
             status = state.status,
             title = context.meta.title?.takeIf { it.isNotBlank() } ?: state.liveTitle,
             cwd = state.cwd,
-            items = state.items,
+            items = state.items.withContinuations(),
             turn = if (state.busy) turnOf(state) else null,
             lastTurn = lastTurnOf(state, context),
-            resume = ClaudeResume.offer(state, context.lastTurnEnd, state.lastTurnFinishedAt),
+            resume = ClaudeResume.offer(state, endOf(state, context), state.lastTurnEnd?.atMs ?: state.lastTurnFinishedAt),
             interactions = claudeInteractions(state.permissionQueue, state.tasks, threads),
             settings = settingsOf(state),
             usage = UsageView(
@@ -122,13 +123,19 @@ object ClaudeStateMapper {
         outputTokensCurrent = state.outputTokensCurrent,
     )
 
+    /** 上一回合的结局：外部给的（测试 / 将来的别的来源）优先，否则取 manager 的只读记录；都没有 = 不知道 */
+    private fun endOf(state: ClaudeCodeManager.SessionState, context: ClaudeMapContext): TurnEnd? =
+        context.lastTurnEnd ?: state.lastTurnEnd?.toTurnEnd()
+
     private fun lastTurnOf(state: ClaudeCodeManager.SessionState, context: ClaudeMapContext): TurnReceipt? {
-        if (state.lastTurnDurationMs == null && state.lastTurnFinishedAt == null) return null
+        val recorded = state.lastTurnEnd
+        if (state.lastTurnDurationMs == null && state.lastTurnFinishedAt == null && recorded == null) return null
         return TurnReceipt(
             turnId = null,
             durationMs = state.lastTurnDurationMs,
-            finishedAt = state.lastTurnFinishedAt,
-            end = context.lastTurnEnd ?: TurnEnd.Completed,
+            finishedAt = state.lastTurnFinishedAt ?: recorded?.atMs,
+            // 「不知道」写 Completed 占位（见类注释）：manager 现在都会记，只有从没跑过一轮的会话才走到占位
+            end = endOf(state, context) ?: TurnEnd.Completed,
         )
     }
 

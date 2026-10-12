@@ -473,11 +473,15 @@ internal fun UserEntry(
     isFirst: Boolean,
     isLast: Boolean,
     queued: Boolean = false,
+    /** 这条消息的条目 id：排队中的那条点一下取回输入框要用它（[LocalWithdrawQueued]） */
+    itemId: String? = null,
     handoff: ChatItem.Handoff? = null,
     /** 非空 = 这条消息是回退点：长按出菜单（「回到这里」「复制」）。此时不包 SelectionContainer——长按会被它抢去选字，菜单里给复制代替 */
     rewindId: String? = null,
 ) {
     val rewindActions = LocalRewindActions.current.takeIf { rewindId != null }
+    // 排队中的那条：引擎能撤回就点一下把它取回输入框（Codex 的队列只在客户端，取回不会碰进行中的回合）
+    val withdraw = LocalWithdrawQueued.current.takeIf { queued && itemId != null }
     var menuOpen by remember { mutableStateOf(false) }
     TranscriptEntry(
         marker = RailMarker.Dot,
@@ -491,7 +495,7 @@ internal fun UserEntry(
         // 说出来才不会以为它已经在跑了 —— 上一步还占着，它得等。
         if (queued) {
             Text(
-                text = stringResource(R.string.session_queued),
+                text = stringResource(if (withdraw != null) R.string.session_queued_withdraw else R.string.session_queued),
                 style = MaterialTheme.typography.labelSmall,
                 color = scheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 3.dp),
@@ -514,7 +518,8 @@ internal fun UserEntry(
                     // paper2 和会话底（paper）只差一阶，夜纸下气泡和底融成一片。
                     // 再浅一阶才看得出这是从轨道上长出来的一只气泡
                     .background(palette.paper3)
-                    .then(if (rewindActions != null) Modifier.pointerInput(rewindId) { detectTapGestures(onLongPress = { menuOpen = true }) } else Modifier),
+                    .then(if (rewindActions != null) Modifier.pointerInput(rewindId) { detectTapGestures(onLongPress = { menuOpen = true }) } else Modifier)
+                    .then(if (withdraw != null && itemId != null) Modifier.clickable { withdraw(itemId) } else Modifier),
             ) {
                 Box(Modifier.width(2.5.dp).fillMaxHeight().seaFill())
                 val bubble: @Composable () -> Unit = {
@@ -1087,3 +1092,9 @@ internal fun ToolEntry(
         }
     }
 }
+
+/**
+ * 点一下把排队中的消息取回输入框（参数是条目 id）。null = 这个引擎不给取回：CC 的 [dev.min.code.core.engine.SessionCommand.WithdrawQueued]
+ * 在适配器里还是 Unsupported（manager 没有按 id 撤回，设计 §4.1 的缺口），给了点不动的东西比没有更糟
+ */
+internal val LocalWithdrawQueued = androidx.compose.runtime.staticCompositionLocalOf<((String) -> Unit)?> { null }

@@ -26,6 +26,7 @@ import dev.min.code.core.engine.TurnEnd
 import dev.min.code.core.engine.TurnProgress
 import dev.min.code.core.engine.TurnReceipt
 import dev.min.code.core.engine.UsageView
+import dev.min.code.core.engine.withContinuations
 import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.pathScope
 import kotlinx.serialization.json.buildJsonObject
@@ -41,8 +42,8 @@ import kotlinx.serialization.json.put
  *   通用状态按设计 §4.2 的终态把它们接在 items 末尾，画成 `UserText(queued = true)`，这样 `queuedCount` 与 CC 同口径。
  *   id 带着下标和正文哈希（[queuedItemId]）：队列是 FIFO、队头会被放出去，下标会移位，光有下标的 id 会让
  *   「撤回第 2 条」撤成别的东西；带上哈希，对不上就返回 Stale。
- * - **lastTurn.end**：manager 不记 turn/completed 的 status（只拿它决定要不要放出排队消息），所以 [CodexMapContext.lastTurnEnd]
- *   为 null 时回执写 [TurnEnd.Completed] 占位。B8 在 manager 补只读字段 `lastTurnEnd` 后再传进来。
+ * - **lastTurn.end**：取 manager 的只读 `lastTurnEnd`（B8，见 `CodexTurnEnd`）；[CodexMapContext.lastTurnEnd] 给了就以它为准。
+ *   两边都没有（读回放的旧会话、rollout 没有悬着的回合）回执写 [TurnEnd.Completed] 占位，▶ 此时不出。
  * - **用量**：`thread/tokenUsage/updated` 是线程累计值，页面现在不显示它；`contextTokens` 取 totalTokens（没有则输入 + 输出），
  *   `contextLimit` 取 contextWindow。没有逐回合输出量，turnOutputTokens 为 null。
  */
@@ -50,6 +51,9 @@ object CodexStateMapper {
 
     /** [SettingsView.extras] 的键，同时是 `SetEngineOption.key` */
     const val OPTION_SUMMARY = "summary"
+
+    /** 模型 / 强度 `Choice.id` 为空串 = 跟随默认（与 CC 同约定，界面把它本地化成「默认」） */
+    const val FOLLOW_DEFAULT = ""
 
     /** 权限档不在三档之内时的 `Choice.id` */
     const val MODE_CUSTOM = "custom"
@@ -69,7 +73,7 @@ object CodexStateMapper {
             status = state.status,
             title = context.title,
             cwd = state.options.cwd,
-            items = state.items + queued,
+            items = (state.items + queued).withContinuations(),
             turn = if (state.busy) {
                 TurnProgress(
                     turnId = state.turnId,
@@ -81,10 +85,8 @@ object CodexStateMapper {
             } else {
                 null
             },
-            lastTurn = state.lastTurnDurationMs?.let {
-                TurnReceipt(turnId = state.turnId, durationMs = it, finishedAt = null, end = context.lastTurnEnd ?: TurnEnd.Completed)
-            },
-            resume = CodexResume.offer(state, context.lastTurnEnd, context.capabilities),
+            lastTurn = lastTurnOf(state, context),
+            resume = CodexResume.offer(state, endOf(state, context), context.capabilities),
             interactions = listOfNotNull(approval?.let(::approvalCard)),
             settings = settingsOf(state.options),
             usage = UsageView(
@@ -99,11 +101,29 @@ object CodexStateMapper {
             threads = emptyList(),
             slashCommands = SLASH_COMMANDS,
             plan = null,
-            stopping = false,
+            stopping = false, // 打断只停本轮、很快收场，不把「正在打断」当成会话在关闭（那会把键全收起，见 composerKeys）
+            // 只读回放（Idle，没有进程）也是一个打开着的会话：页面要把它显示出来、输入框要能收字（发一句就是接着聊，见 CodexSession.send）
+            open = true,
             errorMessage = state.errorMessage,
             connection = context.connection,
         )
         return mapped
+    }
+
+    /** 上一回合的结局：外部给的优先，否则取 manager 的只读 `lastTurnEnd`；都没有 = 不知道 */
+    private fun endOf(state: CodexAppServerManager.State, context: CodexMapContext): TurnEnd? =
+        context.lastTurnEnd ?: state.lastTurnEnd?.toTurnEnd()
+
+    private fun lastTurnOf(state: CodexAppServerManager.State, context: CodexMapContext): TurnReceipt? {
+        val recorded = state.lastTurnEnd
+        if (state.lastTurnDurationMs == null && recorded == null) return null
+        return TurnReceipt(
+            turnId = state.turnId,
+            durationMs = state.lastTurnDurationMs,
+            finishedAt = recorded?.atMs,
+            // 「不知道」写 Completed 占位：manager 现在每个回合都会记，只有读回放的旧会话才走到占位
+            end = endOf(state, context) ?: TurnEnd.Completed,
+        )
     }
 
     /** 逐字增量：manager 的 `streamingText / streamingThinking`。命令输出已经折进工具卡，没有单独的尾巴 */
@@ -199,7 +219,8 @@ object CodexStateMapper {
             models = emptyList(),
             modelsLoading = false,
             effort = options.effort?.let { Choice(it, it) },
-            efforts = CODEX_EFFORT_LEVELS.map { Choice(it, it) },
+            // 第一行 id 为空串 = 跟随默认（不传 effort），与 CC 的强度面板同一个约定，统一的强度分区照这个画
+            efforts = listOf(Choice(FOLLOW_DEFAULT, "")) + CODEX_EFFORT_LEVELS.map { Choice(it, it) },
             effortNeedsRestart = false, // 下一轮 turn/start 带上，不重启进程
             mode = current?.let { p -> presets.first { it.id == p.id } }
                 ?: Choice(MODE_CUSTOM, codexPermissionWire(options.approvalPolicy, options.sandbox)),
@@ -216,8 +237,10 @@ object CodexStateMapper {
     }
 
     /**
-     * 本地斜杠命令（`ui/codex/CodexSlash.kt`）：协议里没有斜杠命令，这几条是 Min 自己有对应动作的，
-     * 作用是拦下误发。表在 ui 里（core 不许引用），这里只抄名字；B6 并页时再决定由谁持有。
+     * 本地斜杠命令：app-server 协议里没有斜杠命令这回事（`turn/start` 收的是一段文本，打进去的 `/model` 会原样变成给模型的话），
+     * 这几条是 Min 自己有对应动作的，作用是**拦下误发**——习惯了 codex 终端的人会下意识打 `/model`，不拦住就是白花一轮的钱。
+     * 拦下之后做什么在统一会话页的输入栏里（`ClaudeCodeInputBar` 的本地命令表：model / effort / permissions·approvals → 对应设置分区，
+     * cd → 工作目录分区，new → 另起一条会话）；列一条做不到的命令比没有这条更糟，所以只列这六条。
      */
     private val SLASH_COMMANDS = listOf("model", "effort", "permissions", "approvals", "cd", "new").map { SlashCommandView(it, null) }
 }
@@ -225,9 +248,8 @@ object CodexStateMapper {
 /**
  * 映射要的、不在 `State` 里的外部信息。
  * @param title 会话标题：人手改名 > rollout 里第一句话（调用方按 `SessionMeta` / `CodexSessionSummary` 算好）
- * @param lastTurnEnd manager 的 `lastTurnEnd`（B8 才有），见 [CodexStateMapper] 头注释
- * @param capabilities 用哪一套能力位判 ▶：`turn/interrupt` 接上之前是 [EngineCapabilities.Codex]（没有 ▶），
- *   接上之后传 [EngineCapabilities.CodexWithTurnInterrupt]
+ * @param lastTurnEnd 外部给的结局（测试用），见 [CodexStateMapper] 头注释
+ * @param capabilities 判 ▶ 用的能力位
  * @param connection 活跃 Codex 档与是否已过时
  */
 data class CodexMapContext(

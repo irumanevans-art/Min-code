@@ -106,6 +106,7 @@ import dev.min.code.core.claudecode.CHECKPOINT_TOOLS
 import dev.min.code.core.claudecode.subagentTypeName
 import dev.min.code.core.engine.AgentSessionState
 import dev.min.code.core.engine.AgentThread
+import dev.min.code.core.engine.EngineKind
 import dev.min.code.core.engine.ApprovalOption
 import dev.min.code.core.engine.InteractionAnswer
 import dev.min.code.core.engine.LiveStream
@@ -238,6 +239,12 @@ fun ClaudeCodePage(
     val startChoices by vm.startChoices.collectAsStateWithLifecycle()
     val startEngine by vm.startEngine.collectAsStateWithLifecycle()
     val connected by vm.connected.collectAsStateWithLifecycle()
+    val codexStatus by vm.codexStatus.collectAsStateWithLifecycle()
+    val codexProfile by vm.codexProfile.collectAsStateWithLifecycle()
+    val codexProfiles by vm.codexProfiles.collectAsStateWithLifecycle()
+    // 上次用的是 Codex：开始面板一出来就读它的安装 / 登录状态（选中它那一刻读的在 rememberStartEngine）
+    LaunchedEffect(startEngine) { if (startEngine == EngineKind.Codex) vm.refreshCodex() }
+    var showCodexConnection by rememberSaveable { mutableStateOf(false) }
     // 环境状态读完就重扫磁盘会话：原来 refresh() 末尾直接调 refreshSessions()，拆成两个 VM 后由页面转发
     LaunchedEffect(maintenanceVm, listVm) {
         maintenanceVm.sessionsStale.collect { listVm.refreshSessions() }
@@ -324,9 +331,12 @@ fun ClaudeCodePage(
     // 展开态与宽度（dp）在转屏 / 进程重建后仍保留。
     var wideSidebarOpen by rememberSaveable { mutableStateOf(true) }
     var wideSidebarWidthDp by rememberSaveable { mutableFloatStateOf(SIDEBAR_DEFAULT_DP) }
+    // 进程已经没了、但还有一个 ▶ 能把它接回来（CC 的 CLI 被杀、Codex 的 app-server 退出、重开停在半路的旧会话）：
+    // 页面不能退回开始面板，否则 ▶ 无处可按、对话也看不到了
     val live = setup.ready &&
         (session.accepting ||
-            session.status == SessionStatus.Starting)
+            session.status == SessionStatus.Starting ||
+            session.resume != null)
 
     val openSessionList: () -> Unit = {
         focusManager.clearFocus()
@@ -394,10 +404,6 @@ fun ClaudeCodePage(
                 )
             },
             onImportSession = sessionTransfer.import,
-            onOpenCodex = {
-                afterSidebarNav()
-                navController.navigate(Screen.Codex)
-            },
             onOpenFiles = {
                 afterSidebarNav()
                 navController.navigate(Screen.Files)
@@ -458,6 +464,8 @@ fun ClaudeCodePage(
                 onOpenDrawer = if (wide) toggleSessionList else openSessionList,
                 onOpenPlan = { showPlan = true },
                 onComposerFocusChange = { composerFocused = it },
+                onOpenCodexConnection = { showCodexConnection = true },
+                codexProfileModel = codexProfile.model.trim().takeIf { it.isNotBlank() },
             )
         } else {
             Scaffold(
@@ -523,7 +531,13 @@ fun ClaudeCodePage(
                                 minChoices = startChoices,
                                 initial = startEngine,
                                 onChoose = vm::rememberStartEngine,
-                                onOpenCodex = { navController.navigate(Screen.Codex) },
+                                codex = CodexStart(
+                                    status = codexStatus,
+                                    onInstall = vm::installCodex,
+                                    // 登录要在终端里做（codex login --device-auth），去终端页
+                                    onOpenTerminal = { navController.navigate(Screen.Terminal) },
+                                    onOpenConnection = { showCodexConnection = true },
+                                ),
                             ),
                         )
                     }
@@ -535,6 +549,23 @@ fun ClaudeCodePage(
 
     session.headInteraction?.let { pending ->
         InteractionSheet(pending = pending, onAnswer = { answer -> vm.answer(pending.id, answer) })
+    }
+    if (showCodexConnection) {
+        CodexConnectionSheet(
+            profile = codexProfile,
+            profiles = codexProfiles,
+            onSave = {
+                vm.saveCodexProfile(it)
+                showCodexConnection = false
+            },
+            onActivate = vm::activateCodexProfile,
+            onAdd = vm::addCodexProfile,
+            onManage = {
+                showCodexConnection = false
+                navController.navigate(Screen.Providers)
+            },
+            onDismiss = { showCodexConnection = false },
+        )
     }
     // 信任卡 / MCP 批准卡 / 登录确认：谁排在前面见 SessionExtrasOverlays
     SessionExtrasOverlays(vm.extras)
@@ -1037,6 +1068,9 @@ private fun SessionContent(
     onOpenDrawer: () -> Unit = {},
     /** 输入框的焦点变化，一路报到页面顶层的"键盘收起就清焦点"那条效应里 */
     onComposerFocusChange: (Boolean) -> Unit = {},
+    /** Codex 的连接方式面板住在页面顶层（开始面板与设置面板都要开它） */
+    onOpenCodexConnection: () -> Unit = {},
+    codexProfileModel: String? = null,
 ) {
     val listState = rememberLazyListState()
     // 「跳到改动的那一轮」要滚列表，滚完就不跟底了（见 [onJumpTo]）
@@ -1174,6 +1208,7 @@ private fun SessionContent(
         LocalFreshEntries provides freshEntries,
         LocalOpenSubagent provides { toolUseId: String -> selectedAgent = toolUseId },
         LocalRewindActions provides (if (capabilities.rewind) vm.extras.rewindActions else null),
+        LocalWithdrawQueued provides (if (EngineUi.tapToWithdraw(capabilities, session.ref.engine)) vm::withdrawQueued else null),
     ) {
     Box(Modifier.fillMaxSize().imePadding()) {
         // 会话流铺满，顶栏 / 输入框浮在上面。铬件高度量完再垫进列表，字不会被挡住。
@@ -1495,6 +1530,10 @@ private fun SessionContent(
                         onSetPermissionMode = vm::setPermissionMode,
                         onApplyEffort = { effort, ultracode -> vm.applyEffort(effort, ultracode) },
                         onSetPromptCacheTtl = vm::setPromptCacheTtl,
+                        onSetEngineOption = vm::setEngineOption,
+                        onOpenConnection = onOpenCodexConnection,
+                        codexProfileModel = codexProfileModel,
+                        onNewSession = vm::newSession,
                         onRequestModels = vm::refreshModels,
                         dailyCostUsd = dailyCostUsd,
                         chineseDescriptions = chineseDescriptions,
@@ -1582,7 +1621,12 @@ internal fun TranscriptItem(
     canRevert: (String) -> Boolean = { true },
 ) {
     when (item) {
-        is ChatItem.UserText -> UserEntry(item.text, isFirst, isLast, item.queued, item.handoff, rewindId = item.id.takeIf { item.rewindable })
+        // ▶ 代发的续跑提示不是人说的话：画成细分隔线（设计 §6.6），与 Min 的续跑分隔同一句「— 继续 —」
+        is ChatItem.UserText -> if (item.continuation) {
+            NoteEntry("— ${stringResource(R.string.min_agent_continued)} —", isError = false, isFirst = isFirst, isLast = isLast)
+        } else {
+            UserEntry(item.text, isFirst, isLast, item.queued, item.id, item.handoff, rewindId = item.id.takeIf { item.rewindable })
+        }
         is ChatItem.AssistantText -> AssistantEntry(
             text = item.text,
             isFirst = isFirst,

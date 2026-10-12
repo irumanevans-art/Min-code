@@ -23,7 +23,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
 
-/** 会话页显示哪一边：Claude 的旧注册表与 Min 的统一注册表各有一个活跃项，后写者赢（[shownSession] / [focusChanges]）。 */
+/** 会话页显示哪一边：Claude 的旧注册表与 Min、Codex 的统一注册表各有一个活跃项，后写者赢（[shownSession] / [focusChanges]）。 */
 class ActiveSessionTest {
     private class Fake(override val ref: SessionRef) : AgentSession {
         override val capabilities = EngineCapabilities.MinAgent
@@ -40,16 +40,16 @@ class ActiveSessionTest {
 
     @Test fun `the focused side is shown when it has a session`() {
         assertSame(claude, shownSession(Shown.ClaudeCode, claude, min))
-        assertSame(min, shownSession(Shown.Min, claude, min))
+        assertSame(min, shownSession(Shown.Agents, claude, min))
     }
 
     @Test fun `a side that was just closed falls back to the other side`() {
-        assertSame(claude, shownSession(Shown.Min, claude, null))
+        assertSame(claude, shownSession(Shown.Agents, claude, null))
         assertSame(min, shownSession(Shown.ClaudeCode, null, min))
     }
 
     @Test fun `no session on either side means the start panel`() {
-        assertNull(shownSession(Shown.Min, null, null))
+        assertNull(shownSession(Shown.Agents, null, null))
         assertNull(shownSession(Shown.ClaudeCode, null, null))
     }
 
@@ -58,7 +58,7 @@ class ActiveSessionTest {
         val minRefs = flowOf(SessionRef(EngineKind.MinAgent, "s_1"), null)
         // merge 的先后依赖调度；这里只断言「只发非空」：两边的 null（关掉）一个都不该变成焦点
         val seen = focusChanges(claudeKeys, minRefs).toList()
-        assertEquals(setOf(Shown.ClaudeCode, Shown.Min), seen.toSet())
+        assertEquals(setOf(Shown.ClaudeCode, Shown.Agents), seen.toSet())
         assertEquals(2, seen.size)
     }
 
@@ -66,5 +66,10 @@ class ActiveSessionTest {
         // 统一注册表的活跃项也可能是 Claude 的会话（通知直达）：那不该把焦点拨去 Min
         val seen = focusChanges(emptyFlow(), flowOf(SessionRef(EngineKind.ClaudeCode, "c9"))).toList()
         assertEquals(emptyList<Shown>(), seen)
+    }
+
+    @Test fun `Codex refs move the focus to the unified side too`() = runBlocking {
+        val seen = focusChanges(emptyFlow(), flowOf(SessionRef(EngineKind.Codex, "thread-1"))).toList()
+        assertEquals(listOf(Shown.Agents), seen)
     }
 }

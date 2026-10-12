@@ -165,9 +165,11 @@
   <string name="session_sidebar_toggle">Show or hide session list</string>
   <string name="session_sidebar_resize">Drag to resize session list</string>
   <string name="session_queued">Queued · picked up after this step</string>
+  <string name="session_queued_withdraw">Queued · tap to take it back</string>
   <string name="session_in_use">In use</string>
   <string name="session_interrupted">Interrupted</string>
   <string name="engine_min">Min</string>
+  <string name="engine_codex">Codex</string>
   <string name="session_copy_transcript">Copy whole session</string>
   <string name="session_drawer_files">Workspace files</string>
   <string name="session_drawer_maintenance">Environment and updates</string>
@@ -1265,13 +1267,10 @@
     <string name="session_notification_stale">Already handled elsewhere</string>
     <string name="session_notification_waiting">Awaiting approval: %1$s</string>
     <string name="session_notification_interaction">interaction</string>
-    <string name="session_notification_codex_waiting">Codex awaiting approval</string>
     <string name="session_notification_local_services">%1$d local services</string>
     <string name="session_notification_starting">Starting…</string>
     <string name="session_notification_running">%1$d sessions · running</string>
     <string name="session_notification_idle">%1$d sessions · idle</string>
-    <string name="session_notification_codex_running">Codex · running</string>
-    <string name="session_notification_codex_idle">Codex · idle</string>
     <string name="session_notification_services">%1$d services</string>
     <string name="session_notification_login">Signing in to Claude subscription</string>
     <string name="session_notification_background_running">Running in background</string>
