@@ -74,6 +74,8 @@ data class MinMapperInput(
     /** 模型 CronList 看到的同一份定时任务视图（`hub.cronBoard(root)`），与全局开关 */
     val cronBoard: dev.min.agent.spi.CronBoard? = null,
     val cronsEnabled: Boolean = true,
+    /** MessageDisplay hook 替换后的屏显文字（请求 id -> 全文）：只对根会话自己的消息生效。没用 hook 为空 */
+    val displayed: Map<dev.min.agent.protocol.RequestId, String> = emptyMap(),
 )
 
 /**
@@ -94,6 +96,7 @@ class MinAgentStateMapper(private val text: MinAgentText, private val lookup: Mi
                 state, text,
                 subItems = { call -> state.children.values.firstOrNull { it.callId == call }?.child?.let(::itemsOf) },
                 childOf = { state.children[it] },
+                displayed = if (id == input.root && input.displayed.isNotEmpty()) { request -> input.displayed[request] } else { _ -> null },
             )
         }
         val items = itemsOf(input.root)

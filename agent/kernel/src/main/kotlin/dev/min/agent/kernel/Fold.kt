@@ -250,7 +250,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is AssistantMessageCompleted -> updateTurn(e.turnId) { t ->
             check(t.openRequest?.requestId == e.requestId) { "完成的是 ${e.requestId}，当前请求是 ${t.openRequest?.requestId}" }
             t.copy(openRequest = null, usage = t.usage + e.usage, modelReplied = true)
-        }.copy(history = history + HistoryEntry.Assistant(e.messageId, e.parts), lastRequestUsage = e.usage)
+        }.copy(history = history + HistoryEntry.Assistant(e.messageId, e.parts, e.requestId), lastRequestUsage = e.usage)
         is ModelRequestFailed -> updateTurn(e.turnId) { t ->
             check(t.openRequest?.requestId == e.requestId) { "失败的是 ${e.requestId}，当前请求是 ${t.openRequest?.requestId}" }
             t.copy(openRequest = null)

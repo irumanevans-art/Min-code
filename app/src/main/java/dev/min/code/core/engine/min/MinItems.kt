@@ -10,6 +10,7 @@ import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.MessageId
 import dev.min.agent.protocol.Part
 import dev.min.agent.protocol.RedactedThinkingPart
+import dev.min.agent.protocol.RequestId
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ThinkingPart
@@ -153,13 +154,16 @@ fun projectMinItems(
     text: MinAgentText,
     subItems: (CallId) -> List<ChatItem>? = { null },
     childOf: (SessionId) -> ChildSummary? = { state.children[it] },
-): List<ChatItem> = ItemsBuilder(state, text, subItems, childOf).build()
+    /** MessageDisplay hook 替换后的屏显文字（按产出这条回复的请求 id 查）；没有 hook 或没替换过返回 null，屏上就是原文 */
+    displayed: (RequestId) -> String? = { null },
+): List<ChatItem> = ItemsBuilder(state, text, subItems, childOf, displayed).build()
 
 private class ItemsBuilder(
     private val state: SessionState,
     private val text: MinAgentText,
     private val subItems: (CallId) -> List<ChatItem>?,
     private val childOf: (SessionId) -> ChildSummary?,
+    private val displayed: (RequestId) -> String?,
 ) {
     private val items = mutableListOf<ChatItem>()
 
@@ -174,7 +178,7 @@ private class ItemsBuilder(
         state.history.forEach { entry ->
             when (entry) {
                 is HistoryEntry.User -> user(entry)
-                is HistoryEntry.Assistant -> parts(entry.messageId.value, entry.parts)
+                is HistoryEntry.Assistant -> parts(entry.messageId.value, entry.parts, entry.requestId?.let(displayed))
             }
             notices(entry.messageId)
         }
@@ -237,11 +241,22 @@ private class ItemsBuilder(
         },
     )
 
-    private fun parts(messageId: String, content: List<Part>) {
+    /**
+     * @param shown MessageDisplay 替换后的**整条消息**屏显文字（流式阶段是整个请求的正文一起过 hook 的，没法按文字块拆回去）：
+     *   放在第一个文字块上，其余文字块不再画；原文留在 [ChatItem.AssistantText.rawText]，导出用。null = 没替换，原样
+     */
+    private fun parts(messageId: String, content: List<Part>, shown: String? = null) {
+        var shownPlaced = false
         content.forEachIndexed { index, part ->
             val id = "$messageId:$index"
             when (part) {
-                is TextPart -> if (part.text.isNotEmpty()) items += ChatItem.AssistantText(id, part.text)
+                is TextPart -> if (shown != null) {
+                    if (!shownPlaced) {
+                        shownPlaced = true
+                        // 替换后是空串（hook 要把整条消息藏起来）或还没攒出第一批：先不画，免得原文闪一下
+                        if (shown.isNotEmpty()) items += ChatItem.AssistantText(id, shown, rawText = content.filterIsInstance<TextPart>().joinToString("") { it.text })
+                    }
+                } else if (part.text.isNotEmpty()) items += ChatItem.AssistantText(id, part.text)
                 is ThinkingPart -> items += ChatItem.Thinking(id, part.text)
                 is RedactedThinkingPart -> items += ChatItem.Thinking(id, text.redactedThinking())
                 is ToolCallPart -> {
@@ -390,7 +405,7 @@ private class ItemsBuilder(
                 presentation = state.presentation.filter { it.afterMessageId in deadIds && it.record.event !is FilesRestored },
                 inbox = emptyList(), turn = null, rewindPoints = emptyList(), rewound = emptyList(),
             ),
-            text, subItems = { null }, childOf,
+            text, subItems = { null }, childOf, displayed,
         ).build()
         items += ChatItem.Folded("rewound:${event.rewindId}", text.rewoundTitle(segment.entries.size), nested = nested)
         restores.forEach { restored(it.record.event as FilesRestored) }

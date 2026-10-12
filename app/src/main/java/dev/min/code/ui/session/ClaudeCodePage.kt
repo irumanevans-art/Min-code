@@ -935,7 +935,8 @@ internal fun List<ChatItem>.toTranscriptText(labels: TranscriptLabels): String =
         when (item) {
             is ChatItem.UserText -> append("## ${labels.user}\n\n${item.text}\n\n")
             // 说话人是产品名，不翻
-            is ChatItem.AssistantText -> append("## Claude\n\n${item.text}\n\n")
+            // 导出是会话记录的口径：MessageDisplay 只改屏显，导出取原文
+            is ChatItem.AssistantText -> append("## Claude\n\n${item.transcriptText}\n\n")
             is ChatItem.Thinking -> append("### ${labels.thinking}\n\n${item.text}\n\n")
             is ChatItem.Note -> append("> ${item.text}\n\n")
             // 回退掉的对话不导出（导出的是「现在这条对话」），折叠行本身留一句

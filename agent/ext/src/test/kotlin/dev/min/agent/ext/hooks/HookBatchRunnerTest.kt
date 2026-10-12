@@ -74,6 +74,18 @@ class HookBatchRunnerTest {
         assertEquals("sh 'mapped/root/.min/hooks/batch/batch.sh'", exec.runs.first().first.script)
     }
 
+    @Test fun `批脚本与收尾命令都带额外可写目录 环境文件所在目录只在附件目录下才放行`() = runBlocking {
+        val exec = FakeExec()
+        runner(exec).run(listOf(handler()), objectOf("{}"), mapOf("CLAUDE_ENV_FILE" to "/root/.min/artifacts/s_1/env/sessionstart-startup.sh"), cwd) { 1 }
+        assertEquals(2, exec.runs.size)
+        assertEquals(listOf(GuestPath("/root/.min/hooks"), GuestPath("/root/.min/artifacts/s_1/env")), exec.runs[0].first.extraWritable)
+        assertEquals("收尾的 rm 只要 staging 根", listOf(GuestPath("/root/.min/hooks")), exec.runs[1].first.extraWritable)
+        // 桌面的环境文件是宿主路径、别处的路径、带 .. 的路径：都不放进清单（也不会让沙箱策略拒绝整批）
+        for (bad in listOf("C:\\Users\\x\\env\\a.sh", "/tmp/env/a.sh", "/root/.min/artifacts/s_1/env/../../a.sh", "/root/.min/artifacts/s_1/env/sub/a.sh", "/root/.min/artifacts//env/a.sh")) {
+            assertEquals(bad, listOf(GuestPath("/root/.min/hooks")), hookWritableRoots(mapOf("CLAUDE_ENV_FILE" to bad)))
+        }
+    }
+
     @Test fun `整批超时已写 code 的照常读取缺 code 的同时标超时与未启动`() = runBlocking {
         val fs = FakeFs()
         val exec = FakeExec { cmd, _ ->

@@ -64,7 +64,7 @@ internal class ProotExec(private val base: WorkspaceShellContext, private val ho
         val body = if (cwdFile != null) ShellCwdProbe.wrap(command.script, "/root/.min/exec-logs/$id.cwd") else command.script
         val script = ShellPreamble.apply(command.preamble, body)
         val process = host.launch(agentCommandContext(base, command.cwd, script).copy(env = command.env,
-            isolation = dev.min.agent.policy.GuestIsolationPolicy.forCommand(command.network)), log)
+            isolation = dev.min.agent.policy.GuestIsolationPolicy.forCommand(command.network, command.extraWritable)), log)
         val task = Running(id, process, log, options.timeoutMs, cwdFile) { running.remove(id) }
         running[id] = task
         task.start()
