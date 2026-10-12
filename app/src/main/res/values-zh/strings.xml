@@ -577,7 +577,7 @@
 
   <string name="session_effort_applied">CLI 当前实际运行在：%1$s</string>
   <string name="session_effort_ultracode_on">（ultracode 已启用）</string>
-  <string name="session_effort_unsupported">当前模型（Haiku）不支持思考强度，CLI 会忽略 --effort。换 Sonnet / Opus / Fable 才有 low…max 阶梯。</string>
+  <string name="session_effort_unsupported">当前模型（Haiku 4.x）不支持思考强度，CLI 会忽略 --effort。换 Sonnet / Opus / Fable 才有 low…max 阶梯。</string>
   <string name="session_effort_restart">切换档位需要重启 CLI 进程并续接当前会话（CLI 没有 set_effort），过程中不能发消息。</string>
   <string name="session_effort_default_model">默认（由模型决定）</string>
   <string name="session_effort_default">默认（由 CLI 决定）</string>

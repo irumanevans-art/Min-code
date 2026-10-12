@@ -66,20 +66,29 @@ object ClaudeCodeModelCatalog {
     }
 
     /**
+     * Haiku 3.x / 4.x：200k、没有 effort。Haiku 5 起（2.1.293 起别名 `haiku` 解析到 `claude-haiku-5-5`）
+     * 是原生 1M、有 low…max 五档，所以「是 Haiku」不再等于「老 Haiku」。
+     * 裸别名 `haiku` 和 `haiku-5-x` 按新的算；中转站的老写法（`claude-haiku-4-5-2025…`、`claude-haiku-4.5`、
+     * `claude-3-5-haiku`）按老的算。
+     */
+    private fun isLegacyHaiku(id: String): Boolean =
+        familyOf(id) == Family.HAIKU && LEGACY_HAIKU.containsMatchIn(id.lowercase())
+
+    /**
      * 原生 1M 上下文：不加 `[1m]` 也是 1M（CLI 表里 `native_1m:true` 的那些）。
      *
      * - Fable 5 / 5.1、Opus 5 / 5.5、Sonnet 5 / 5.5 是；Opus 4.7 / 4.8 也是
-     * - Haiku 4.5 是 200k；Opus 4.6 以前、Sonnet 4.6 以前要靠 `[1m]`
+     * - Haiku 5.5 是（实测 `modelUsage.contextWindow` = 1000000）；Haiku 4.5 是 200k；Opus 4.6 以前、Sonnet 4.6 以前要靠 `[1m]`
      * - 裸别名 `opus` / `sonnet` 在直连 API 上分别解析成 Opus 5.5 / Sonnet 5.5（2.1.280 起默认 Opus 是 5.5、
      *   2.1.284 起默认 Sonnet 是 5.5，之前都是 5；走 gateway 时是 Opus 4.7 / Sonnet 4.6），都按原生 1M 算；
-     *   `haiku` 按 200k 算
+     *   `haiku` 从 2.1.293 起是 Haiku 5.5，也按 1M 算
      */
     fun isNativeLongContext(model: String?): Boolean {
         val id = stripLongContext(model.orEmpty()).lowercase()
         if (id.isBlank()) return false
         return when (familyOf(id)) {
             Family.FABLE -> true
-            Family.HAIKU -> false
+            Family.HAIKU -> !isLegacyHaiku(id)
             Family.OPUS -> !LEGACY_OPUS.any { id.contains(it) }
             Family.SONNET -> !LEGACY_SONNET.any { id.contains(it) }
             Family.UNKNOWN -> false
@@ -98,8 +107,11 @@ object ClaudeCodeModelCatalog {
     fun longContextSuffixMeaningful(model: String?): Boolean =
         !isNativeLongContext(model)
 
-    /** Haiku 没有 effort 阶梯（CLI: "Effort not supported for Haiku"），其余家族都有 low…max */
-    fun supportsEffort(model: String?): Boolean = familyOf(model) != Family.HAIKU
+    /**
+     * 老 Haiku（4.x 及更早）没有 effort 阶梯（CLI: "Effort not supported for Haiku"），其余都有 low…max。
+     * Haiku 5.5 的 `list_models` 报了 supportedEffortLevels = low…max（2.1.295 实测）。
+     */
+    fun supportsEffort(model: String?): Boolean = !isLegacyHaiku(stripLongContext(model.orEmpty()))
 
     /**
      * 没拿到 CLI 回报的上限时，按模型猜一个分母。
@@ -152,6 +164,9 @@ object ClaudeCodeModelCatalog {
         val ny = y.removePrefix("claude-").filter(Char::isLetterOrDigit)
         return nx.isNotEmpty() && nx == ny
     }
+
+    /** `haiku-4-5` / `haiku-4.5` / `haiku4` / `claude-3-5-haiku` / `claude-3-haiku` */
+    private val LEGACY_HAIKU = Regex("""haiku[-.]?[34]|[34](?:[-.][57])?-haiku""")
 
     /** 没有 `native_1m` 的旧 Opus：CLI 表里 `wse()` 那份名单 */
     private val LEGACY_OPUS = listOf("opus-4-0", "opus-4-1", "opus-4-5", "opus-4-6", "opus-4-2025", "opus-3")

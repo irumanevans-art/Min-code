@@ -23,7 +23,7 @@ import java.time.Instant
  * 向 stdout 写事件帧。
  *
  * 下面的 schema 对照官方 CLI 二进制（@anthropic-ai/claude-code，最近一次完整校对
- * v2.1.286；2.1.270 的 permission_denials / bashEditDiff 等仍有效）中内嵌的 zod schema。
+ * v2.1.295；2.1.270 的 permission_denials / bashEditDiff 等仍有效）中内嵌的 zod schema。
  * 2.1.273–283 对照结论：Min 发的 control_request 子类型、启动参数和 env 都没改名或移除；
  * 新增的要跟的只有错误应答的 `error_code` 和一直没接的 `control_cancel_request`（见 [ClaudeCodeEvent.ControlCancel]），
  * 新 system 子类型全是内部帧（见 NOISE_SYSTEM_SUBTYPES）。
@@ -36,6 +36,12 @@ import java.time.Instant
  * （result 的 first_request_input_tokens、initialize 的 sdkMcpServerManifestsOrigin 等），不用接。
  * 「后台任务等批准时显示已完成」的修复是 CLI 内部的状态文本分类器，帧上没有对应变化 ——
  * 子 agent 在等批准 = 有一条 agent_id 非空、没答的 can_use_tool（见 ClaudeCodePermissionQueue.kt）。
+ * 2.1.286–295 对照结论（npm 包 sdk-tools.d.ts 差分 + 原生二进制 zod 字面量差分 + 真 CLI 全场景探针，帧普查没有 Min 丢掉的帧）：
+ * 已有的 system 子类型、control_request 子类型、can_use_tool、result 字段一个没改名或移除。新增的全是宿主可选 / @internal：
+ * control_request 的 get_task_output / ui_*（mod 界面用），system 的 permission_check_status / instruction_size_warning，
+ * initialize 的 message_uuid；工具侧新增 OfferChromeSetup（连浏览器扩展，-p 下不会走到）、Agent 的 `effort` 入参、
+ * WebFetch 的 `offset`、Grep 的 total。要跟的只有模型：2.1.293 起别名 `haiku` 是 Haiku 5.5
+ * （原生 1M、list_models 报 effort low…max），见 [ClaudeCodeModelCatalog]。
  * fork 子 agent（Agent 的 `subagent_type:"fork"`，-p 下要 CLAUDE_CODE_FORK_SUBAGENT=1 才开，Min 不设，用户可在供应商自定义 env 里加）
  * 帧上与别的后台子 agent 一样：task_started{subagent_type:"fork", is_backgrounded:true, spawn_depth, prompt}、
  * Agent 结果 async_launched、子帧顶层多带 subagent_type / task_description、can_use_tool 带 agent_id（= task_id），

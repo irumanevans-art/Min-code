@@ -107,8 +107,8 @@ class ClaudeCodeEffortMappingTest {
      * 不然界面列一排 low…max，点了 CLI 静默忽略。
      */
     @Test
-    fun `haiku offers no effort ladder regardless of how it was named`() {
-        listOf("haiku", "haiku[1m]", "claude-haiku-4-5").forEach { id ->
+    fun `legacy haiku offers no effort ladder regardless of how it was named`() {
+        listOf("claude-haiku-4-5[1m]", "claude-haiku-4-5", "anthropic/claude-haiku-4.5").forEach { id ->
             assertEquals(id, listOf(ReasoningLevel.AUTO), effortLevelsFor(state(model = id)))
             assertFalse(id, effortSupportedFor(state(model = id)))
         }
@@ -117,6 +117,17 @@ class ClaudeCodeEffortMappingTest {
         assertEquals(listOf(ReasoningLevel.AUTO), effortLevelsFor(applied))
         // 跟随默认且还没回读：当支持
         assertTrue(effortSupportedFor(state()))
+    }
+
+    /** CLI 2.1.293 起别名 `haiku` 是 Haiku 5.5，list_models 报 low…max；不能再当老 Haiku 把档位藏掉 */
+    @Test
+    fun `haiku 5 keeps the effort ladder`() {
+        listOf("haiku", "claude-haiku-5-5").forEach { id ->
+            assertTrue(id, effortSupportedFor(state(model = id)))
+            assertTrue(id, ReasoningLevel.MAX in effortLevelsFor(state(model = id)))
+        }
+        val applied = state(model = "haiku").copy(appliedModel = "claude-haiku-5-5")
+        assertTrue(ReasoningLevel.MAX in effortLevelsFor(applied))
     }
 
     /** 模型没报能力时不做裁剪，全给 */

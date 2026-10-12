@@ -582,7 +582,7 @@
 
   <string name="session_effort_applied">The CLI is actually running at: %1$s</string>
   <string name="session_effort_ultracode_on"> (ultracode on)</string>
-  <string name="session_effort_unsupported">The current model (Haiku) has no effort levels; the CLI ignores --effort. Switch to Sonnet / Opus / Fable for the low…max ladder.</string>
+  <string name="session_effort_unsupported">The current model (Haiku 4.x) has no effort levels; the CLI ignores --effort. Switch to Sonnet / Opus / Fable for the low…max ladder.</string>
   <string name="session_effort_restart">Changing the level restarts the CLI and resumes this session (there is no set_effort); you cannot send messages while that happens.</string>
   <string name="session_effort_default_model">Default (the model decides)</string>
   <string name="session_effort_default">Default (the CLI decides)</string>

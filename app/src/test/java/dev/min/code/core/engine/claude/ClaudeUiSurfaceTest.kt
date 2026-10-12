@@ -67,9 +67,11 @@ class ClaudeUiSurfaceTest {
     }
 
     @Test
-    fun `haiku has no effort even when the catalog says nothing about it`() {
-        val s = ClaudeStateMapper.map(ref, SessionState(options = SessionOptions(model = "haiku"))).settings
+    fun `haiku 4 has no effort even when the catalog says nothing about it, haiku 5 has`() {
+        val s = ClaudeStateMapper.map(ref, SessionState(options = SessionOptions(model = "claude-haiku-4-5"))).settings
         assertTrue(!s.effortSupported)
+        // CLI 2.1.293 起别名 `haiku` 就是 Haiku 5.5
+        assertTrue(ClaudeStateMapper.map(ref, SessionState(options = SessionOptions(model = "haiku"))).settings.effortSupported)
         assertTrue(ClaudeStateMapper.map(ref, SessionState()).settings.effortSupported)
     }
 

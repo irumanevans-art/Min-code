@@ -41,7 +41,10 @@ class ClaudeCodeModelCatalogTest {
 
     @Test
     fun `haiku and legacy models are 200k unless suffixed`() {
-        listOf("haiku", "claude-haiku-4-5", "claude-opus-4-6", "claude-sonnet-4-6").forEach { id ->
+        listOf(
+            "claude-haiku-4-5", "claude-haiku-4-5-20251001", "anthropic/claude-haiku-4.5", "claude-3-5-haiku",
+            "claude-opus-4-6", "claude-sonnet-4-6",
+        ).forEach { id ->
             assertFalse(id, ClaudeCodeModelCatalog.isNativeLongContext(id))
             assertTrue(id, ClaudeCodeModelCatalog.longContextSuffixMeaningful(id))
             assertEquals(ClaudeCodeModelCatalog.CONTEXT_200K, ClaudeCodeModelCatalog.assumedContextWindow(id))
@@ -73,11 +76,27 @@ class ClaudeCodeModelCatalogTest {
         assertEquals(ClaudeCodeModelCatalog.CONTEXT_1M, ClaudeCodeModelCatalog.assumedContextWindow(null))
     }
 
-    /** CLI 原话 "Effort not supported for Haiku" */
+    /**
+     * CLI 2.1.293 起别名 `haiku` 解析到 claude-haiku-5-5：实测 modelUsage.contextWindow = 1000000，
+     * list_models 报 supportedEffortLevels = low…max。老写法的 Haiku 4.x 才是 200k / 没有 effort。
+     */
     @Test
-    fun `only haiku lacks effort`() {
-        assertFalse(ClaudeCodeModelCatalog.supportsEffort("haiku"))
+    fun `haiku 5 is natively 1M with effort while 4 is not`() {
+        listOf("haiku", "claude-haiku-5-5", "haiku[1m]").forEach { id ->
+            assertTrue(id, ClaudeCodeModelCatalog.isNativeLongContext(id))
+            assertFalse(id, ClaudeCodeModelCatalog.longContextSuffixMeaningful(id))
+            assertEquals(id, ClaudeCodeModelCatalog.CONTEXT_1M, ClaudeCodeModelCatalog.assumedContextWindow(id))
+            assertTrue(id, ClaudeCodeModelCatalog.supportsEffort(id))
+        }
+    }
+
+    /** CLI 原话 "Effort not supported for Haiku"（只对老 Haiku 成立） */
+    @Test
+    fun `only legacy haiku lacks effort`() {
+        assertTrue(ClaudeCodeModelCatalog.supportsEffort("haiku"))
         assertFalse(ClaudeCodeModelCatalog.supportsEffort("claude-haiku-4-5[1m]"))
+        assertFalse(ClaudeCodeModelCatalog.supportsEffort("anthropic/claude-haiku-4.5"))
+        assertFalse(ClaudeCodeModelCatalog.supportsEffort("claude-3-5-haiku"))
         assertTrue(ClaudeCodeModelCatalog.supportsEffort("claude-fable-5-1"))
         assertTrue(ClaudeCodeModelCatalog.supportsEffort("opus[1m]"))
         assertTrue(ClaudeCodeModelCatalog.supportsEffort(null))
