@@ -217,8 +217,8 @@ data class AssistantMessageCompleted(
     /** 流开始后多久收到第一块内容（文本 / 思考 / 工具调用的增量，毫秒）；null = 没有（没有增量就结束了的回复、旧日志）。给 OTel `first_content_ms` */
     val firstContentMs: Long? = null,
     /**
-     * 供应商给这次响应的 id，只给遥测（OTel `gen_ai.response.id`）用：Anthropic 取响应头 `request-id`，取不到（别的线协议、中转没回这个头）
-     * 退回流里的消息 id。null = 都没有（旧日志、测试替身）
+     * 供应商给这次响应的请求 id（响应头：Anthropic 的 `request-id`、OpenAI 的 `x-request-id`），只给遥测用：OTel 的 `request_id` 与 `gen_ai.response.id`
+     * （原文：两者同值）。没有这个头的端点（Gemini、没回头的中转）与旧日志为 null，不拿流里的消息 id 顶替——那不是请求 id
      */
     val responseId: String? = null,
     /** 响应头 `traceresponse` 原文（W3C trace-context：`00-<trace>-<span>-<flags>`），只给遥测的 span link 用；只在我们发出了 `traceparent` 时供应商才可能回它 */

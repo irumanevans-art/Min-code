@@ -246,7 +246,7 @@ class OtelSpanMapperTest {
         assertEquals("interaction", llm.text("llm_request.context"))
         assertEquals(10L, llm.whole("input_tokens"))
         assertEquals(5L, llm.whole("output_tokens"))
-        assertEquals("r1", llm.text("request_id"))
+        assertEquals("r1", llm.text("min.request_id"))
         assertEquals(1L, llm.whole("attempt"))
         assertEquals(true, llm.flag("success"))
         assertEquals(true, llm.flag("response.has_tool_call"))

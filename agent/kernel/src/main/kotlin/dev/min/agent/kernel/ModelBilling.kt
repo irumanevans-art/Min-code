@@ -39,11 +39,14 @@ internal class ModelBilling(private val rt: SessionRuntime) {
                     throw CronBudgetReached(overrun)
                 }
             }
+            // 流开头的 Started 带着响应头里的请求 id：结算那条记录一并落下（遥测 api_request 的 request_id）
+            var responseId: String? = null
             val finished = withTimeoutOrNull(rt.deps.modelTimeoutMs) {
                 model.client.stream(request.copy(timeoutMs = rt.deps.modelTimeoutMs)).collect { event ->
+                    if (event is ModelStreamEvent.Started) responseId = event.responseId
                     if (event is ModelStreamEvent.Completed) {
                         val charged = pricing?.let { cost(it, event.usage) }
-                        val record = ModelCharged(model.profile.ref, event.usage, charged?.amount, charged?.currency)
+                        val record = ModelCharged(model.profile.ref, event.usage, charged?.amount, charged?.currency, responseId)
                         rt.commit(listOf(record), Durability.Sync)
                         run?.charge(record)
                     }

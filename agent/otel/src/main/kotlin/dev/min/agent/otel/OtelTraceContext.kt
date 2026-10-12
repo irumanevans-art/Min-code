@@ -1,8 +1,10 @@
 package dev.min.agent.otel
 
 import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.RequestId
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.protocol.TurnId
+import dev.min.agent.spi.OutboundTrace
 import dev.min.agent.spi.SessionLog
 import dev.min.agent.spi.TraceContextProvider
 
@@ -30,6 +32,21 @@ class OtelTraceContext(
         val c = active() ?: return null
         val trace = links.linkOf(session.value)?.traceId ?: traceIdFor(session.value, turn.value, c.inbound)
         return TraceParent.of(trace, SpanIds.execution(session.value, call.value)).header()
+    }
+
+    /**
+     * 模型请求的出站 `traceparent`：指向这次 llm_request span（id 由会话、请求 id 与第一次尝试的 seq 算出，与导出的 span 同一个函数）。
+     * 追踪没在产出就不给。**不看 [OtelConfig.propagateTraceparent]**（那是按 `ANTHROPIC_BASE_URL` 判断子进程的）——模型请求发不发、发给谁
+     * 由各家编解码器按端点决定（只 Anthropic 本家；自定义的 Anthropic 兼容端点要用户显式 `CLAUDE_CODE_PROPAGATE_TRACEPARENT=1`），
+     * 这里只把显式同意带过去。
+     */
+    override suspend fun modelRequest(session: SessionId, turn: TurnId, request: RequestId, startSeq: Long): OutboundTrace? {
+        val c = config()?.takeIf { it.tracesEnabled } ?: return null
+        val trace = links.linkOf(session.value)?.traceId ?: traceIdFor(session.value, turn.value, c.inbound)
+        return OutboundTrace(
+            TraceParent.of(trace, SpanIds.llm(session.value, request.value, startSeq)).header(),
+            allowCustomAnthropicEndpoint = c.propagateTraceparentExplicit,
+        )
     }
 
     override suspend fun hook(session: SessionId, turn: TurnId, call: CallId?, runId: String?): String? {

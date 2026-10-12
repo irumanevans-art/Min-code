@@ -112,15 +112,17 @@ class OtelRequestFactsTest {
         val done = events(rt.sessionId).map { it.event }.filterIsInstance<AssistantMessageCompleted>().single()
         assertEquals("响应头里的请求 id 优先于消息 id", "req_abc", done.responseId)
         assertEquals(trace, done.traceResponse)
+        // 结算记录也带同一个请求 id（遥测 api_request 的 request_id）
+        assertEquals("req_abc", events(rt.sessionId).map { it.event }.filterIsInstance<dev.min.agent.spi.ModelCharged>().single().responseId)
     }
 
     @Test
-    fun `without a request id header the response id falls back to the stream message id`() = run {
+    fun `without a request id header there is no response id, the stream message id does not stand in for it`() = run {
         val model = ScriptedModel(completed(started = ModelStreamEvent.Started("msg_9")))
         val rt = SessionHub(store, testDeps(model, emptyList()), newScope()).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
         rt.say("hi")
         val done = events(rt.sessionId).map { it.event }.filterIsInstance<AssistantMessageCompleted>().single()
-        assertEquals("msg_9", done.responseId)
+        assertNull("消息 id 不是请求 id，不顶替", done.responseId)
         assertNull(done.traceResponse)
     }
 

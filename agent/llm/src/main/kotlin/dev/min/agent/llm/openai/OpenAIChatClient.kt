@@ -5,6 +5,7 @@ import dev.min.agent.llm.ModelClient
 import dev.min.agent.llm.ModelException
 import dev.min.agent.llm.ModelRequest
 import dev.min.agent.llm.ModelStreamEvent
+import dev.min.agent.llm.ResponseMeta
 import dev.min.agent.llm.networkFailure
 import dev.min.agent.llm.ProviderDescriptor
 import dev.min.agent.protocol.AgentJson
@@ -36,27 +37,30 @@ class OpenAIChatClient(
         val body = AgentJson.encodeToString(JsonObject.serializer(), buildOpenAIChatBody(request, quirks))
         val key = secrets.apiKey(provider.id)?.reveal()
             ?: throw ModelException(ModelFailureKind.Auth, "没有 ${provider.id} 的 API 密钥", beforeFirstByte = true)
+        // 响应头里的请求 id（OpenAI 的 x-request-id）只给遥测：Started 带上，失败时随异常带回
+        val meta = ResponseMeta("x-request-id")
         val http = HttpRequest(
             method = "POST",
             url = provider.baseUrl.trimEnd('/') + "/chat/completions",
             headers = headers(key),
             body = body.toByteArray(Charsets.UTF_8),
             timeoutMs = request.timeoutMs,
+            onResponseHeaders = meta::accept,
         )
         val parser = OpenAIChatStreamParser(request.profile, quirks, overflow)
         emitAll(
             transport.stream(http).transformWhile { event ->
-                parser.feed(event).forEach { emit(it) }
+                parser.feed(event).forEach { emit(if (it is ModelStreamEvent.Started) it.copy(responseId = meta.responseId) else it) }
                 // DONE 后立即停止收集，避免传输层继续读尾部时的断开把成功变成失败。
                 !parser.finished
             }.catch { e ->
-                throw when (e) {
+                throw meta.annotate(when (e) {
                     is CancellationException -> e
                     is ModelException -> e
-                    is HttpStatusException -> classifyHttpFailure(e.status, e.headers, e.body, overflow)
+                    is HttpStatusException -> { meta.accept(e.headers); classifyHttpFailure(e.status, e.headers, e.body, overflow) }
                     is IOException -> networkFailure("网络中断", parser.seen == 0, e)
                     else -> e
-                }
+                })
             },
         )
         if (!parser.finished) {

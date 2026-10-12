@@ -700,8 +700,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             when (event) {
                 is ModelStreamEvent.Started -> {
                     sawEvent()
-                    // 请求 id 优先（Anthropic 的 request-id 头）；没有就退回流里的消息 id
-                    responseId = event.responseId ?: event.providerMessageId
+                    responseId = event.responseId
                     traceResponse = event.traceResponse
                 }
                 is ModelStreamEvent.TextDelta -> {

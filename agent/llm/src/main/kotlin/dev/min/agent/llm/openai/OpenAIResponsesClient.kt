@@ -5,6 +5,7 @@ import dev.min.agent.llm.ModelClient
 import dev.min.agent.llm.ModelException
 import dev.min.agent.llm.ModelRequest
 import dev.min.agent.llm.ModelStreamEvent
+import dev.min.agent.llm.ResponseMeta
 import dev.min.agent.llm.networkFailure
 import dev.min.agent.llm.ProviderDescriptor
 import dev.min.agent.protocol.AgentJson
@@ -44,18 +45,23 @@ class OpenAIResponsesClient(
         put("accept", "text/event-stream")
         provider.extraHeaders.forEach { (name, value) -> put(name, value) }
         put("user-agent", "min-agent")
-        val http = HttpRequest("POST", provider.baseUrl.trimEnd('/') + "/responses", headers.values.toList(), body.toByteArray(), request.timeoutMs)
+        // 响应头里的请求 id（OpenAI 的 x-request-id）只给遥测：Started 带上，失败时随异常带回
+        val meta = ResponseMeta("x-request-id")
+        val http = HttpRequest(
+            "POST", provider.baseUrl.trimEnd('/') + "/responses", headers.values.toList(), body.toByteArray(), request.timeoutMs,
+            onResponseHeaders = meta::accept,
+        )
         val parser = OpenAIResponsesStreamParser(request.profile, overflow)
         emitAll(transport.stream(http).transformWhile { event ->
-            parser.feed(event).forEach { emit(it) }
+            parser.feed(event).forEach { emit(if (it is ModelStreamEvent.Started) it.copy(responseId = meta.responseId) else it) }
             !parser.finished
-        }.catch { e -> throw when (e) {
+        }.catch { e -> throw meta.annotate(when (e) {
             is CancellationException -> e
             is ModelException -> e
-            is HttpStatusException -> classifyHttpFailure(e.status, e.headers, e.body, overflow)
+            is HttpStatusException -> { meta.accept(e.headers); classifyHttpFailure(e.status, e.headers, e.body, overflow) }
             is IOException -> networkFailure("网络中断", parser.seen == 0, e)
             else -> e
-        } })
+        }) })
         if (!parser.finished) throw ModelException(ModelFailureKind.Network, "Responses 流在终止事件之前结束", beforeFirstByte = parser.seen == 0)
     }
 }

@@ -81,6 +81,14 @@ internal object OtlpJson {
                     ))
                 }))
                 span.traceState?.let { put("traceState", JsonPrimitive(it)) }
+                if (span.links.isNotEmpty()) put("links", JsonArray(span.links.map { l ->
+                    JsonObject(buildMap {
+                        put("traceId", JsonPrimitive(l.traceId))
+                        put("spanId", JsonPrimitive(l.spanId))
+                        l.traceState?.let { put("traceState", JsonPrimitive(it)) }
+                        put("attributes", keyValues(l.attributes))
+                    })
+                }))
                 span.error?.let {
                     put("status", JsonObject(mapOf("code" to JsonPrimitive(STATUS_ERROR), "message" to JsonPrimitive(it))))
                 }
@@ -127,6 +135,14 @@ internal object OtlpJson {
                     ))
                 }))
                 item.traceState?.let { put("trace_state", JsonPrimitive(it)) }
+                if (item.links.isNotEmpty()) put("links", JsonArray(item.links.map { l ->
+                    JsonObject(buildMap {
+                        put("trace_id", JsonPrimitive(l.traceId))
+                        put("span_id", JsonPrimitive(l.spanId))
+                        l.traceState?.let { put("trace_state", JsonPrimitive(it)) }
+                        put("attributes", JsonObject(l.attributes.mapValues { (_, v) -> value(v) }))
+                    })
+                }))
                 put("attributes", attrs)
             })
         }
