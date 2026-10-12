@@ -101,7 +101,7 @@ internal suspend fun interact(
     app.mcpAuthorizer.input = stdin
     // -p 的界面输出全走 stderr（runHeadless 自己接 UI）；交互模式的 UI 才占 stdout。
     // 交给 hub：审批 / 提问 / MCP elicitation 看整棵会话树，子 agent 的待处理项也有人答
-    var uiConsole: ConsoleUi? = if (args.prompt == null) ConsoleUi(runtime, args.approve, stdin, System.out, app.hub(), announceHeldPeers = true).apply { mainOwnsInput = true } else null
+    var uiConsole: ConsoleUi? = if (args.prompt == null) ConsoleUi(runtime, args.approve, stdin, System.out, app.hub(), announceHeldPeers = true, displayHooks = true).apply { mainOwnsInput = true } else null
     var ui = uiConsole?.attach(scope)
     try {
         System.err.println("会话 ${runtime.sessionId.value}（--resume 可接着用）")
@@ -172,7 +172,7 @@ internal suspend fun interact(
     suspend fun switchTo(next: dev.min.agent.kernel.SessionRuntime) {
         ui?.cancel()
         runtime = next
-        uiConsole = ConsoleUi(runtime, args.approve, stdin, System.out, app.hub(), announceHeldPeers = true)
+        uiConsole = ConsoleUi(runtime, args.approve, stdin, System.out, app.hub(), announceHeldPeers = true, displayHooks = true)
         ui = uiConsole?.attach(scope)
     }
     while (true) {

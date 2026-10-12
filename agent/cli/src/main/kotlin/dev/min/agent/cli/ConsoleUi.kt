@@ -1,5 +1,6 @@
 package dev.min.agent.cli
 
+import dev.min.agent.kernel.hasMessageDisplayHooks
 import dev.min.agent.kernel.AskedQuestion
 import dev.min.agent.kernel.CallPhase
 import dev.min.agent.kernel.LiveUpdate
@@ -44,7 +45,14 @@ internal class ConsoleUi(
      * 不按 [approve] 自动答。网络域名审批仍按 [approve]（宿主协议里没有对应的询问）
      */
     private val host: ApprovalHost? = null,
+    /**
+     * 交互终端：正文按 MessageDisplay hooks 上屏（[dev.min.agent.kernel.MessageDisplayStream]：按完成的行攒批、等 hook 返回、显示它替换后的文字）。
+     * `-p` 的流式正文走 stderr、只是给人看的进度，不过 hook（`-p` 的 MessageDisplay 在 stdout 的最终回复上跑一次，见 [printResult]）；
+     * 没配 MessageDisplay hook 时一切照旧，即时打印
+     */
+    private val displayHooks: Boolean = false,
 ) {
+    private val displayStream = dev.min.agent.kernel.MessageDisplayStream(runtime) { shown -> out.print(shown); out.flush() }
     private val announced = mutableSetOf<CallId>()
     private val finished = mutableSetOf<CallId>()
     private val answered = mutableSetOf<String>()
@@ -79,13 +87,18 @@ internal class ConsoleUi(
         launch {
             runtime.live.collect { update ->
                 when (update) {
-                    is LiveUpdate.Text -> out.print(update.text)
-                    else -> Unit
+                    is LiveUpdate.Text -> if (displayHooks && runtime.hasMessageDisplayHooks()) displayStream.onText(update) else {
+                        if (displayHooks) displayStream.finish()
+                        out.print(update.text)
+                    }
+                    // 别的更新（工具调用开始……）到来，说明这条消息的文字到头了：没满一行的尾巴作为 final 一批上屏
+                    else -> if (displayHooks) displayStream.finish()
                 }
                 out.flush()
             }
         }
         combine(runtime.state, hub?.pending ?: flowOf(emptyList())) { state, pending -> state to pending }.collect { (state, pending) ->
+            if (displayHooks && state.turn == null) displayStream.finish()
             idleInput?.let { owner ->
                 val target = if (owner.first == runtime.sessionId) runtime else hub?.get(owner.first)
                 if (target == null || (target.state.value.pendingMcpQuestions.none { it.questionId.value == owner.second } && target.state.value.pendingMcpUrls.none { it.request.questionId.value == owner.second })) idleInput = null
