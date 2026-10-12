@@ -48,11 +48,17 @@ private fun displayContentOf(stdout: String): String? = catchingNonCancellation 
 
 /**
  * 流式上屏的攒批器（CLI 的终端用；App 的会话页同一套）：宿主把每个 [LiveUpdate.Text] 喂进来，它按**完成的行**攒批，
- * 每批过 [displayMessage]，再把要显示的文字交给 [sink]；hook 没返回之前下一批不上屏（原文：「holds each batch until your hook returns」）。
+ * 每批过 [displayMessage]，再把要显示的文字交给宿主（[onShown]，带上它属于哪个请求）；hook 没返回之前下一批不上屏（原文：「holds each batch until your hook returns」）。
  * 消息结束（新的请求开始、别的更新到来、回合收尾）时 [finish] 把没满一行的尾巴作为 `final` 那一批发出去。
  * 与原文的小差别：一条消息恰好以换行结尾时，最后一批在它出现的时候就发了（那时还不知道它是最后一批），`final` 没法回头标——尾巴为空就不再发。
  */
-class MessageDisplayStream(private val runtime: SessionRuntime, private val sink: suspend (String) -> Unit) {
+class MessageDisplayStream(
+    private val runtime: SessionRuntime,
+    /** 要显示的文字连同它属于哪个请求（消息）、哪个回合交出去：宿主要把屏显文字记到对应的消息上（App 的会话页） */
+    private val onShown: suspend (request: RequestId?, turn: TurnId?, shown: String) -> Unit,
+) {
+    constructor(runtime: SessionRuntime, sink: suspend (String) -> Unit) : this(runtime, { _, _, shown -> sink(shown) })
+
     private val lock = Mutex()
     private var request: RequestId? = null
     private var turn: TurnId? = null
@@ -75,6 +81,9 @@ class MessageDisplayStream(private val runtime: SessionRuntime, private val sink
     /** 当前这条消息结束了：发出没满一行的尾巴（`final`），重置 */
     suspend fun finish() = lock.withLock { flushLocked() }
 
+    /** 只在当前攒的就是 [request] 这条消息时收尾：宿主从状态里看到某个请求完成了，而流可能已经转去下一个请求（别误收下一条的尾） */
+    suspend fun finishRequest(request: RequestId) = lock.withLock { if (this.request == request) flushLocked() }
+
     private suspend fun flushLocked() {
         if (buffer.isNotEmpty()) {
             val tail = buffer.toString()
@@ -86,7 +95,8 @@ class MessageDisplayStream(private val runtime: SessionRuntime, private val sink
     }
 
     private suspend fun emit(batch: String, final: Boolean) {
-        val shown = runtime.displayMessage(turn, request?.value ?: "", index++, final, batch)
-        sink(shown)
+        // displayMessage 自己吞 hook 的失败；这里再兜一层：任何意外都显示原文，不能让一批文字丢在半路
+        val shown = catchingNonCancellation { runtime.displayMessage(turn, request?.value ?: "", index++, final, batch) }.getOrDefault(batch)
+        onShown(request, turn, shown)
     }
 }

@@ -57,6 +57,9 @@ class MinLiveStream {
     private var persistedText = ""
     private var persistedThinking = ""
 
+    /** 这一请求的正文由 MessageDisplay 供给（[onTextHeld] 起）：落盘片段是原文，不能再拿来垫底 */
+    private var textFromDisplay = false
+
     fun onUpdate(update: LiveUpdate) = synchronized(this) {
         when (update) {
             is LiveUpdate.Text -> if (enter(update.turnId.value, update.requestId)) text.append(update.text)
@@ -71,6 +74,24 @@ class MinLiveStream {
             is LiveUpdate.ToolOutput -> outputs.getOrPut(update.callId) { ClippedOutput() }.append(update.text)
             is LiveUpdate.ToolStatus -> _toolStatus.value = update.callId to update.text
         }
+        publish()
+    }
+
+    /**
+     * 正文走 MessageDisplay（会话有 hook）时，[LiveUpdate.Text] 不直接进缓冲：这里只记下「这个请求开始了、正文等 hook 供给」，
+     * 屏显文字随后由 [onDisplayed] 一批批送来。同步、不等 hook（调用方是内核的瞬时流收集，不能挂起）。
+     */
+    fun onTextHeld(update: LiveUpdate.Text) = synchronized(this) {
+        if (enter(update.turnId.value, update.requestId)) textFromDisplay = true
+        publish()
+    }
+
+    /**
+     * hook 返回后的一批屏显文字。只认当前正在显示的那个请求：hook 比下一个请求来得慢时，迟到的批不该把缓冲切回旧请求；
+     * 该请求已落盘收尾（[finished]）的批也丢弃——那条消息此时已在 items 里，由 [projectMinItems] 按替换后的文字画
+     */
+    fun onDisplayed(turnId: dev.min.agent.protocol.TurnId, requestId: RequestId, shown: String) = synchronized(this) {
+        if (requestId == this.requestId && requestId != finished && turnId.value == this.turnId) text.append(shown)
         publish()
     }
 
@@ -123,6 +144,7 @@ class MinLiveStream {
     }
 
     private fun clearRequestBuffers() {
+        textFromDisplay = false
         text = StringBuilder()
         thinking = StringBuilder()
         drafts = linkedMapOf()
@@ -144,7 +166,7 @@ class MinLiveStream {
     private fun publish() {
         _stream.value = LiveStream(
             turnId = turnId,
-            text = if (text.length >= persistedText.length) text.toString() else persistedText,
+            text = if (textFromDisplay || text.length >= persistedText.length) text.toString() else persistedText,
             thinking = if (thinking.length >= persistedThinking.length) thinking.toString() else persistedThinking,
             toolDrafts = drafts.values.toList(),
             toolOutput = outputs.mapKeys { it.key.value }.mapValues { (_, out) -> out.applyTo(EMPTY_CARD).result.orEmpty() },

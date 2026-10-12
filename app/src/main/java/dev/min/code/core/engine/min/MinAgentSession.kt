@@ -113,6 +113,7 @@ class MinAgentSession(
 
     private val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]))
     private val live = MinLiveStream()
+    private val display = MinMessageDisplay(runtime, scope, live)
     private val stopping = MutableStateFlow(false)
     private val error = MutableStateFlow<String?>(null)
     private val mapper = MinAgentStateMapper(host.text, host.lookup)
@@ -229,6 +230,7 @@ class MinAgentSession(
         teamMembers = if (p.nodes[rootId]?.team != null) host.hub.teamMembers(rootId) else emptyList(),
         cronBoard = if (p.nodes[rootId]?.crons?.isNotEmpty() == true) host.hub.cronBoard(rootId) else null,
         cronsEnabled = host.hub.cronsEnabled,
+        displayed = display.snapshot(),
     )
 
     override val state: StateFlow<AgentSessionState> = run {
@@ -248,7 +250,7 @@ class MinAgentSession(
             host.titleOverride(rootId.value),
         ) { nodes, pending, status, tracked, title -> Parts(nodes, pending, status, tracked, title) }
             .combine(host.hub.backgroundJobs(rootId)) { p, jobs -> p.copy(jobs = jobs) }
-        val extras = combine(stopping, error, host.settingsTick, workflowCommands) { s, e, _, _ -> s to e }
+        val extras = combine(stopping, error, host.settingsTick, workflowCommands, display.changes) { s, e, _, _, _ -> s to e }
         // 合并 + 后台调度：几百条历史的投影是毫秒级，但不该在界面线程上做，也不必为每一帧都做
         parts.combine(extras) { p, (s, e) -> inputOf(p, s, e) }
             .conflate()
@@ -269,8 +271,9 @@ class MinAgentSession(
 
     init {
         // 先订瞬时流再说别的：没有 replay，晚一步就丢开头的几个字
-        scope.launch(start = CoroutineStart.UNDISPATCHED) { runtime.live.collect(live::onUpdate) }
-        scope.launch(start = CoroutineStart.UNDISPATCHED) { runtime.state.collect(live::onState) }
+        // 会话配了 MessageDisplay hook 时，正文增量由 display 接管（入队、不挂起；hook 慢不堵别的更新），其余照旧直进瞬时流
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { runtime.live.collect { if (!display.offer(it)) live.onUpdate(it) } }
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { runtime.state.collect { live.onState(it); display.onState(it) } }
         scope.launch { writeIndexOnChanges() }
     }
 

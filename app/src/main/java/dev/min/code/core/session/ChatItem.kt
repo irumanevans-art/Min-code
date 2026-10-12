@@ -82,7 +82,15 @@ sealed interface ChatItem {
          * 且只留每轮最后一条（见 [keepTurnEndStamps]）。
          */
         val finishedAt: Long? = null,
-    ) : ChatItem
+        /**
+         * MessageDisplay hook 替换屏显之前的原文（只有被替换过的才有，[text] 是替换后的）。纯显示替换：
+         * 屏上选中复制的是看到的 [text]，导出对话（会话日志的口径）用原文，见 [transcriptText]。
+         */
+        val rawText: String? = null,
+    ) : ChatItem {
+        /** 导出 / 转录用的文字：被 MessageDisplay 替换过的取原文 */
+        val transcriptText: String get() = rawText ?: text
+    }
 
     data class Thinking(override val id: String, val text: String) : ChatItem
 

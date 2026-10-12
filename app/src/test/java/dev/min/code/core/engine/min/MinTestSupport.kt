@@ -278,3 +278,7 @@ fun ModelRequest.allText(): String = messages.joinToString("\n") { m ->
 
 suspend fun TestKernel.newRoot(model: ModelRef = T_MODEL, mode: PermissionMode = PermissionMode.Default) =
     hub.create(GuestPath("/workspace"), model, mode)
+
+/** 宿主端口里只换 http hook 的发送端（其余同 [TestKernel] 默认：谁碰文件与进程谁失败）：测 hook 的用例用 */
+fun hostPortsWithHttpHooks(client: dev.min.agent.spi.HttpHookClient): HostPorts =
+    HostPorts(Unused, Unused, Unused, { _: SessionId -> NoArtifacts }, httpHooks = client)

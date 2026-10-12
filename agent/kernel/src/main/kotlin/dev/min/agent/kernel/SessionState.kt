@@ -391,7 +391,11 @@ sealed interface HistoryEntry {
         val origin: InputOrigin = InputOrigin.User,
     ) : HistoryEntry
 
-    data class Assistant(override val messageId: MessageId, val parts: List<Part>) : HistoryEntry {
+    /**
+     * [requestId] 是产出这条回复的模型请求（只有从 `AssistantMessageCompleted` 折出来的有；压缩 / 导入重建的历史没有）。
+     * 宿主据此把流式阶段按请求 id 记下的东西（MessageDisplay 的屏显文字）对回这条消息——瞬时流里只有请求 id，没有消息 id
+     */
+    data class Assistant(override val messageId: MessageId, val parts: List<Part>, val requestId: RequestId? = null) : HistoryEntry {
         val toolCalls: List<ToolCallPart> get() = parts.filterIsInstance<ToolCallPart>()
     }
 }
