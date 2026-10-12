@@ -39,11 +39,14 @@ internal class ModelBilling(private val rt: SessionRuntime) {
                     throw CronBudgetReached(overrun)
                 }
             }
+            // 流开头的 Started 带着响应头里的请求 id：结算那条记录一并落下（遥测 api_request 的 request_id）
+            var responseId: String? = null
             val finished = withTimeoutOrNull(rt.deps.modelTimeoutMs) {
                 model.client.stream(request.copy(timeoutMs = rt.deps.modelTimeoutMs)).collect { event ->
+                    if (event is ModelStreamEvent.Started) responseId = event.responseId
                     if (event is ModelStreamEvent.Completed) {
                         val charged = pricing?.let { cost(it, event.usage) }
-                        val record = ModelCharged(model.profile.ref, event.usage, charged?.amount, charged?.currency)
+                        val record = ModelCharged(model.profile.ref, event.usage, charged?.amount, charged?.currency, responseId)
                         rt.commit(listOf(record), Durability.Sync)
                         run?.charge(record)
                     }
@@ -51,7 +54,7 @@ internal class ModelBilling(private val rt: SessionRuntime) {
                 }
                 true
             }
-            if (finished == null) throw ModelException(ModelFailureKind.Network, "模型请求超时", beforeFirstByte = false)
+            if (finished == null) throw ModelException(ModelFailureKind.Network, "模型请求超时", beforeFirstByte = false, timedOut = true)
         }
         // 有预算时串行检查与扣账，避免同一会话的多个辅助请求同时读到尚未花费的余额。
         if (rt.deps.maxBudgetUsd == null && rt.treeCronRun() == null) collect() else lock.withLock { collect() }

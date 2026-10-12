@@ -77,6 +77,9 @@ data class DelegateRequest(
     val isolationWorktree: Boolean = false,
     val schema: JsonObject? = null,
     val workflowAttempts: Int? = null,
+    /** 发起这次委派的 Workflow 运行 id 与脚本名（工作流节点才有），写进子会话来历给遥测用 */
+    val workflowRunId: String? = null,
+    val workflowName: String? = null,
     /**
      * 分身 skill（`context: fork`）自己的 `allowed-tools`（已代入 CLAUDE_SKILL_DIR 的规则文字）：子 agent 在自己的日志里记一条放行，
      * 它跑的这件事就是那个 skill 的活，免审批范围与 skill 声明的一致（不多）。拒绝与询问规则仍照父会话继承的那份在其上。

@@ -29,6 +29,7 @@ internal class OtelSpanLinks(
             origin != null -> OtelLineage(
                 parent = origin.parent.value, root = origin.root.value, parentCall = origin.parentCall.value,
                 agentType = origin.agentType, depth = origin.depth, teamMember = origin.teamMember,
+                workflowRunId = origin.workflowRunId, workflowName = origin.workflowName,
             )
             parent != null -> OtelLineage(parent, parent, "", "unknown", 1, false)
             else -> null

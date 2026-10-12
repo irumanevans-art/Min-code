@@ -20,7 +20,12 @@ import java.io.IOException
 class FakeHttpTransport(vararg replies: Reply) : HttpTransport {
     sealed interface Reply {
         /** 2xx，流式回放这些事件；[failAfter] 非空时在回放完之后抛出（模拟吐了一半断流） */
-        data class Sse(val events: List<SseEvent>, val failAfter: IOException? = null) : Reply
+        data class Sse(
+            val events: List<SseEvent>,
+            val failAfter: IOException? = null,
+            /** 响应头：回放事件之前交给 [HttpRequest.onResponseHeaders]（真传输收到状态行与头之后就回调） */
+            val headers: List<Pair<String, String>> = emptyList(),
+        ) : Reply
 
         /** 非 2xx，带响应体 */
         data class Status(val status: Int, val body: String, val headers: List<Pair<String, String>> = emptyList()) : Reply
@@ -56,6 +61,7 @@ class FakeHttpTransport(vararg replies: Reply) : HttpTransport {
     override fun stream(request: HttpRequest): Flow<SseEvent> = flow {
         when (val reply = next(request)) {
             is Reply.Sse -> {
+                request.onResponseHeaders?.invoke(reply.headers)
                 reply.events.forEach { emit(it) }
                 reply.failAfter?.let { throw it }
             }

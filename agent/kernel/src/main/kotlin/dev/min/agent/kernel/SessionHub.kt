@@ -1166,6 +1166,8 @@ class SessionHub(
                 workflow = request.workflow || parentOrigin?.workflow == true,
                 workflowSchema = request.schema.takeIf { request.workflow },
                 workflowAttempts = request.workflowAttempts.takeIf { request.workflow },
+                workflowRunId = request.workflowRunId ?: parentOrigin?.workflowRunId,
+                workflowName = request.workflowName ?: parentOrigin?.workflowName,
             )
             initial += forkSeed(ps, callId, request.prompt)
             initial += forkInheritance(ps, callId)
@@ -1198,6 +1200,8 @@ class SessionHub(
                 workflow = request.workflow || parentOrigin?.workflow == true,
                 workflowSchema = request.schema.takeIf { request.workflow },
                 workflowAttempts = request.workflowAttempts.takeIf { request.workflow },
+                workflowRunId = request.workflowRunId ?: parentOrigin?.workflowRunId,
+                workflowName = request.workflowName ?: parentOrigin?.workflowName,
             )
         }
         // 分身 skill 的 allowed-tools：只记那个 skill 自己声明的（已代入），不是父会话当下的全部放行

@@ -99,7 +99,7 @@ class OtelMapperTest {
         val api = items.named("claude_code.api_request").single()
         assertEquals(0.0123, real(api, "cost_usd")!!, 1e-12)
         assertEquals(800.0, real(api, "duration_ms")!!, 0.0)
-        assertEquals("r1", text(api, "request_id"))
+        assertEquals("r1", text(api, "min.request_id"))
         assertEquals(300L, whole(api, "cache_read_tokens"))
     }
 

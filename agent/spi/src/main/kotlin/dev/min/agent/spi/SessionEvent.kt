@@ -176,6 +176,12 @@ data class ModelRequestStarted(
     val attempt: Int,
     val model: ModelRef,
     val prefixFingerprint: String,
+    /**
+     * 这次尝试请求头里带的 `x-client-request-id`（客户端生成，每次尝试一个）。只给遥测（OTel `client_request_id` 与 `gen_ai.request.attempt` 事件）用：
+     * 遥测从日志派生，而这个 id 只有发请求的内核知道。只在这家供应商的编解码器真会把它放进请求头时才写——不带的供应商
+     * （OpenAI 系、Gemini、第三方 Anthropic 兼容中转）为 null，不编造一个没发出去的 id。旧日志没有
+     */
+    val clientRequestId: String? = null,
 ) : SessionEvent
 
 /** 流式中按时间 / 字节攒批落盘的半截回答；崩溃后给界面展示「被中断的回答」 */
@@ -210,6 +216,13 @@ data class AssistantMessageCompleted(
     val ttftMs: Long? = null,
     /** 流开始后多久收到第一块内容（文本 / 思考 / 工具调用的增量，毫秒）；null = 没有（没有增量就结束了的回复、旧日志）。给 OTel `first_content_ms` */
     val firstContentMs: Long? = null,
+    /**
+     * 供应商给这次响应的请求 id（响应头：Anthropic 的 `request-id`、OpenAI 的 `x-request-id`），只给遥测用：OTel 的 `request_id` 与 `gen_ai.response.id`
+     * （原文：两者同值）。没有这个头的端点（Gemini、没回头的中转）与旧日志为 null，不拿流里的消息 id 顶替——那不是请求 id
+     */
+    val responseId: String? = null,
+    /** 响应头 `traceresponse` 原文（W3C trace-context：`00-<trace>-<span>-<flags>`），只给遥测的 span link 用；只在我们发出了 `traceparent` 时供应商才可能回它 */
+    val traceResponse: String? = null,
 ) : SessionEvent
 
 @Serializable
@@ -243,6 +256,11 @@ data class ModelRequestFailed(
      */
     val retryDelayMs: Long? = null,
     val maxRetries: Int? = null,
+    /** 这次失败是超时（连接 / 读取静默超时、整次请求超时）：[ModelFailureKind.Network] 里区分不出的 OTel `error_class=api_timeout`。旧日志为 false */
+    val timedOut: Boolean = false,
+    /** 失败响应带回的 `request-id`、`traceresponse`（有 HTTP 响应才有）；语义同 [AssistantMessageCompleted] 里的同名字段 */
+    val responseId: String? = null,
+    val traceResponse: String? = null,
 ) : SessionEvent
 
 // ---- 工具：planned → (审批) → effect_pending → outcome ----

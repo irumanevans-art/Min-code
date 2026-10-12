@@ -555,14 +555,26 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         // 回退链生效中（同一回合的后续请求）按回退模型的窗口算
         compactor.beforeRequest(turnId, resolveActiveModel(rt.state.value, deps, rt::modelPermitted))
         var overflowCompacted = false
+        // 这个请求第一次尝试的 ModelRequestStarted 的 seq：遥测的 llm_request span id 由它算出（出站 traceparent 要在请求发出前指向这个 span）。
+        // 重试、撞墙压缩后重发沿用它（同一个 span）；换到回退模型从 attempt 1 重来，是另一个 span，跟着重取
+        var spanStartSeq: Long? = null
         while (true) {
             val state = rt.state.value
             val model = resolveActiveModel(state, deps, rt::modelPermitted)
-            val request = assemble(state, model.profile)
-            rt.commit(
-                listOf(ModelRequestStarted(turnId, requestId, attempt, model.profile.ref, prefixFingerprint(request))),
+            val assembled = assemble(state, model.profile)
+            // 只有这家的编解码器真会把它放进请求头才生成、才落盘：不带的供应商不编造一个没发出去的 id
+            val clientRequestId = if (model.client.sendsClientRequestId) deps.ids.next("creq") else null
+            val started = rt.commit(
+                listOf(ModelRequestStarted(turnId, requestId, attempt, model.profile.ref, prefixFingerprint(assembled), clientRequestId)),
                 Durability.Sync,
             )
+            if (attempt == 1) spanStartSeq = started.firstOrNull()?.seq
+            // 出站 traceparent：宿主给（追踪没开 / 没接遥测就是 null），再由编解码器的端点策略把关（只 Anthropic 本家，自定义端点要显式开）。
+            // 遥测不许挡住请求：算不出来就不带
+            val trace = spanStartSeq?.let { seq ->
+                dev.min.agent.spi.catchingNonCancellation { deps.traceContext.modelRequest(rt.sessionId, turnId, requestId, seq) }.getOrNull()
+            }?.takeIf { model.client.propagatesTrace(it.allowCustomAnthropicEndpoint) }
+            val request = assembled.copy(clientRequestId = clientRequestId, trace = trace)
             try {
                 val gate = rt.requestGate
                 return if (gate == null) stream(turnId, requestId, model, request) else gate.withPermit { stream(turnId, requestId, model, request) }
@@ -581,6 +593,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
                             turnId, requestId, attempt, e.kind, e.message ?: e.kind.name, e.httpStatus, willRetry,
                             retryDelayMs = if (willRetry) wait else null,
                             maxRetries = if (willRetry) attemptsAllowed - 1 else null,
+                            timedOut = e.timedOut, responseId = e.responseId, traceResponse = e.traceResponse,
                         ),
                     ),
                     Durability.Sync,
@@ -673,6 +686,9 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val streamStart = deps.clock.nowMs()
         var ttftMs: Long? = null
         var firstContentMs: Long? = null
+        // 响应头里的供应商请求 id 与 traceresponse（Started 带来，只给遥测）；中途断流时它们随 ModelException 带回
+        var responseId: String? = null
+        var traceResponse: String? = null
         fun sawEvent() {
             if (ttftMs == null) ttftMs = (deps.clock.nowMs() - streamStart).coerceAtLeast(0)
         }
@@ -682,7 +698,11 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         }
         rt.modelBilling.stream(model, request).collect { event ->
             when (event) {
-                is ModelStreamEvent.Started -> sawEvent()
+                is ModelStreamEvent.Started -> {
+                    sawEvent()
+                    responseId = event.responseId
+                    traceResponse = event.traceResponse
+                }
                 is ModelStreamEvent.TextDelta -> {
                     sawContent()
                     rt.emitLive(LiveUpdate.Text(turnId, requestId, event.text))
@@ -707,7 +727,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             ModelFailureKind.Network, "流在给出完整回复之前结束了", beforeFirstByte = false,
         )
         rt.commit(
-            listOf(AssistantMessageCompleted(turnId, requestId, messageId, done.message.parts, done.usage, done.stop, done.truncated, ttftMs, firstContentMs)),
+            listOf(AssistantMessageCompleted(turnId, requestId, messageId, done.message.parts, done.usage, done.stop, done.truncated, ttftMs, firstContentMs, responseId, traceResponse)),
             Durability.Sync,
         )
         return done

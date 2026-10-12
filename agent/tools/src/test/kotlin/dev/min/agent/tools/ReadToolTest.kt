@@ -149,6 +149,7 @@ class ReadToolTest {
         val r = ReadTool.call(ctx, "file_path" to "/work/nope.txt")
         assertTrue(r.isError)
         assertEquals("文件不存在：/work/nope.txt。可以用 Glob 找一找正确的路径。", r.text)
+        assertEquals("遥测的错误类别：文件不存在", "Error:ENOENT", r.errorKind)
         assertTrue(r.touched.isEmpty())
     }
 

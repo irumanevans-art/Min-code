@@ -86,6 +86,12 @@ data class SubagentOrigin(
     val workflowSchema: kotlinx.serialization.json.JsonObject? = null,
     val workflowAttempts: Int? = null,
     val teamMember: Boolean = false,
+    /**
+     * 这个子 agent 属于哪次 Workflow 工具运行（运行 id 与脚本名）。给遥测的 `workflow.run_id` / `workflow.name` 用：
+     * 日志里原本只有 [workflow] 一个布尔，子会话与运行的对应推不出来。工作流节点派生的子 agent 及其再派生的后代都带（沿父来历继承）；null = 不是工作流的
+     */
+    val workflowRunId: String? = null,
+    val workflowName: String? = null,
 ) : SessionEvent
 
 /** 分身继承的一条对话消息：与父会话里那条逐字节相同（含消息 id） */

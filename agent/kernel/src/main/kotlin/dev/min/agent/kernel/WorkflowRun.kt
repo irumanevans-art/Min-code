@@ -120,7 +120,8 @@ internal suspend fun SessionRuntime.executeWorkflow(turnId: TurnId, callId: Call
                 agentType = options["agentType"]?.jsonPrimitive?.content,
                 effort = options["effort"]?.jsonPrimitive?.content?.let { raw -> dev.min.agent.protocol.Effort.entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: error("Invalid workflow effort.") },
                 isolationWorktree = options["isolation"]?.jsonPrimitive?.content?.let { require(it == "worktree"); true } ?: false,
-                schema = options["schema"] as? JsonObject, workflowAttempts = run.attempts)
+                schema = options["schema"] as? JsonObject, workflowAttempts = run.attempts,
+                workflowRunId = run.runId, workflowName = run.name)
         ) else hub.retryWorkflow(this, requireNotNull(children[index]), prompt)
         when (result) {
             is DelegateResult.Finished -> {

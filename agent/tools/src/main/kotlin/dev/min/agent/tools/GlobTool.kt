@@ -67,7 +67,7 @@ object GlobTool : Tool<GlobInput> {
 
     private suspend fun glob(input: GlobInput, ctx: ToolContext): ToolResult {
         val root = input.path ?: ctx.cwd
-        val rootStat = ctx.fs.stat(root) ?: return failResult("目录不存在：$root。")
+        val rootStat = ctx.fs.stat(root) ?: return failResult("目录不存在：$root。", ENOENT)
         if (rootStat.kind != FileKind.Directory) return failResult("$root 不是目录，path 要给目录。")
 
         val found = ctx.search.glob(GlobQuery(input.pattern, root, SCAN_LIMIT)).toList()

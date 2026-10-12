@@ -141,6 +141,13 @@ class OtelSpanMapper(
         /** 上一次尝试失败、正在等重试（willRetry）；下一条 ModelRequestStarted 把它变成一个重试事件 */
         var pendingFailure: ModelRequestFailed? = null
         val events = ArrayList<OtelSpanEvent>()
+
+        /** 最后一次尝试的 x-client-request-id（原文：final attempt 的）；没带（第三方端点）为 null */
+        var clientRequestId: String? = null
+
+        /** 详细追踪下 `new_context` 的内容：上一次请求之后新增的用户输入与工具结果（只在详细追踪与 OTEL_LOG_USER_PROMPTS 都开着时才攒） */
+        var newContext: String? = null
+        var newContextChars: Long = 0
     }
 
     private class OpenTool(
@@ -164,6 +171,22 @@ class OtelSpanMapper(
     /** call id → (回合 id, 工具名)：hook span 的 hook_name 要带工具名，而 PostToolUse 的记录到时工具已经收尾 */
     private val toolNames = HashMap<String, Pair<String, String>>()
     private var currentLlm: OpenLlm? = null
+
+    /**
+     * 详细追踪的 `new_context`（llm_request）：自上一次请求之后新进来的用户输入与工具结果。只在详细追踪且 OTEL_LOG_USER_PROMPTS 开着时才攒——
+     * 其余情形不留任何内容（也不占内存）。缓冲封顶在内容上限，真实长度另记，截断时带 `_original_length`
+     */
+    private val newContext = StringBuilder()
+    private var newContextChars = 0L
+    private val collectNewContext: Boolean get() = options.detailedTracing && options.logUserPrompts
+
+    private fun noteNewContext(text: String) {
+        if (!collectNewContext || text.isEmpty()) return
+        newContextChars += text.length
+        // 多留一个字符：长度超过上限，content() 才会按口径截断并加标记
+        val room = options.contentMaxLength + 1 - newContext.length
+        if (room > 0) newContext.append(text, 0, minOf(room, text.length))
+    }
     private var pendingPrompt: Pair<String, Long>? = null
     private var interactionCount = 0L
 
@@ -214,6 +237,7 @@ class OtelSpanMapper(
                 emptyList()
             }
             is InputReceived -> {
+                noteNewContext(e.parts.filterIsInstance<TextPart>().joinToString("") { it.text })
                 if (!isChild && e.origin is InputOrigin.User) {
                     val body = e.parts.filterIsInstance<TextPart>().joinToString("") { it.text }
                     pendingPrompt = body to record.seq
@@ -290,6 +314,7 @@ class OtelSpanMapper(
                 emptyList()
             }
             is ToolOutcome -> {
+                noteNewContext(e.result.content.filterIsInstance<TextPart>().joinToString("") { it.text })
                 val tool = tools.remove(e.callId.value) ?: return emptyList()
                 val out = ArrayList<OtelSpan>()
                 if (!tool.rejected) out += executionSpan(tool, at, e)
@@ -352,6 +377,8 @@ class OtelSpanMapper(
             attrs["user_prompt"] = OtelValue.Text(options.content(it, options.logUserPrompts))
             attrs["user_prompt_length"] = OtelValue.Whole(it.length.toLong())
         }
+        // 详细 beta 追踪下 interaction 另有 new_context = 用户提示词（门控 OTEL_LOG_USER_PROMPTS，原文「Content attributes under detailed beta tracing」）
+        if (options.detailedTracing && options.logUserPrompts) i.prompt?.let { options.putContent(attrs, "new_context", it) }
         attrs["interaction.sequence"] = OtelValue.Whole(i.sequence)
         // 原文：parent.source = env（挂在入站 TRACEPARENT 下）或 none（自己起了一条 trace）
         val inbound = options.inbound
@@ -378,8 +405,11 @@ class OtelSpanMapper(
             existing.attempt = e.attempt
             existing.model = e.model
             existing.pendingFailure = null
+            existing.clientRequestId = e.clientRequestId
             val attrs = LinkedHashMap<String, OtelValue>()
             attrs["attempt"] = OtelValue.Whole(e.attempt.toLong())
+            // 原文：每次重试的事件带 client_request_id；这家供应商没带（日志里没有）就不写
+            e.clientRequestId?.let { attrs["client_request_id"] = OtelValue.Text(it) }
             attrs["min.prior_failure_kind"] = OtelValue.Text(prior.kind.name.lowercase())
             prior.httpStatus?.let { attrs["min.prior_status_code"] = OtelValue.Whole(it.toLong()) }
             existing.events += OtelSpanEvent(SpanEventNames.REQUEST_ATTEMPT, at, attrs)
@@ -388,6 +418,13 @@ class OtelSpanMapper(
         }
         // 全新的请求（含重试用尽、换到回退模型后用同一个请求 id 重新开始的那次）
         val open = OpenLlm(e.turnId.value, e.requestId.value, e.attempt, e.model, at, seq, effort)
+        open.clientRequestId = e.clientRequestId
+        if (collectNewContext) {
+            open.newContext = newContext.toString()
+            open.newContextChars = newContextChars
+            newContext.setLength(0)
+            newContextChars = 0
+        }
         llms[e.requestId.value] = open
         currentLlm = open
     }
@@ -400,7 +437,10 @@ class OtelSpanMapper(
         attrs["llm_request.context"] = OtelValue.Text(if (isChild) "tool" else "interaction")
         // 原文：整段含重试的墙钟时间
         attrs["duration_ms"] = OtelValue.Real((endMs - open.startMs).toDouble())
-        attrs["request_id"] = OtelValue.Text(open.requestId)
+        // 原文：request_id 是服务端给的请求 id（响应头），与 gen_ai.response.id 同值，拿到才写（见 closeLlm / failLlm）；Min 自己的请求 id 另放 min.request_id
+        attrs["min.request_id"] = OtelValue.Text(open.requestId)
+        open.clientRequestId?.let { attrs["client_request_id"] = OtelValue.Text(it) }
+        attrs.putAll(options.workflowAttributes())
         // 原文：attempt 是总尝试次数
         attrs["attempt"] = OtelValue.Whole(open.attempt.toLong())
         // Min 没有快速模式，请求恒为普通速度
@@ -425,6 +465,10 @@ class OtelSpanMapper(
             attrs["cache_creation_tokens"] = OtelValue.Whole(u.cacheWriteTokens)
         }
         attrs["success"] = OtelValue.Flag(done != null)
+        done?.responseId?.let {
+            attrs["request_id"] = OtelValue.Text(it)
+            attrs["gen_ai.response.id"] = OtelValue.Text(it)
+        }
         if (done != null) {
             done.ttftMs?.let { attrs["ttft_ms"] = OtelValue.Whole(it) }
             done.firstContentMs?.let { attrs["first_content_ms"] = OtelValue.Whole(it) }
@@ -433,10 +477,12 @@ class OtelSpanMapper(
             attrs["stop_reason"] = OtelValue.Text(stop)
             attrs["gen_ai.response.finish_reasons"] = OtelValue.Texts(listOf(stop))
         }
+        detailedLlmContent(attrs, open, done)
         val turn = turnOf(open.turn)
         return OtelSpan(
             SpanNames.LLM_REQUEST, turn.traceId, SpanIds.llm(sid, open.requestId, open.startSeq), turn.childParent,
             open.startMs, at, attrs, error = if (done == null) "interrupted" else null, events = open.events.toList(),
+            links = linkOf(done?.traceResponse),
         )
     }
 
@@ -448,14 +494,46 @@ class OtelSpanMapper(
         last?.httpStatus?.let { attrs["status_code"] = OtelValue.Whole(it.toLong()) }
         last?.let { attrs["min.failure_kind"] = OtelValue.Text(it.kind.name.lowercase()) }
         last?.let { attrs["min.will_retry"] = OtelValue.Flag(it.willRetry) }
-        last?.let { attrs["error_class"] = OtelValue.Text(errorClass(it.kind)) }
+        last?.let { attrs["error_class"] = OtelValue.Text(if (it.timedOut) "api_timeout" else errorClass(it.kind)) }
+        last?.responseId?.let {
+            attrs["request_id"] = OtelValue.Text(it)
+            attrs["gen_ai.response.id"] = OtelValue.Text(it)
+        }
         val message = last?.message ?: "interrupted"
         attrs["error"] = OtelValue.Text(message)
+        detailedLlmContent(attrs, open, null)
         val turn = turnOf(open.turn)
         return OtelSpan(
             SpanNames.LLM_REQUEST, turn.traceId, SpanIds.llm(sid, open.requestId, open.startSeq), turn.childParent,
             open.startMs, at, attrs, error = message, events = open.events.toList(),
+            links = linkOf(last?.traceResponse),
         )
+    }
+
+    /**
+     * 响应头 `traceresponse` → span link（原文：API 一侧的 traceresponse 记成 span link）。
+     * 值来自远端，必须是合规的 W3C 格式才用（[TraceParent.parse] 拒绝一切不合规的），否则不出 link，不抛。
+     */
+    private fun linkOf(raw: String?): List<OtelSpanLink> {
+        val parsed = TraceParent.parse(raw) ?: return emptyList()
+        return listOf(OtelSpanLink(parsed.traceId, parsed.spanId, parsed.traceState))
+    }
+
+    /**
+     * 详细 beta 追踪下 llm_request 的内容属性（原文「Content attributes under detailed beta tracing」，门控：详细追踪 + OTEL_LOG_USER_PROMPTS）：
+     * `new_context`（自上一次请求后新进来的用户输入与工具结果）、`response.model_output`（模型这次回的文本）。
+     * 原文说它们不属稳定 schema，所以只在详细追踪下出，默认关。
+     * `system_prompt_preview`、`user_system_prompt`、`system_reminders` 不做：系统提示与提醒的正文不在会话日志里（日志只留前缀指纹），
+     * 为遥测把它们每次请求再记一份既膨胀日志又多存一份提示词。
+     */
+    private fun detailedLlmContent(attrs: LinkedHashMap<String, OtelValue>, open: OpenLlm, done: AssistantMessageCompleted?) {
+        if (!options.detailedTracing || !options.logUserPrompts) return
+        open.newContext?.takeIf { it.isNotEmpty() }?.let { text ->
+            options.putContent(attrs, "new_context", text, open.newContextChars)
+        }
+        done?.parts?.filterIsInstance<TextPart>()?.joinToString("") { it.text }?.takeIf { it.isNotEmpty() }?.let {
+            options.putContent(attrs, "response.model_output", it)
+        }
     }
 
     private fun stopReason(s: StopReason): String = when (s) {
@@ -509,6 +587,8 @@ class OtelSpanMapper(
         outcome?.let { attrs["result_tokens"] = OtelValue.Whole(approxTokens(it)) }
         attrs["tool_use_id"] = OtelValue.Text(tool.callId)
         attrs["gen_ai.tool.call.id"] = OtelValue.Text(tool.callId)
+        attrs.putAll(options.workflowAttributes())
+        detailedToolContent(attrs, tool, outcome)
         if (options.logToolDetails) {
             // 原文：这些属性受 OTEL_LOG_TOOL_DETAILS 门控（防 PII）
             val input = tool.input
@@ -524,6 +604,27 @@ class OtelSpanMapper(
             SpanNames.TOOL, turn.traceId, SpanIds.tool(sid, tool.callId), turn.childParent,
             tool.startMs, at, attrs, error = error, events = events,
         )
+    }
+
+    /**
+     * 详细 beta 追踪下 tool span 的内容属性（原文「Content attributes under detailed beta tracing」）：
+     * `new_context` = 工具调用的结果，不论哪个工具，门控 OTEL_LOG_TOOL_CONTENT；`tool_input` = 序列化的工具入参，门控 OTEL_LOG_TOOL_DETAILS。
+     * 两个都要先有详细追踪（原文：不属稳定 schema，只在详细追踪下出）。被中断的调用没有结果，不写 `new_context`。
+     */
+    private fun detailedToolContent(attrs: LinkedHashMap<String, OtelValue>, tool: OpenTool, outcome: ToolOutcome?) {
+        if (!options.detailedTracing) return
+        if (options.logToolContent && outcome != null) {
+            val text = outcome.result.content.joinToString("") {
+                when (it) {
+                    is TextPart -> it.text
+                    is ImagePart -> "[image]"
+                    is DocumentPart -> "[document]"
+                    else -> ""
+                }
+            }
+            if (text.isNotEmpty()) options.putContent(attrs, "new_context", text)
+        }
+        if (options.logToolDetails) options.putContent(attrs, "tool_input", tool.input.toString())
     }
 
     /**
@@ -609,6 +710,8 @@ class OtelSpanMapper(
             // Min 的工具结果没有结构化的错误类别：Bash 失败记 ShellError，其余记 ToolError，被中断记 interrupted
             val category = when {
                 outcome == null -> "interrupted"
+                // 工具 / 内核给出了类别（Error:ENOENT 一类，随 tool_outcome 落盘）就用它，否则按工具名猜
+                outcome.result.errorKind != null -> outcome.result.errorKind!!
                 toolName == "Bash" -> "ShellError"
                 else -> "ToolError"
             }
@@ -619,7 +722,8 @@ class OtelSpanMapper(
             } else {
                 attrs["error"] = OtelValue.Text(category)
             }
-            attrs["error_class"] = OtelValue.Text(category.replace(':', '_'))
+            // 原文：error_class 是类别的标识形式，字母数字下划线之外的字符换成 _
+            attrs["error_class"] = OtelValue.Text(category.replace(Regex("[^A-Za-z0-9_]"), "_"))
         }
         val turn = turnOf(tool.turn)
         return OtelSpan(
@@ -647,10 +751,12 @@ class OtelSpanMapper(
         e.succeeded?.let { attrs["num_success"] = OtelValue.Whole(it.toLong()) }
         e.blocking?.let { attrs["num_blocking"] = OtelValue.Whole(it.toLong()) }
         e.nonBlockingErrors?.let { attrs["num_non_blocking_error"] = OtelValue.Whole(it.toLong()) }
+        // 原文：num_cancelled = 没跑完就被取消的 hook 数。只在内核整批被取消时记（cancelled）；其余批有结局计数就是 0
+        (e.cancelled ?: if (e.succeeded != null) 0 else null)?.let { attrs["num_cancelled"] = OtelValue.Whole(it.toLong()) }
         if (e.background) attrs["min.background"] = OtelValue.Flag(true)
         if (options.logToolDetails) definitionsFor(e.event)?.let { attrs["hook_definitions"] = OtelValue.Text(options.content(it, true)) }
         // 原文：hook 失败时状态为 ERROR。「失败」= 有处理器出了非阻断错误（没跑起来、超时）；拦下是 hook 的正常结论
-        val failed = (e.nonBlockingErrors ?: 0) > 0 || (e.nonBlockingErrors == null && e.problems.isNotEmpty())
+        val failed = (e.nonBlockingErrors ?: 0) > 0 || (e.nonBlockingErrors == null && e.cancelled == null && e.problems.isNotEmpty())
         val message = if (failed) e.problems.firstOrNull() ?: "hook error" else null
         return OtelSpan(
             SpanNames.HOOK, turn.traceId, e.runId?.let { SpanIds.hookRun(sid, it) } ?: SpanIds.hook(sid, record.seq), turn.childParent,

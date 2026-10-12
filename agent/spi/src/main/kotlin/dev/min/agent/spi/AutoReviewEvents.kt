@@ -67,4 +67,6 @@ data class ModelCharged(
     val usage: Usage,
     val amount: Double? = null,
     val currency: String? = null,
+    /** 供应商给这次响应的请求 id（响应头 `request-id`），只给遥测 `api_request` 的 `request_id` 用；辅助请求（分类器、复盘……）也有。没有（别的线协议、中转没回）为 null */
+    val responseId: String? = null,
 ) : SessionEvent

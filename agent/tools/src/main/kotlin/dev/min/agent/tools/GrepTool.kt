@@ -122,7 +122,7 @@ object GrepTool : Tool<GrepInput> {
 
     private suspend fun grep(input: GrepInput, ctx: ToolContext): ToolResult {
         val root = input.path ?: ctx.cwd
-        if (ctx.fs.stat(root) == null) return failResult("路径不存在：$root。")
+        if (ctx.fs.stat(root) == null) return failResult("路径不存在：$root。", ENOENT)
 
         val content = input.mode == GrepMode.Content
         val limit = input.headLimit

@@ -1,6 +1,7 @@
 package dev.min.agent.spi
 
 import dev.min.agent.protocol.CallId
+import dev.min.agent.protocol.RequestId
 import dev.min.agent.protocol.SessionId
 import dev.min.agent.protocol.TurnId
 
@@ -24,9 +25,23 @@ interface TraceContextProvider {
      */
     suspend fun hook(session: SessionId, turn: TurnId, call: CallId?, runId: String?): String?
 
+    /**
+     * 模型请求（`claude_code.llm_request` span）的出站 `traceparent`。[startSeq] 是这个请求第一次尝试的 `model_request_started` 的 seq——
+     * span id 由它（与会话 id、请求 id）哈希得出，所以内核要把落盘返回的 seq 交过来，宿主才算得出「这次请求的 span 是谁」。
+     * 追踪没开返回 null。默认实现返回 null，旧的宿主与测试替身不用改
+     */
+    suspend fun modelRequest(session: SessionId, turn: TurnId, request: RequestId, startSeq: Long): OutboundTrace? = null
+
     /** 默认：不传播。没接遥测的宿主与测试替身用它 */
     object None : TraceContextProvider {
         override suspend fun toolExecution(session: SessionId, turn: TurnId, call: CallId): String? = null
         override suspend fun hook(session: SessionId, turn: TurnId, call: CallId?, runId: String?): String? = null
     }
 }
+
+/**
+ * 模型请求要带的 trace 上下文。[traceparent] 是 `traceparent` 头的值（`00-<trace>-<span>-01`，span 为这次 llm_request）。
+ * [allowCustomAnthropicEndpoint]：用户显式设了 `CLAUDE_CODE_PROPAGATE_TRACEPARENT=1`，允许发给自定义的 Anthropic 兼容端点
+ * （原文：默认只发给 Anthropic API，自定义代理要显式开）。是否真的发由各家编解码器按自己的端点决定（见 `ModelClient.propagatesTrace`）。
+ */
+data class OutboundTrace(val traceparent: String, val allowCustomAnthropicEndpoint: Boolean = false)

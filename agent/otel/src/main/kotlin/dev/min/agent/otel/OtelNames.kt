@@ -20,6 +20,15 @@ object OtelNames {
     const val TOOL_DECISION = "claude_code.tool_decision"
     const val TOOL_RESULT = "claude_code.tool_result"
     const val PERMISSION_MODE_CHANGED = "claude_code.permission_mode_changed"
+    const val API_RETRIES_EXHAUSTED = "claude_code.api_retries_exhausted"
+    const val API_REFUSAL = "claude_code.api_refusal"
+    const val HOOK_REGISTERED = "claude_code.hook_registered"
+    const val HOOK_EXECUTION_START = "claude_code.hook_execution_start"
+    const val HOOK_EXECUTION_COMPLETE = "claude_code.hook_execution_complete"
+    const val COMPACTION = "claude_code.compaction"
+    const val SUBAGENT_COMPLETED = "claude_code.subagent_completed"
+    const val SKILL_ACTIVATED = "claude_code.skill_activated"
+    const val MCP_SERVER_CONNECTION = "claude_code.mcp_server_connection"
 
     const val MIN_TURN_STARTED = "min.turn.started"
     const val MIN_TURN_ENDED = "min.turn.ended"
@@ -34,16 +43,25 @@ val OTEL_NAME_TABLE: Map<String, List<String>> = mapOf(
     "session_created" to listOf(OtelNames.SESSION_COUNT),
     "input_received" to listOf(OtelNames.USER_PROMPT),
     "turn_started" to listOf(OtelNames.MIN_TURN_STARTED),
-    "turn_ended" to listOf(OtelNames.MIN_TURN_ENDED),
+    "turn_ended" to listOf(OtelNames.MIN_TURN_ENDED, OtelNames.SUBAGENT_COMPLETED),
     "model_request_started" to emptyList(),
     "model_charged" to listOf(OtelNames.COST_USAGE, OtelNames.TOKEN_USAGE, OtelNames.API_REQUEST),
-    "model_request_failed" to listOf(OtelNames.API_ERROR),
-    "assistant_message_completed" to listOf(OtelNames.ASSISTANT_RESPONSE),
+    "model_request_failed" to listOf(OtelNames.API_ERROR, OtelNames.API_RETRIES_EXHAUSTED),
+    "assistant_message_completed" to listOf(OtelNames.ASSISTANT_RESPONSE, OtelNames.API_REFUSAL),
+    "hooks_loaded" to listOf(OtelNames.HOOK_REGISTERED),
+    "hooks_ran" to listOf(OtelNames.HOOK_EXECUTION_START, OtelNames.HOOK_EXECUTION_COMPLETE),
+    "compaction_started" to emptyList(),
+    "context_compacted" to listOf(OtelNames.COMPACTION),
+    "compaction_failed" to listOf(OtelNames.COMPACTION),
+    "mcp_servers_loaded" to listOf(OtelNames.MCP_SERVER_CONNECTION),
+    "skills_loaded" to emptyList(),
+    "skills_discovered" to emptyList(),
+    "skills_rescanned" to emptyList(),
     "tool_planned" to emptyList(),
     "approval_requested" to emptyList(),
     "approval_resolved" to listOf(OtelNames.TOOL_DECISION, OtelNames.CODE_EDIT_DECISION),
     "tool_effect_pending" to emptyList(),
-    "tool_outcome" to listOf(OtelNames.TOOL_RESULT, OtelNames.LINES_OF_CODE),
+    "tool_outcome" to listOf(OtelNames.TOOL_RESULT, OtelNames.LINES_OF_CODE, OtelNames.SKILL_ACTIVATED),
     "settings_changed" to listOf(OtelNames.PERMISSION_MODE_CHANGED),
     "conversation_ended" to listOf(OtelNames.MIN_CONVERSATION_ENDED),
 )

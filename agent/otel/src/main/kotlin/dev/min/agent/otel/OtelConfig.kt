@@ -53,6 +53,11 @@ data class OtelConfig(
      * 指向自定义代理时默认不传（免得把 trace id 交给第三方），设 `CLAUDE_CODE_PROPAGATE_TRACEPARENT=1` 才传
      */
     val propagateTraceparent: Boolean = true,
+    /**
+     * 用户显式设了 `CLAUDE_CODE_PROPAGATE_TRACEPARENT=1`：模型请求的 `traceparent` 可以发给自定义的 Anthropic 兼容端点（原文：默认只发给 Anthropic API，
+     * 自定义代理要显式开）。Min 的各家供应商各有自己的地址，不看 `ANTHROPIC_BASE_URL`，所以模型请求只认这个显式开关与端点本身
+     */
+    val propagateTraceparentExplicit: Boolean = false,
     /** 配错了的地方（只写变量名与原因，不写值） */
     val problems: List<String>,
 ) {
@@ -187,6 +192,7 @@ data class OtelConfig(
                 betaTracingDetailed = betaDetailed,
                 // 原文：Agent SDK 与 -p 会话读入站 TRACEPARENT / TRACESTATE，交互会话忽略——由宿主用 acceptInbound 声明
                 propagateTraceparent = flag("CLAUDE_CODE_PROPAGATE_TRACEPARENT") || baseUrlIsAnthropicOrUnset(env("ANTHROPIC_BASE_URL")),
+                propagateTraceparentExplicit = flag("CLAUDE_CODE_PROPAGATE_TRACEPARENT"),
                 inbound = if (acceptInbound) TraceParent.parse(env("TRACEPARENT"), env("TRACESTATE")) else null,
                 problems = problems,
             )

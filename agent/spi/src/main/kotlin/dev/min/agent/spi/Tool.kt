@@ -125,6 +125,12 @@ data class ToolResult(
     val userText: String? = null,
     /** 本次编辑新增的错误；正文也带给模型，单独留字段让工具卡在长结果里仍能明确显示摘要。 */
     val diagnostics: List<LspDiagnostic> = emptyList(),
+    /**
+     * 失败的类别（[isError] 为真时）：工具 / 内核能给出的就给，给不出为 null。给遥测 `tool.execution` 的 `error` / `error_class`
+     * （原文：`Error:ENOENT`、`ShellError` 这样的类别串）。取值只有这几种来源：文件 / 目录不存在写 `Error:ENOENT`，权限不够 `Error:EACCES`，
+     * 工具抛了没料到的异常写异常类的简单名，Bash 非零退出由遥测按工具名补 `ShellError`。旧日志没有，读端按工具名猜
+     */
+    val errorKind: String? = null,
 )
 
 /**

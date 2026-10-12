@@ -46,6 +46,17 @@ data class OtelSpanEvent(
 )
 
 /**
+ * span 链接（OTLP `links`）：指向另一个 span，这里只用于模型请求——响应头 `traceresponse` 是 API 一侧处理这次请求的 span，
+ * 原文：「the API's traceresponse header is recorded as a span link」。
+ */
+data class OtelSpanLink(
+    val traceId: String,
+    val spanId: String,
+    val traceState: String? = null,
+    val attributes: Map<String, OtelValue> = emptyMap(),
+)
+
+/**
  * 一个已经结束的 span（OTLP traces）。span 只在结束时导出：开始时间与结束时间都来自会话日志里的 atMs。
  * [error] 非空即状态为 ERROR（原文：llm_request、tool.execution、hook 失败时），为空则 UNSET。
  * 作为 [OtelItem] 时 [timeMs] 取结束时间，导出批次按它排序。
@@ -62,6 +73,7 @@ data class OtelSpan(
     val error: String? = null,
     val events: List<OtelSpanEvent> = emptyList(),
     val traceState: String? = null,
+    val links: List<OtelSpanLink> = emptyList(),
 ) : OtelItem {
     override val timeMs: Long get() = endMs
 }
@@ -79,6 +91,9 @@ data class OtelLineage(
     /** 根会话 = 0，它的子 agent = 1…… */
     val depth: Int,
     val teamMember: Boolean,
+    /** 这个子 agent 属于哪次 Workflow 工具运行（运行 id 与脚本名）；不是工作流的为 null */
+    val workflowRunId: String? = null,
+    val workflowName: String? = null,
 )
 
 /**
@@ -118,6 +133,20 @@ internal fun OtelOptions.content(value: String, allowed: Boolean): String {
 internal const val OTEL_REDACTED = "<REDACTED>"
 internal const val OTEL_TRUNCATED = "...[truncated]"
 
+/**
+ * 工作流归属属性（原文：`workflow.run_id` 在工作流里的 agent 发出的 API、工具事件与 llm_request / tool span 上；`workflow.name` 与它同在，
+ * 用户自写的名字换成 `custom`，除非 OTEL_LOG_TOOL_DETAILS=1）。Min 没有内置工作流，所以名字一律按用户自写处理。
+ * 只给事件与 span，不进指标：运行 id 每次都不同，放进指标会撑爆基数
+ */
+internal fun OtelOptions.workflowAttributes(): Map<String, OtelValue> {
+    val l = lineage ?: return emptyMap()
+    val run = l.workflowRunId ?: return emptyMap()
+    return buildMap {
+        put("workflow.run_id", OtelValue.Text(run))
+        put("workflow.name", OtelValue.Text(if (logToolDetails) l.workflowName ?: "custom" else "custom"))
+    }
+}
+
 /** 子会话属性（日志与 span 共用同一套名字）。根会话为空 */
 internal fun OtelLineage.attributes(sessionId: String): Map<String, OtelValue> = buildMap {
     put("agent_id", OtelValue.Text(sessionId))
@@ -135,10 +164,11 @@ internal fun OtelLineage.attributes(sessionId: String): Map<String, OtelValue> =
  * `<名字>_truncated`（true）与 `<名字>_original_length`（原长，UTF-16 单位）——原文口径，后端据此知道没拿到全文。
  * 没被截断时不写伴随属性。
  */
-internal fun OtelOptions.putContent(into: MutableMap<String, OtelValue>, name: String, value: String) {
+/** [originalLength]：[value] 本身已被调用方预先截过时，真实的原长（默认就是 [value] 的长度） */
+internal fun OtelOptions.putContent(into: MutableMap<String, OtelValue>, name: String, value: String, originalLength: Long = value.length.toLong()) {
     into[name] = OtelValue.Text(content(value, true))
-    if (value.length > contentMaxLength) {
+    if (originalLength > contentMaxLength) {
         into["${name}_truncated"] = OtelValue.Flag(true)
-        into["${name}_original_length"] = OtelValue.Whole(value.length.toLong())
+        into["${name}_original_length"] = OtelValue.Whole(originalLength)
     }
 }

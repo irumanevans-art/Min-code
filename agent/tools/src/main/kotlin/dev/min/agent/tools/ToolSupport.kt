@@ -151,7 +151,10 @@ internal suspend fun preserveWrite(ctx: ToolContext, path: GuestPath, original: 
     return StoredContents(before, after, ctx.lsp.afterEdit(path, updated.decodeToString(), token))
 }
 
-internal fun failResult(text: String) = ToolResult(listOf(TextPart(text)), isError = true)
+internal fun failResult(text: String, errorKind: String? = null) = ToolResult(listOf(TextPart(text)), isError = true, errorKind = errorKind)
+
+/** 文件或目录不存在：遥测的错误类别沿用 Node 的 `Error:ENOENT` 写法（原文示例） */
+internal const val ENOENT = "Error:ENOENT"
 
 /** 各工具的 run 都是「做完一件事，交一个结果」，进度只有最后的 Done */
 internal fun doneFlow(block: suspend () -> ToolResult): Flow<ToolProgress> = flow { emit(ToolProgress.Done(block())) }

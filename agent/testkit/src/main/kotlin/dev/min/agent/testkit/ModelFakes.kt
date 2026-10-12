@@ -33,6 +33,12 @@ class ScriptedModel(vararg steps: Step) : ModelClient {
     private val queue = ArrayDeque(steps.toList())
     val requests = mutableListOf<ModelRequest>()
 
+    /** 替身要不要像官方 Anthropic 编解码器那样「带 x-client-request-id / traceparent」：测内核落盘与出站上下文用 */
+    var sendsId = false
+    var propagates: (Boolean) -> Boolean = { false }
+    override val sendsClientRequestId: Boolean get() = sendsId
+    override fun propagatesTrace(allowCustomAnthropicEndpoint: Boolean): Boolean = propagates(allowCustomAnthropicEndpoint)
+
     override fun stream(request: ModelRequest): Flow<ModelStreamEvent> = flow {
         synchronized(requests) { requests += request }
         val step = synchronized(queue) { queue.removeFirstOrNull() } ?: error("模型脚本用完了，却又收到请求")

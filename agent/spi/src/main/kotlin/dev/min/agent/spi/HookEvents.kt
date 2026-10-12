@@ -121,6 +121,8 @@ data class HooksRan(
      * hook 子进程的 `TRACEPARENT` 要在它启动之前就指向这个 span，而 span 是事后从日志折出来的，所以标识由内核先定、随记录落盘。null = 没写（span id 退回用记录的 seq）
      */
     val runId: String? = null,
+    /** 这批里被取消（回合被中断、进程取消）而没跑完的处理器数，给遥测 hook span 的 `num_cancelled`。内核只在整批被取消时写（此时 [handlers] 个都算没跑完，[decision] 为 cancelled）；其余为 null，读端当 0 */
+    val cancelled: Int? = null,
 ) : SessionEvent
 
 /** hook 加给模型的上下文挂在哪 */
