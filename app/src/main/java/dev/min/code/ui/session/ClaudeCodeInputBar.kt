@@ -102,6 +102,8 @@ internal fun ClaudeCodeInputBar(
     onSetChineseDescriptions: (Boolean) -> Unit = {},
     onRefreshUsage: () -> Unit = {},
     onSetCwd: (String) -> Unit = {},
+    /** 设置里「添加附加目录」（Min 的 /add-dir）：选好的 guest 路径 */
+    onAddDirectory: (String) -> Unit = {},
     onListCwd: suspend (String) -> Result<List<me.rerere.workspace.WorkspaceFileEntry>> = EmptyCwdList,
     onCreateCwd: (String, String, (Result<String>) -> Unit) -> Unit = NoopCwdCreate,
     /** 移除附件时把文件从工作区删掉，否则"删掉输入框里那行路径"并不会真的取消上传 */
@@ -503,6 +505,7 @@ internal fun ClaudeCodeInputBar(
             onApplyEffort = { effort, ultra -> onApplyEffort(effort, ultra); settingsOpen = false },
             onSetPromptCacheTtl = { onSetPromptCacheTtl(it); settingsOpen = false },
             onSetCwd = { onSetCwd(it); settingsOpen = false },
+            onAddDirectory = { onAddDirectory(it); settingsOpen = false },
             onListCwd = onListCwd,
             onCreateCwd = onCreateCwd,
             onPickCommand = { input = "/$it "; settingsOpen = false },

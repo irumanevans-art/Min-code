@@ -545,6 +545,14 @@ class SessionVM(
 
     fun setCwd(path: String) = command({ SessionCommand.SetCwd(it, path) })
 
+    /** 设置里「添加附加目录」：内核的 /add-dir。被拒（已在工作目录里、不存在……）时原因经 [addDirectoryRejections] 给界面 */
+    fun addDirectory(path: String) = command({ SessionCommand.AddDirectory(it, path) }) { result ->
+        if (result is CommandResult.Rejected) addDirectoryRejections.tryEmit(result.message)
+    }
+
+    /** 加目录被拒的原因（一次性提示，界面弹 Toast / Snackbar） */
+    val addDirectoryRejections = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
+
     /**
      * 列出某个 guest 路径下的条目，给选文件夹面板用。
      * 失败（目录不存在、越界）走 Result，面板显示原因而不是崩。

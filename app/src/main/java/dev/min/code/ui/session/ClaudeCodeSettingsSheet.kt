@@ -121,6 +121,8 @@ internal fun ClaudeCodeSettingsSheet(
     onApplyEffort: (String?, Boolean) -> Unit,
     onSetPromptCacheTtl: (String) -> Unit,
     onSetCwd: (String) -> Unit,
+    /** 添加附加目录（只有 [EngineCapabilities.addDirectory] 的引擎显示这一项） */
+    onAddDirectory: (String) -> Unit = {},
     onListCwd: suspend (String) -> Result<List<me.rerere.workspace.WorkspaceFileEntry>> = EmptyCwdList,
     onCreateCwd: (String, String, (Result<String>) -> Unit) -> Unit = NoopCwdCreate,
     onPickCommand: (String) -> Unit,
@@ -283,6 +285,24 @@ internal fun ClaudeCodeSettingsSheet(
                     onList = onListCwd,
                     onCreate = onCreateCwd,
                 )
+                if (capabilities.addDirectory) {
+                    // 附加目录：只授予文件访问，只在这个会话里有效（不写设置）；选好之后内核触发 DirectoryAdded hooks
+                    var addDirOpen by remember { mutableStateOf(false) }
+                    Spacer(Modifier.padding(top = 8.dp))
+                    Text(stringResource(R.string.session_add_dir_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    InkButton(onClick = { addDirOpen = true }, enabled = !settingsBusy, tone = InkButtonTone.Quiet, compact = true) {
+                        Text(stringResource(R.string.session_add_dir_button))
+                    }
+                    if (addDirOpen) {
+                        CwdPickerSheet(
+                            current = session.cwd,
+                            onPick = { onAddDirectory(it); addDirOpen = false },
+                            onDismiss = { addDirOpen = false },
+                            onList = onListCwd,
+                            onCreate = onCreateCwd,
+                        )
+                    }
+                }
             }
         }
 

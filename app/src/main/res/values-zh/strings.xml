@@ -677,6 +677,8 @@
   <string name="cwd_new_folder">新建文件夹</string>
   <string name="cwd_empty">这里没有子文件夹</string>
   <string name="cwd_use_current">使用当前目录</string>
+  <string name="session_add_dir_hint">只为这个会话再加一个文件夹：读它不再询问，改它按权限模式；它自己的设置与 hooks 不生效，也不会写进设置文件。</string>
+  <string name="session_add_dir_button">添加文件夹…</string>
   <string name="cwd_open_failed">打不开这个目录</string>
   <string name="cwd_create_failed">新建失败</string>
   <string name="cwd_new_folder_title">新建文件夹</string>

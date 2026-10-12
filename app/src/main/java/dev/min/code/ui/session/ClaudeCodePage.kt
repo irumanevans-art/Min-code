@@ -1049,6 +1049,9 @@ private fun SessionContent(
     // 工具卡的字头在组合期取好传下去：TranscriptItem 的调用方（搜索、导出）不是 Composable
     val transcriptLabels = rememberTranscriptLabels()
     val composerDraft by vm.composerDraft.collectAsStateWithLifecycle()
+    // 设置里「添加附加目录」被内核拒绝（已在工作目录里、不存在……）：把原因告诉用户
+    val addDirContext = LocalContext.current
+    LaunchedEffect(vm) { vm.addDirectoryRejections.collect { android.widget.Toast.makeText(addDirContext, it, android.widget.Toast.LENGTH_LONG).show() } }
     val capabilities by vm.capabilities.collectAsStateWithLifecycle()
     val pendingResume by vm.pendingResume.collectAsStateWithLifecycle()
     val activeKey by vm.activeSessionKey.collectAsStateWithLifecycle()
@@ -1503,6 +1506,7 @@ private fun SessionContent(
                         onRefreshUsage = vm::refreshUsage,
                         onImportFile = toolsVm::importFile,
                         onSetCwd = vm::setCwd,
+                        onAddDirectory = vm::addDirectory,
                         onListCwd = vm::listCwdFolders,
                         onCreateCwd = vm::createCwdFolder,
                         onDeleteWorkspaceFile = toolsVm::deleteWorkspaceFile,

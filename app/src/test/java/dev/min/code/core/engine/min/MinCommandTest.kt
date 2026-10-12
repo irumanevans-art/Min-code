@@ -174,6 +174,24 @@ class MinCommandTest {
         assertEquals("/workspace/sub", r.root.state.value.settings.cwd.value)
     }
 
+    @Test fun `add directory goes through the kernel add-dir, refusals come back as rejections with the reason`() {
+        val r = skillsRig(mutableMapOf("/workspace/sub/README.md" to "x", "/shared/lib/notes.txt" to "n"))
+        runBlocking {
+            assertEquals(CommandResult.Accepted, r.session.submit(SessionCommand.AddDirectory(cmd(), "/shared/lib")))
+            assertTrue(r.root.state.value.additionalDirectories.contains(dev.min.agent.spi.GuestPath("/shared/lib")))
+            assertTrue(r.events().any { it is dev.min.agent.spi.DirectoryAdded && it.source == "slash_command" })
+            val again = r.session.submit(SessionCommand.AddDirectory(cmd(), "/shared/lib"))
+            assertTrue("已经是工作目录：$again", again is CommandResult.Rejected)
+            val inside = r.session.submit(SessionCommand.AddDirectory(cmd(), "sub"))
+            assertTrue("相对路径按会话目录、已在工作目录里：$inside", inside is CommandResult.Rejected)
+            assertTrue(r.session.submit(SessionCommand.AddDirectory(cmd(), "/workspace/nope")) is CommandResult.Rejected)
+            val unc = r.session.submit(SessionCommand.AddDirectory(cmd(), "//server/share"))
+            assertTrue("网络路径：$unc", unc is CommandResult.Rejected && unc.message.contains("网络路径"))
+            assertTrue(r.session.submit(SessionCommand.AddDirectory(cmd(), "  ")) is CommandResult.Rejected)
+        }
+        assertEquals(listOf(dev.min.agent.spi.GuestPath("/shared/lib")), r.root.state.value.additionalDirectories)
+    }
+
     @Test fun `slash reload-skills in the app picks up a new skill, says so with a notice and puts it in the menu`() {
         val files = mutableMapOf("/workspace/.claude/skills/old/SKILL.md" to skillFile("old one", "OLD"))
         val r = skillsRig(files)

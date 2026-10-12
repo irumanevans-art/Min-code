@@ -132,6 +132,8 @@ class ClaudeCodeSession internal constructor(
                 CommandResult.Accepted
             }
             is SessionCommand.SetCwd -> { manager.setCwd(command.path); CommandResult.Accepted }
+            // CC 的 /add-dir 在它自己的 CLI 里；能力位为假，submit 在到这之前就拦了
+            is SessionCommand.AddDirectory -> CommandResult.Unsupported
             is SessionCommand.SetEngineOption -> setEngineOption(command, current)
             is SessionCommand.Rename -> {
                 val title = command.title.trim()

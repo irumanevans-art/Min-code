@@ -127,6 +127,7 @@ class CodexSession internal constructor(
             manager.updateSessionOptions { it.copy(cwd = CwdPath.normalize(command.path)) }
             CommandResult.Accepted
         }
+        is SessionCommand.AddDirectory -> CommandResult.Unsupported
         is SessionCommand.SetEngineOption -> setEngineOption(command)
         is SessionCommand.Rename -> {
             val title = command.title.trim()

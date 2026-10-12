@@ -48,11 +48,12 @@ class EngineCapabilitiesTest {
         "advisor" to Triple("false", "false", "true"),
         // 会话分支（内核 SessionHub.branch）：抽屉行菜单的「从这里分支」
         "branch" to Triple("false", "false", "true"),
+        "addDirectory" to Triple("false", "false", "true"),
     )
 
     @Test
-    fun `the table has the 34 rows the design lists and covers every field`() {
-        assertEquals(34, table.size)
+    fun `the table has the 35 rows the design lists and covers every field`() {
+        assertEquals(35, table.size)
         val fields = EngineCapabilities::class.java.declaredFields
             .filter { !Modifier.isStatic(it.modifiers) }
             .map { it.name }
@@ -100,6 +101,9 @@ class EngineCapabilitiesTest {
         val codex = EngineCapabilities.Codex
         assertTrue("Min 经内核 changeSettings(cwd) 换会话目录", min.supports(SessionCommand.SetCwd("1", "/x")))
         assertTrue(codex.supports(SessionCommand.SetCwd("1", "/x")))
+        assertTrue("Min 的内核有 /add-dir（附加目录，只授予文件访问）", min.supports(SessionCommand.AddDirectory("1", "/x")))
+        assertFalse("CC 的 /add-dir 在它自己的 CLI 里", EngineCapabilities.ClaudeCode.supports(SessionCommand.AddDirectory("1", "/x")))
+        assertFalse(codex.supports(SessionCommand.AddDirectory("1", "/x")))
         assertFalse(min.supports(SessionCommand.RunShell("1", "ls")))
         assertFalse(codex.supports(SessionCommand.Revert("1", "tu")))
         assertTrue("Min 的撤销走内核编辑记录", min.supports(SessionCommand.Revert("1", "tu")))
