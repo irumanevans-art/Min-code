@@ -1,5 +1,6 @@
 package dev.min.code.core.engine.min
 
+import dev.min.agent.kernel.addDirectory
 import dev.min.agent.kernel.changeAdvisor
 
 import dev.min.agent.kernel.SessionHub
@@ -134,6 +135,7 @@ class MinCommandHandler(
         // 换会话目录：内核的 changeSettings(cwd) 走 CwdChanged（权限范围、记忆、MCP roots 跟着新目录，模型看到一段提醒）。
         // 回合进行中、目录不存在、隔离在 worktree 里的会话，内核拒绝，原因原样回给界面
         is SessionCommand.SetCwd -> { root.changeSettings(cwd = dev.min.agent.spi.GuestPath(command.path)); CommandResult.Accepted }
+        is SessionCommand.AddDirectory -> addWorkingDirectory(command.path)
         // 能力位为假的 shell 在 supports 就拦了；引擎专有设置项 Min 没有
         is SessionCommand.Revert ->
             if (editRestore == null) CommandResult.Unsupported
@@ -375,6 +377,23 @@ class MinCommandHandler(
         if (lookup.providerLabel(ref.providerId) == null) return CommandResult.Rejected(text.providerRemoved())
         root.changeAutoModeReviewer(dev.min.agent.spi.AutoModeReviewer(ref))
         return CommandResult.Accepted
+    }
+
+    /**
+     * 设置里的「添加附加目录」→ 内核的 `/add-dir`（[dev.min.agent.kernel.addDirectory]）：只授予文件访问、只在本会话有效、不写设置，
+     * 加完后台触发 DirectoryAdded hooks。相对路径按会话当前目录；网络路径在碰文件系统之前就挡；
+     * 已经是工作目录 / 不存在 / 不是目录 / 在手机文件区的原样回内核的原因
+     */
+    private suspend fun addWorkingDirectory(raw: String): CommandResult {
+        val typed = raw.trim()
+        if (typed.isEmpty()) return CommandResult.Rejected("目录是空的")
+        if (dev.min.agent.kernel.isNetworkPathText(typed)) return CommandResult.Rejected("不能把网络路径加成工作目录：$typed")
+        val guest = if (typed.startsWith("/")) typed else root.state.value.settings.cwd.value.trimEnd('/') + "/" + typed
+        return when (val result = root.addDirectory(dev.min.agent.spi.GuestPath(guest))) {
+            is dev.min.agent.kernel.AddDirectoryResult.Added -> CommandResult.Accepted
+            is dev.min.agent.kernel.AddDirectoryResult.AlreadyIncluded -> CommandResult.Rejected("${result.directory} 已经是工作目录（或在 ${result.by} 里面），没有重复加。")
+            is dev.min.agent.kernel.AddDirectoryResult.Refused -> CommandResult.Rejected(result.reason)
+        }
     }
 
     private suspend fun setAdvisor(command: SessionCommand.SetAdvisor): CommandResult {

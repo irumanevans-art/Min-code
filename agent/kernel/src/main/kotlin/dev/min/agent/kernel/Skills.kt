@@ -1,5 +1,6 @@
 package dev.min.agent.kernel
 
+import kotlinx.serialization.json.jsonObject
 import dev.min.agent.ext.config.ClaudeConfigLoader
 import dev.min.agent.ext.config.ConfigSource
 import dev.min.agent.ext.config.skillWatchRoots
@@ -432,7 +433,8 @@ private suspend fun SessionRuntime.rescanSkills(manual: Boolean): SkillReload = 
     }
     val s = state.value
     val fs = deps.host.fs
-    val inputs = deps.settingsInputs
+    // 会话中途 /add-dir 加的目录与 --add-dir 同待遇：它们的 skills（与手动重扫时的 commands）也要被扫到
+    val inputs = deps.settingsInputs.let { it.copy(addDirs = (it.addDirs + s.addedDirectories).distinct()) }
     val bare = mode == Customizations.Bare
     val fresh: List<SkillEntry>
     val notes: List<String>
@@ -462,6 +464,22 @@ private suspend fun SessionRuntime.rescanSkills(manual: Boolean): SkillReload = 
     val restored = gone.mapNotNull { n -> frozen.firstOrNull { it.name == n && !watched(it) } }
     val removed = gone.filter { n -> restored.none { it.name == n } }
     if (changedEntries.isNotEmpty() || gone.isNotEmpty()) {
+        // 自动重扫发现的是磁盘上 skill 文件的变化：先问 ConfigChange hooks（source = skills，原文：`.claude/skills/` 里的 skill 文件变了）；
+        // 被拦就不并进会话（Skill 工具与斜杠展开继续用旧清单），同一份差异不再反复问（digest）。手动 /reload-skills 是用户的命令，不是文件变化，不触发
+        if (!manual) {
+            val digest: Any = changedEntries to gone.sorted()
+            if (digest == skillsBlockedDigest) return@withLock SkillReload(available = true, total = state.value.skillEntries().size, added = emptyList(), removed = emptyList(), changed = emptyList())
+            val file = changedEntries.firstOrNull()?.path ?: current.firstOrNull { it.name in gone }?.path
+            val specific = dev.min.agent.ext.hooks.HookJson.encodeToJsonElement(
+                dev.min.agent.ext.hooks.ConfigChangeInput.serializer(),
+                dev.min.agent.ext.hooks.ConfigChangeInput("skills", file?.let { deps.hookShellPath(it) }),
+            ).jsonObject
+            if (HookDriver(this).run(dev.min.agent.ext.hooks.HookEvent.ConfigChange, "skills", specific)?.decision == HookOutcome.Decision.Block) {
+                skillsBlockedDigest = digest
+                return@withLock SkillReload(available = true, total = state.value.skillEntries().size, added = emptyList(), removed = emptyList(), changed = emptyList())
+            }
+            skillsBlockedDigest = null
+        }
         commit(listOf(dev.min.agent.spi.SkillsRescanned(changedEntries + restored, removed.sorted(), notes)), Durability.Sync)
     }
     SkillReload(

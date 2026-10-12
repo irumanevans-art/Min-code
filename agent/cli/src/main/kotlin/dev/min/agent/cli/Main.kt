@@ -62,7 +62,8 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
     // 输入流只开一个 reader：信任确认与交互循环共用，免得确认时缓冲住的输入被交互循环丢掉
     val stdin = System.`in`.bufferedReader()
     // 交互模式：未信任的目录先问一句（会话建立时就要读 hooks 的信任，所以必须在 openSession 之前）。-p 不弹框（CC）
-    if (args.prompt == null && !confirmWorkspaceTrust(app, stdin, System.err)) return 1
+    // --init-only 是一次性准备（CI / 脚本），不弹信任框：没被信任的目录里项目层 hooks 不跑（要跑加 --trust）
+    if (args.prompt == null && !args.initOnly && !confirmWorkspaceTrust(app, stdin, System.err)) return 1
     // channel：交互启动时开发参数要先确认（选退出就退出）；-p 不弹框，所以开发参数不生效（CC）。--channels 点名的照常开
     val developmentConfirmed = when {
         args.developmentChannels.isEmpty() -> false
@@ -71,6 +72,8 @@ private suspend fun run(args: CliArgs, scope: CoroutineScope): Int {
     }
     app.applyChannels(developmentConfirmed)
     val runtime = app.openSession()
+    // --init-only（CC）：Setup 与 SessionStart hooks 已在建会话时跑完（openSession），到此为止，不开对话
+    if (args.initOnly) return 0
     if (args.prompt == null && runtime.state.value.created.loadingModes?.let { !it.bare && !it.safe && !it.restricted } != false) scope.launch {
         val notices = app.pluginMarketplace().rerunCommandSources(System.getenv())
         if (notices.isNotEmpty()) {
@@ -106,7 +109,7 @@ internal suspend fun interact(
     app.mcpAuthorizer.input = stdin
     // -p 的界面输出全走 stderr（runHeadless 自己接 UI）；交互模式的 UI 才占 stdout。
     // 交给 hub：审批 / 提问 / MCP elicitation 看整棵会话树，子 agent 的待处理项也有人答
-    var uiConsole: ConsoleUi? = if (args.prompt == null) ConsoleUi(runtime, args.approve, stdin, System.out, app.hub(), announceHeldPeers = true).apply { mainOwnsInput = true } else null
+    var uiConsole: ConsoleUi? = if (args.prompt == null) ConsoleUi(runtime, args.approve, stdin, System.out, app.hub(), announceHeldPeers = true, displayHooks = true).apply { mainOwnsInput = true } else null
     var ui = uiConsole?.attach(scope)
     try {
         System.err.println("会话 ${runtime.sessionId.value}（--resume 可接着用）")
@@ -177,7 +180,7 @@ internal suspend fun interact(
     suspend fun switchTo(next: dev.min.agent.kernel.SessionRuntime) {
         ui?.cancel()
         runtime = next
-        uiConsole = ConsoleUi(runtime, args.approve, stdin, System.out, app.hub(), announceHeldPeers = true)
+        uiConsole = ConsoleUi(runtime, args.approve, stdin, System.out, app.hub(), announceHeldPeers = true, displayHooks = true)
         ui = uiConsole?.attach(scope)
     }
     while (true) {
@@ -262,6 +265,7 @@ internal suspend fun interact(
                 }
             }
             trimmed == "/recap" -> System.err.println(recapNote(runtime.recap()))
+            trimmed == "/add-dir" || trimmed.startsWith("/add-dir ") -> addDirCommand(app, runtime, trimmed.removePrefix("/add-dir"), System.err)
             trimmed == "/reload-skills" -> reloadSkillsCommand(runtime, System.err)
             trimmed == "/cost" -> System.err.println(costReport(app, app.hub(), runtime))
             trimmed == "/auto-reviewer" || trimmed.startsWith("/auto-reviewer ") ->

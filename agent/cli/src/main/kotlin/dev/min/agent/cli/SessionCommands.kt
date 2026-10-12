@@ -1,5 +1,6 @@
 package dev.min.agent.cli
 
+import dev.min.agent.kernel.addDirectory
 import dev.min.agent.kernel.RecapResult
 import dev.min.agent.kernel.ResumeAdvice
 import dev.min.agent.kernel.loopPlanBlock
@@ -76,7 +77,7 @@ internal fun endedLockNotice(ended: Boolean, line: String): String? {
 }
 
 /** 交互模式的 `/help` 与启动时的命令一览（原来只在启动时打印一次） */
-internal const val INTERACTIVE_HELP = "输入要说的话，回车发送；/goal [条件|clear] 设定、查看或清除目标（做到条件满足为止）；/compact [侧重] 压缩上下文；/recap 一行回顾；/cost 本会话花费；/rewind 回退；/branch 分支当前会话；/fork [提示词] 把当前会话分身到另一个会话（留在这里；带提示词它立刻去做）；/subtask <任务> 派一个继承对话的分身去做，结果回到这里；/clear [名字] 另起一个空会话；/resume <id 或名字> 切到另一个会话；/list-agents（/peers）列出能发消息的对象；/inbound 看或改别的会话来信的口径、批准或拒收等批准的消息；/rename [名字] 查看或改名；/feedback [文字] 看反馈草稿队列或写一份（只排队不发送）；/reload-skills 重新扫描 skill 与自定义命令目录（会话中途新增 / 改动的立即可用）；/名字 参数 调用 skill 或自定义命令；/exit 退出。"
+internal const val INTERACTIVE_HELP = "输入要说的话，回车发送；/goal [条件|clear] 设定、查看或清除目标（做到条件满足为止）；/compact [侧重] 压缩上下文；/recap 一行回顾；/cost 本会话花费；/rewind 回退；/branch 分支当前会话；/fork [提示词] 把当前会话分身到另一个会话（留在这里；带提示词它立刻去做）；/subtask <任务> 派一个继承对话的分身去做，结果回到这里；/clear [名字] 另起一个空会话；/resume <id 或名字> 切到另一个会话；/list-agents（/peers）列出能发消息的对象；/inbound 看或改别的会话来信的口径、批准或拒收等批准的消息；/rename [名字] 查看或改名；/feedback [文字] 看反馈草稿队列或写一份（只排队不发送）；/add-dir <目录> 为本次会话加一个工作目录（只授予文件访问）；/reload-skills 重新扫描 skill 与自定义命令目录（会话中途新增 / 改动的立即可用）；/名字 参数 调用 skill 或自定义命令；/exit 退出。"
 
 /**
  * `/loop …` 附上内核的解析结果（间隔取整、提示词选择），与模型调 Skill 工具时附的是同一段（[loopPlanBlock]）。
@@ -162,4 +163,28 @@ internal suspend fun reloadSkillsCommand(runtime: dev.min.agent.kernel.SessionRu
     val result = runtime.reloadSkills()
     out.println(result.summary())
     result.notes.forEach(out::println)
+}
+
+/**
+ * `/add-dir <路径>`（commands 文档：为本次会话加一个工作目录，只授予文件访问）。路径相对会话当前目录、`~` 是家目录；
+ * 网络路径（UNC）在碰文件系统之前就挡（原文）。加上之后 DirectoryAdded hooks 在后台跑，这里不等。
+ * 只对本会话有效、不写 settings；要跨会话保留，写 `permissions.additionalDirectories`（提示里说明）。
+ */
+internal suspend fun addDirCommand(app: DesktopApp, runtime: dev.min.agent.kernel.SessionRuntime, raw: String, out: java.io.PrintStream): dev.min.agent.kernel.AddDirectoryResult? {
+    val typed = raw.trim().let { if (it.length >= 2 && ((it.first() == '"' && it.last() == '"') || (it.first() == '\'' && it.last() == '\''))) it.substring(1, it.length - 1) else it }
+    if (typed.isEmpty()) {
+        out.println("用法：/add-dir <目录>（为本次会话加一个工作目录：只授予文件访问，不读它的设置；要一直保留就写进 settings 的 permissions.additionalDirectories）")
+        return null
+    }
+    if (dev.min.agent.kernel.isNetworkPathText(typed)) {
+        out.println("不能把网络路径加成工作目录：$typed（Windows 上先把共享映射成盘符，再用 --add-dir 启动时传盘符）")
+        return null
+    }
+    val result = runtime.addDirectory(app.guestOfUserPath(runtime, typed))
+    when (result) {
+        is dev.min.agent.kernel.AddDirectoryResult.Added -> out.println("已加工作目录：${terminalText(app.hostPathText(result.directory))}（只在这个会话里有效；要一直保留就写进 settings 的 permissions.additionalDirectories）")
+        is dev.min.agent.kernel.AddDirectoryResult.AlreadyIncluded -> out.println("${terminalText(app.hostPathText(result.directory))} 已经是工作目录（或在 ${terminalText(app.hostPathText(result.by))} 里面），没有重复加。")
+        is dev.min.agent.kernel.AddDirectoryResult.Refused -> out.println(result.reason)
+    }
+    return result
 }

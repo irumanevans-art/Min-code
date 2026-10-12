@@ -468,10 +468,12 @@ class SessionHub(
         /** 这条会话是不是 `-p` / 无头跑的（CC :78：--continue 跳过 -p 会话）；标记随 SessionCreated 落盘 */
         headless: Boolean = false,
         loadingModes: dev.min.agent.spi.SessionLoadingModes? = null,
+        /** CLI 的 `--init-only` / `--init` / `--maintenance`：这次启动要触发的 Setup（matcher 按顺序），在 SessionStart(startup) 之前跑 */
+        setupTriggers: List<String> = emptyList(),
     ): SessionRuntime {
         val id = SessionId(deps.ids.next("s"))
         val header = LogHeader(LOG_FORMAT_VERSION, id, deps.clock.nowMs())
-        val runtime = SessionRuntime.create(store, header, SessionCreated(cwd, model, mode, effort, headless = headless, loadingModes = loadingModes), deps, scope, initial, hub = this)
+        val runtime = SessionRuntime.create(store, header, SessionCreated(cwd, model, mode, effort, headless = headless, loadingModes = loadingModes), deps, scope, initial, hub = this, setupTriggers = setupTriggers)
         name?.let { raw ->
             normalizeSessionName(raw)?.let { wanted ->
                 val final = uniqueName(cwd, wanted)
@@ -908,9 +910,9 @@ class SessionHub(
      * 它若委派过子 agent，把还没交付的报告补进收件箱——**不自动开回合**（崩溃后不自动续跑，02 §5）。
      * [resumedByUser] 为真且是根会话时先跑 SessionStart(source = resume)（hooks设计 §7），本进程里同一会话只跑一次。
      */
-    suspend fun open(id: SessionId, resumedByUser: Boolean = false): SessionRuntime? {
+    suspend fun open(id: SessionId, resumedByUser: Boolean = false, setupTriggers: List<String> = emptyList()): SessionRuntime? {
         runtimes[id]?.let { runtime ->
-            if (resumedByUser) resumeStart(runtime)
+            if (resumedByUser) resumeStart(runtime, setupTriggers)
             return runtime
         }
         val runtime = openLock.withLock {
@@ -930,15 +932,17 @@ class SessionHub(
             // 重开会话：带着进行中的 /goal 恢复（回合与 check-in 计数清零；已达成或已清除的没有条件，不恢复）
             runtime.resumeGoal(deps.clock.nowMs())
         } else runtimes[origin.parent]?.let { mcp.attachInherited(runtime, it); inheritLsp(runtime, it) }
-        if (resumedByUser) resumeStart(runtime)
+        if (resumedByUser) resumeStart(runtime, setupTriggers)
         if (runtime.state.value.origin != null) watch(runtime, reconcile = true)
+        if (runtime.state.value.origin == null) runtime.fileWatches.arm()
         for (child in runtime.state.value.children.keys) open(child)
         return runtime
     }
 
     /** 用户打开一个根会话：跑 SessionStart(resume)，子会话与跑过一次的不跑 */
-    private suspend fun resumeStart(runtime: SessionRuntime) {
+    private suspend fun resumeStart(runtime: SessionRuntime, setupTriggers: List<String> = emptyList()) {
         if (runtime.state.value.origin == null && userResumed.add(runtime.sessionId)) {
+            setupTriggers.forEach { runtime.runSetup(it) }
             runtime.runSessionStart("resume")
             runtime.startPluginMonitors()
         }

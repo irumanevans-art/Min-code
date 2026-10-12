@@ -283,7 +283,12 @@ fun SessionState.apply(record: EventRecord): SessionState {
                 else s.copy(sessionRules = s.sessionRules + RuleEntry(RuleKindData.Allow, always, SESSION_RULE_SOURCE, s.settings.cwd))
             }
         }
-        is PermissionRulesLoaded -> copy(rules = e.rules, additionalDirectories = e.additionalDirectories, permissionNotes = e.notes)
+        // 设置（重）读整份替换规则与 settings 里的目录；会话中途 /add-dir 加的目录不属于设置，不能被它冲掉
+        is PermissionRulesLoaded -> copy(rules = e.rules, additionalDirectories = (e.additionalDirectories + addedDirectories).distinct(), permissionNotes = e.notes)
+        is dev.min.agent.spi.DirectoryAdded -> copy(
+            additionalDirectories = (additionalDirectories + e.directory).distinct(),
+            addedDirectories = (addedDirectories + e.directory).distinct(),
+        )
         is HooksLoaded -> copy(hooks = e.sources, hooksHttpPolicy = e.httpPolicy, hooksDisabledBy = e.disabledBy)
         is dev.min.agent.spi.ComponentHooksRegistered -> {
             // 同名组件重复登记（模型又调了一次同一个 skill）不叠加：处理器翻倍等于同一个门禁跑两遍

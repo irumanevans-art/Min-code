@@ -32,6 +32,7 @@ class SessionCommandTest {
         SessionCommand.StopTask("17", "task-1"),
         SessionCommand.Revert("18", "tu-1"),
         SessionCommand.Refresh("19", setOf(RefreshTarget.Models, RefreshTarget.Usage)),
+        SessionCommand.AddDirectory("20", "/workspace/extra"),
     )
 
     @Test

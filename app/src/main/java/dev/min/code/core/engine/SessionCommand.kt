@@ -93,6 +93,13 @@ sealed interface SessionCommand {
     @Serializable @SerialName("set_cwd")
     data class SetCwd(override val commandId: String, val path: String) : SessionCommand
 
+    /**
+     * 会话中途加一个附加工作目录（Min 内核的 `/add-dir`，DirectoryAdded hook 的触发点）：只授予文件访问、只在本会话有效、不写任何设置文件。
+     * [path] 是 guest 路径（相对路径按会话当前目录）；已经是工作目录、不存在、不是目录、在手机文件区的由内核拒绝并说明原因
+     */
+    @Serializable @SerialName("add_directory")
+    data class AddDirectory(override val commandId: String, val path: String) : SessionCommand
+
     /** 引擎专有的设置项（CC 缓存 TTL / ultracode、Codex summary）。键是 [EngineOptionView.key] */
     @Serializable @SerialName("set_engine_option")
     data class SetEngineOption(override val commandId: String, val key: String, val value: String) : SessionCommand

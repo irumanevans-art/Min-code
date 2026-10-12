@@ -1,5 +1,6 @@
 package dev.min.agent.cli
 
+import dev.min.agent.kernel.addDirectory
 import dev.min.agent.kernel.SessionRuntime
 import dev.min.agent.protocol.AgentJson
 import dev.min.agent.protocol.ImagePart
@@ -257,6 +258,7 @@ internal class ControlHandler(
                 "interrupt" -> interrupt(id, line.request)
                 "set_permission_mode" -> setPermissionMode(id, line.request)
                 "set_model" -> setModel(id, line.request)
+                "register_repo_root" -> registerRepoRoot(id, line.request)
                 else -> control.respondError(id, "Min 不支持的控制请求 subtype：${subtype ?: "（缺失）"}")
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -326,5 +328,21 @@ internal class ControlHandler(
         val refusal = runtime.changeSettings(model = ref, modelSwitchSource = "sdk")
         if (refusal != null) throw IllegalStateException(refusal)
         control.respond(id)
+    }
+
+    /**
+     * `register_repo_root`（SDK 的控制请求，加一个工作目录；DirectoryAdded 的 `source` 是 `register_repo_root`）。
+     * 原文没有给出请求体的字段名，这里认 `path`（也收 `directory` / `repo_root`）。与 `/add-dir` 同一条路（[dev.min.agent.kernel.addDirectory]）：
+     * 只授予文件访问、不信任目录里的配置、不写 settings；hook 的 `systemMessage` 只进日志。不存在 / 不是目录 / 网络路径回错误应答，不装作成功
+     */
+    private suspend fun registerRepoRoot(id: String, request: JsonObject) {
+        val raw = listOf("path", "directory", "repo_root").firstNotNullOfOrNull { (request[it] as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+            ?: throw IllegalArgumentException("register_repo_root 缺少 path")
+        if (dev.min.agent.kernel.isNetworkPathText(raw)) throw IllegalArgumentException("不能把网络路径加成工作目录：$raw")
+        when (val result = runtime.addDirectory(app.guestOfUserPath(runtime, raw), dev.min.agent.kernel.DIRECTORY_SOURCE_REGISTER_REPO_ROOT)) {
+            is dev.min.agent.kernel.AddDirectoryResult.Added -> control.respond(id, buildJsonObject { put("directory", app.hostPathText(result.directory)); put("added", true) })
+            is dev.min.agent.kernel.AddDirectoryResult.AlreadyIncluded -> control.respond(id, buildJsonObject { put("directory", app.hostPathText(result.directory)); put("added", false) })
+            is dev.min.agent.kernel.AddDirectoryResult.Refused -> throw IllegalArgumentException(result.reason)
+        }
     }
 }

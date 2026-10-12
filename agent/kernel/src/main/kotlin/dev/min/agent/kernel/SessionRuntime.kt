@@ -207,21 +207,19 @@ class SessionRuntime private constructor(
         envFiles.clearOnCwdChange()
         val hooks = HookDriver(this).run(HookEvent.CwdChanged, null,
             HookJson.encodeToJsonElement(dev.min.agent.ext.hooks.CwdChangedInput(deps.hookShellPath(old), deps.hookShellPath(cwd))).jsonObject)
-        val watchPaths = hooks?.runs?.filter { it.exitCode == 0 }?.mapNotNull { run ->
-            dev.min.agent.spi.catchingNonCancellation {
-                HookJson.decodeFromString(dev.min.agent.ext.hooks.HookOutputCommon.serializer(), run.stdout.trim()).watchPaths
-            }.getOrNull()
-        }?.lastOrNull()
-        if (watchPaths != null) {
-            dev.min.agent.spi.catchingNonCancellation {
-                val paths = watchPaths.map {
-                    require(it.startsWith('/') || Regex("^[A-Za-z]:[/\\\\].*").matches(it)) { "watchPaths 必须是绝对路径。" }
-                    Worktrees.resolved(it, cwd)
-                }
-                commit(listOf(dev.min.agent.spi.CwdWatchPathsChanged(paths)), Durability.Sync)
-            }.onFailure { commit(listOf(dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "CwdChanged watchPaths 无效，保留原监视列表。")), Durability.Sync) }
-        }
+        applyWatchPaths(watchPathsOf(hooks), cwd, "CwdChanged")
     }
+
+    /** 被 ConfigChange（skills）hook 拦下的那份 skill 差异的摘要：同一份差异不再反复触发 hook */
+    @Volatile
+    internal var skillsBlockedDigest: Any? = null
+
+    /** 读设置 / 扫 skills 用的输入：启动参数加上会话中途 /add-dir 加的目录（它们与 `--add-dir` 同待遇） */
+    internal fun effectiveSettingsInputs(): dev.min.agent.ext.config.SettingsInputs =
+        deps.settingsInputs.let { it.copy(addDirs = (it.addDirs + state.value.addedDirectories).distinct()) }
+
+    /** 文件监视（FileChanged / ConfigChange，[FileWatches]）：回合进行中轮询，空闲时不保活 */
+    internal val fileWatches = FileWatches(this)
 
     /** `CLAUDE_ENV_FILE`：hook 写的 export 在后续每条 Bash 命令前执行（[SessionEnvFiles]） */
     internal val envFiles by lazy(LazyThreadSafetyMode.PUBLICATION) { SessionEnvFiles(this) }
@@ -512,8 +510,16 @@ class SessionRuntime private constructor(
             commit(listOf(SettingsChanged(mode = PermissionMode.Default), Note(NoteLevel.Warning, "这次启动禁用了 $mode（托管策略，或 --restricted），使用 Default 模式")), Durability.Sync)
         }
         loadPermissionRules(snapshot)
+        hooksEventOf(snapshot, state.value.created.cwd)?.let { commit(listOf(it), Durability.Sync) }
+    }
+
+    /**
+     * settings 各层算出的 hooks 快照事件（创建时与 ConfigChange 重读都用它）；没有任何 hook、说明与闸时没有东西可冻结，返回 null。
+     * 项目层（project / local）按 [cwd] 的信任筛层；--bare / --safe-mode 的取舍照旧
+     */
+    private suspend fun hooksEventOf(snapshot: SettingsSnapshot, cwd: GuestPath): HooksLoaded? {
         // 先按信任筛层、再算 hooks 的一切键（含 disableAllHooks 与 http 两道闸）：没被信任的项目层一个键都不能影响用户的门禁
-        val baseHooks = snapshot.merged.hookSnapshot(deps.trustProjectHooks(state.value.created.cwd))
+        val baseHooks = snapshot.merged.hookSnapshot(deps.trustProjectHooks(cwd))
         // --bare / --safe-mode 对 hooks 的取舍（CC :72/:125）：bare 一律不发现（原文对托管层也没有例外）；
         // safe 只留托管层的（原文点名「managed settings policy still applies, including policy-configured hooks」），
         // 托管插件声明的 hooks 随插件一起不加载（plugins() 在这两种档位下是 null）
@@ -523,7 +529,7 @@ class SessionRuntime private constructor(
             Customizations.Full -> {
                 val plugins = plugins()
                 val pluginHooks = if (snapshot.merged.layers.any { it.source == dev.min.agent.ext.config.ConfigSource.Managed && it.allowManagedHooksOnly == true } ||
-                    snapshot.merged.layers.filter { it.source == dev.min.agent.ext.config.ConfigSource.User || it.source == dev.min.agent.ext.config.ConfigSource.Managed || deps.trustProjectHooks(state.value.created.cwd) }.lastOrNull { it.disableAllHooks != null }?.disableAllHooks == true) emptyList()
+                    snapshot.merged.layers.filter { it.source == dev.min.agent.ext.config.ConfigSource.User || it.source == dev.min.agent.ext.config.ConfigSource.Managed || deps.trustProjectHooks(cwd) }.lastOrNull { it.disableAllHooks != null }?.disableAllHooks == true) emptyList()
                 else plugins?.hookSources.orEmpty().map { dev.min.agent.ext.config.HookSource(dev.min.agent.ext.config.ConfigSource.Plugin, it) }
                 baseHooks.copy(sources = baseHooks.sources + pluginHooks, notes = baseHooks.notes + plugins?.notes.orEmpty())
             }
@@ -531,13 +537,36 @@ class SessionRuntime private constructor(
         val policy = hooks.httpPolicy.takeIf { it.allowedUrls != null || it.allowedEnvVars != null }
             ?.let { HttpPolicyData(it.allowedUrls, it.allowedEnvVars) }
         // 只有闸、没有任何 hook 也没有说明时没有东西可冻结（闸只管 http hook）
-        if (hooks.sources.isNotEmpty() || hooks.notes.isNotEmpty() || hooks.disabledBy != null) {
-            // http 的两道闸随快照一起冻结：设置只在会话创建时读得到，之后 hook 执行时再看就晚了
-            commit(
-                listOf(HooksLoaded(hooks.sources.map { HookSourceData(it.source.label, it.hooks) }, hooks.notes, policy, hooks.disabledBy)),
-                Durability.Sync,
-            )
-        }
+        if (hooks.sources.isEmpty() && hooks.notes.isEmpty() && hooks.disabledBy == null) return null
+        // http 的两道闸随快照一起冻结：设置只在创建（或重读）时读得到，之后 hook 执行时再看就晚了
+        return HooksLoaded(hooks.sources.map { HookSourceData(it.source.label, it.hooks) }, hooks.notes, policy, hooks.disabledBy)
+    }
+
+    /**
+     * ConfigChange 放行之后把重读的设置并进运行中的会话（官方 settings 页「When edits take effect」：权限与 hooks 的编辑不用重启就生效）。
+     * **当场生效**的：权限规则（allow / ask / deny）、附加目录（settings 里列的；`--add-dir` 与会话中途 /add-dir 加的会并回去）、hooks（含 http 两道闸、
+     * disableAllHooks / allowManagedHooksOnly，项目层仍按工作区信任筛）、模型限制（availableModels 等）。
+     * **等下一个会话**的：model / effort / outputStyle / env / advisor / MCP 服务器 / 插件 / 网络设置 / 检查点开关 / 托管的模式锁——它们在创建时读一次、冻结进日志，
+     * 中途改文件不会悄悄换掉正在跑的会话的前缀与规矩（与原文「some keys are read only once at session start」同一类）。
+     */
+    internal suspend fun reapplySettings(snapshot: SettingsSnapshot, cwd: GuestPath) {
+        loadPermissionRules(snapshot, cwd, force = true)
+        val event = hooksEventOf(snapshot, cwd) ?: HooksLoaded(emptyList())
+        val s = state.value
+        if (event.sources != s.hooks || event.httpPolicy != s.hooksHttpPolicy || event.disabledBy != s.hooksDisabledBy) commit(listOf(event), Durability.Sync)
+    }
+
+    /**
+     * Setup（官方 hooks 页「Setup」）：只在 CLI 以 `--init-only`（matcher `init`）、或 `-p` 下 `--init`（`init`）/ `--maintenance`（`maintenance`）启动时触发，
+     * 在会话的 SessionStart 之前跑，普通启动不触发。无决策控制，每个退出码都丢弃它的 JSON 输出（引擎里的丢弃表），退出码与 stderr 也忽略；
+     * mcp_tool 在 Setup 上永远跳过（那时 MCP 还没接好，见 [HookDriver.run]）；CLAUDE_ENV_FILE 照发（写进去的变量对之后的 Bash 生效）
+     */
+    internal suspend fun runSetup(trigger: String) {
+        require(trigger == "init" || trigger == "maintenance") { "未知的 Setup 触发：$trigger" }
+        HookDriver(this).run(
+            HookEvent.Setup, trigger,
+            HookJson.encodeToJsonElement(dev.min.agent.ext.hooks.SetupInput.serializer(), dev.min.agent.ext.hooks.SetupInput(trigger)).jsonObject,
+        )
     }
 
     /**
@@ -551,6 +580,8 @@ class SessionRuntime private constructor(
             SessionStartInput(source = source, model = state.value.settings.model.modelId),
         ).jsonObject
         val outcome = driver.run(HookEvent.SessionStart, source, specific) ?: return
+        // SessionStart 的 hookSpecificOutput.watchPaths：初始的动态监视清单（FileChanged 的监视对象）
+        applyWatchPaths(outcome.specific?.get("watchPaths")?.let { it as? kotlinx.serialization.json.JsonArray }?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content }, state.value.settings.cwd, "SessionStart")
         val events = outcome.contexts.map { HookContextAdded(HookContextTarget.NextUserMessage, HookEvent.SessionStart.name, it) }
         if (events.isNotEmpty()) commit(events, Durability.Sync)
     }
@@ -623,10 +654,11 @@ class SessionRuntime private constructor(
         return policy.allows(concrete)
     }
 
-    private suspend fun loadPermissionRules(snapshot: SettingsSnapshot) {
+    /** [cwd]：按哪个目录算信任与相对规则（创建时是会话起点，ConfigChange 重读时是当前目录）；[force]：重读时即使什么都没有也要写，才能把删掉的规则撤掉 */
+    private suspend fun loadPermissionRules(snapshot: SettingsSnapshot, cwd: GuestPath = state.value.created.cwd, force: Boolean = false) {
         if (state.value.origin == null) modelPolicy = snapshot.merged.modelPolicy()
-        val trustProject = deps.trustProjectHooks(state.value.created.cwd)
-        val trustedLocal = trustedLocalSettings(deps, snapshot, state.value.created.cwd, trustProject || state.value.created.headless)
+        val trustProject = deps.trustProjectHooks(cwd)
+        val trustedLocal = trustedLocalSettings(deps, snapshot, cwd, trustProject || state.value.created.headless)
         val notes = snapshot.notes.toMutableList()
         if (!trustProject && snapshot.merged.layers.any { (it.source == dev.min.agent.ext.config.ConfigSource.Project ||
                 it.source == dev.min.agent.ext.config.ConfigSource.Local && it.path !in trustedLocal) &&
@@ -645,8 +677,8 @@ class SessionRuntime private constructor(
             )
         }
         // `--add-dir`（CC）：与 permissions.additionalDirectories 同一口径，授予文件访问
-        val directories = (snapshot.merged.fileAccessDirectories(state.value.created.cwd, deps.memoryHome ?: GuestPath("/root"), trustProject, trustedLocal) + deps.settingsInputs.addDirs).distinct()
-        if (rules.isEmpty() && notes.isEmpty() && directories.isEmpty()) return
+        val directories = (snapshot.merged.fileAccessDirectories(cwd, deps.memoryHome ?: GuestPath("/root"), trustProject, trustedLocal) + deps.settingsInputs.addDirs).distinct()
+        if (!force && rules.isEmpty() && notes.isEmpty() && directories.isEmpty()) return
         commit(listOf(PermissionRulesLoaded(rules, notes, directories)), Durability.Sync)
     }
 
@@ -662,6 +694,9 @@ class SessionRuntime private constructor(
         val snapshot = SkillSnapshots.load(deps.host.fs, state.value.created.cwd, home, if (bare) null else plugins(), inputs = deps.settingsInputs, addDirsOnly = bare) ?: return
         commit(listOf(snapshot), Durability.Sync)
     }
+
+    /** 会话自己的后台协程作用域：加目录的 hook、文件监视这类「不等它、也不挂在某个回合上」的活跑在这里（随会话卸下一起取消） */
+    internal val hostScope: CoroutineScope get() = scope
 
     internal fun emitLive(update: LiveUpdate) {
         _live.tryEmit(update)
@@ -1150,6 +1185,8 @@ class SessionRuntime private constructor(
             hub: SessionHub? = null,
             /** false = 不跑 SessionStart(startup)。分支（Hub.branch）用它：分支是原对话的延续，不是新会话（CC 的 fork 同样不跑） */
             runStartHooks: Boolean = true,
+            /** 这次启动要触发的 Setup（matcher：init / maintenance，按顺序），在 SessionStart 之前跑；空 = 普通启动，不触发 */
+            setupTriggers: List<String> = emptyList(),
         ): SessionRuntime {
             val events = listOf(created) + initial
             // 先折叠再落盘：初始事件里有折叠不了的（比如分支带来别的会话的 team_created）就在这里失败，磁盘上不留下
@@ -1183,7 +1220,12 @@ class SessionRuntime private constructor(
                 runtime.commit(listOf(SettingsChanged(mode = PermissionMode.Default), Note(NoteLevel.Warning, "这次启动禁用了 $currentMode（托管策略，或 --restricted），使用 Default 模式")), Durability.Sync)
             }
             if (loadSkills) runtime.loadSkills()
-            if (runStartHooks && runtime.state.value.origin == null) runtime.runSessionStart("startup")
+            if (runStartHooks && runtime.state.value.origin == null) {
+                setupTriggers.forEach { runtime.runSetup(it) }
+                runtime.runSessionStart("startup")
+            }
+            // 文件监视的基线：SessionStart 之后的样子（它的 hook 可能刚写过被监视的文件，那不算「会话中的变化」）
+            if (runtime.state.value.origin == null) runtime.fileWatches.arm()
             return runtime
         }
 

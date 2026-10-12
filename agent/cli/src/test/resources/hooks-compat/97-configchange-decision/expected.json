@@ -14,6 +14,5 @@
   "failedToStart": false,
   "notesContain": [],
   "basis": "§ConfigChange decision control：exit 2 或 decision:block 阻止变更生效（policy_settings 不可阻断）；reason 接受但从不展示；阻断不给人与模型任何消息，systemMessage/continue 丢弃（:2751–2769）。",
-  "minTrigger": "none",
-  "minTriggerReason": "Min 没有对应时机：原文是设置/策略/skill 文件在会话中变化时触发（:2700），Min 的 settings 只在会话创建（和 cd 随 CwdChanged）读一次，没有文件监视；运行中的模型/模式变化走 SettingsChanged（对标 PreModelSwitch 等），不是配置文件变化"
+  "minTrigger": "内核的设置文件监视（ConfigWatch）在会话中途发现 user / project / local / 托管设置文件或 skill 文件变化时触发；block 让这次变更不并进运行中的会话（端到端：ConfigChangeHookTest、ConfigChangeIntegrationTest）"
 }

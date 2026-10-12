@@ -684,6 +684,8 @@
   <string name="cwd_new_folder">New folder</string>
   <string name="cwd_empty">No subfolders here</string>
   <string name="cwd_use_current">Use this directory</string>
+  <string name="session_add_dir_hint">Add another folder for this session only: Claude can read it without asking and edit it per the permission mode. Its own settings and hooks stay off; nothing is saved to settings.</string>
+  <string name="session_add_dir_button">Add a folder…</string>
   <string name="cwd_open_failed">Cannot open this directory</string>
   <string name="cwd_create_failed">Could not create it</string>
   <string name="cwd_new_folder_title">New folder</string>

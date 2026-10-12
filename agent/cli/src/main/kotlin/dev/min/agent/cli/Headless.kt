@@ -1,5 +1,7 @@
 package dev.min.agent.cli
 
+import dev.min.agent.kernel.displayMessage
+import dev.min.agent.kernel.hasMessageDisplayHooks
 import dev.min.agent.kernel.GoalCommand
 import dev.min.agent.kernel.goalArgumentOf
 import dev.min.agent.kernel.GoalSetResult
@@ -67,7 +69,11 @@ internal suspend fun runHeadless(
             is PromptRun.Done -> run.result
         }
         result.errors.forEach(stderr::println)
-        printResult(args, result, stdout, renderer)
+        // -p 的 MessageDisplay（原文：非交互每条消息只触发一次，index 0、final true、全文在 delta）：stdout 上显示的最终回复过一遍
+        val display: (suspend (String) -> String)? = if (runtime.hasMessageDisplayHooks()) { text ->
+            runtime.displayMessage(runtime.state.value.lastTurn?.turnId, runtime.state.value.history.lastOrNull { it is dev.min.agent.kernel.HistoryEntry.Assistant }?.messageId?.value ?: "", 0, true, text)
+        } else null
+        printResult(args, result, stdout, renderer, display)
         renderer?.close()
         // --permission-prompt-tool 指的 MCP 工具没连上：原文要求这次运行以那条错误、退出码 1 收场
         if (host?.fatal != null) return 1
@@ -153,14 +159,18 @@ internal suspend fun runPrompt(
 }
 
 /** 一个回合的结果送去 stdout：text 打最终回复（给了 --json-schema 时是结构化答案那行）、json 打结果对象、stream-json 发结果行 */
-internal suspend fun printResult(args: CliArgs, result: CliResult, stdout: PrintStream, renderer: StreamJsonRenderer?) {
+internal suspend fun printResult(
+    args: CliArgs, result: CliResult, stdout: PrintStream, renderer: StreamJsonRenderer?,
+    /** MessageDisplay：只改 text 格式 stdout 上**显示**的最终回复；json / stream-json 是给程序读的，永远是原文（原文：转录与模型看到的不变） */
+    display: (suspend (String) -> String)? = null,
+) {
     when (args.outputFormat) {
         OutputFormat.Text ->
             if (args.jsonSchema != null) {
                 // 没开 json 也要把结构化答案打出来：跑批要的就是它（text 模式的「最终回复」即交卷值）
                 result.json()["structured_output"]?.let { stdout.println(it.toString()) }
             } else {
-                result.resultText?.let(stdout::println)
+                result.resultText?.let { stdout.println(display?.invoke(it) ?: it) }
             }
         OutputFormat.Json -> stdout.println(result.json().toString())
         OutputFormat.StreamJson -> renderer?.endTurn(result.json())

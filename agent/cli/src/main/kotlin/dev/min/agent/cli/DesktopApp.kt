@@ -181,6 +181,21 @@ internal class DesktopApp(
     internal val cwd: Path get() = args.cwd
 
     /**
+     * `/add-dir` 与 SDK 的 `register_repo_root` 收到的路径（用户写的原文）→ guest 路径：相对路径按会话**当前**目录、`~` 是家目录，
+     * Windows 上 `D:\x` 与 Git Bash 的 `/d/x` 两种盘符写法都认。网络路径（UNC）调用方在这之前用 [dev.min.agent.kernel.isNetworkPathText] 挡掉。
+     */
+    internal fun guestOfUserPath(runtime: SessionRuntime, raw: String): dev.min.agent.spi.GuestPath {
+        paths.guestOfShell(raw)?.let { return it }
+        val base = paths.hostOf(runtime.state.value.settings.cwd)
+        val home = Path.of(System.getProperty("user.home"))
+        val candidate = if (raw == "~" || raw.startsWith("~/") || raw.startsWith("~\\")) home.resolve(raw.removePrefix("~").trimStart('/', '\\')) else Path.of(raw)
+        return paths.guestOfHost(base.resolve(candidate))
+    }
+
+    /** guest 路径在终端里的写法（给人看的提示用本机路径） */
+    internal fun hostPathText(guest: dev.min.agent.spi.GuestPath): String = paths.hostOf(guest).toString()
+
+    /**
      * 工作区信任账本（`~/.min-agent/workspace-trust.txt`）。交互首次确认的「信任」记在这里；`-p` 只读不写。
      * 为什么只在组合根里持有：内核的 trustProjectHooks 与插件信任都从 [isWorkspaceTrusted] 读同一个答案。
      */
@@ -689,7 +704,7 @@ internal class DesktopApp(
         if (resumeId != null) {
             if (!args.forkSession) {
                 // 用户主动接着用的会话才算 resume：SessionStart(source = resume) 在这里跑（hooks设计 §7）
-                val opened = hub().open(resumeId, resumedByUser = true)
+                val opened = hub().open(resumeId, resumedByUser = true, setupTriggers = args.setupTriggers)
                     ?: throw UsageException("找不到会话 ${resumeId.value}")
                 refuseEndedForPrint(opened)
                 restoreAllowedModel(opened)
@@ -699,14 +714,14 @@ internal class DesktopApp(
             // SessionStart(resume) 跑在分支上——用户接着用的是分支
             hub().open(resumeId) ?: throw UsageException("找不到会话 ${resumeId.value}")
             val branch = hub().branch(resumeId)
-            val opened = checkNotNull(hub().open(branch.sessionId, resumedByUser = true))
+            val opened = checkNotNull(hub().open(branch.sessionId, resumedByUser = true, setupTriggers = args.setupTriggers))
             refuseEndedForPrint(opened)
             restoreAllowedModel(opened)
             return opened
         }
         // S1 的 create/open 已把 Hub 接到运行时；委派时自动 watch，ToolExecutor 按回合/调用取 AgentPort。
         // --name 建会话时命名（同目录重名时内核自动加 -2 变体）；headless 标记进 SessionCreated：--continue 由此跳过 -p 跑的会话（CC :78）
-        val runtime = hub().create(paths.guestOfHost(args.cwd), sessionModel, args.mode, args.effort, name = args.name, headless = args.prompt != null)
+        val runtime = hub().create(paths.guestOfHost(args.cwd), sessionModel, args.mode, args.effort, name = args.name, headless = args.prompt != null, setupTriggers = args.setupTriggers)
         if (args.worktree) {
             val result = runtime.enterWorktree(args.worktreeName)
             if (result.isError) throw UsageException(result.content.filterIsInstance<dev.min.agent.protocol.TextPart>().joinToString("") { it.text }, exitCode = 1)

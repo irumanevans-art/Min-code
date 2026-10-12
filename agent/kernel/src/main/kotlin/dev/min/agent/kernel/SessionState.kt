@@ -116,6 +116,12 @@ data class SessionState(
     val rules: List<RuleEntry> = emptyList(),
     val permissionNotes: List<String> = emptyList(),
     val additionalDirectories: List<GuestPath> = emptyList(),
+    /**
+     * 会话中途用 `/add-dir`（或 SDK 的 register_repo_root）加的目录（[dev.min.agent.spi.DirectoryAdded] 折叠），已并进 [additionalDirectories]。
+     * 单列一份是因为它们和 settings 里写的目录不同：原文说 `--add-dir` / `/add-dir` 的目录还会加载 `.claude/skills`、commands、agents，
+     * settings 里列的只授予文件访问；也因为设置重读（ConfigChange 生效）整份替换 [additionalDirectories] 时，这些不能丢
+     */
+    val addedDirectories: List<GuestPath> = emptyList(),
     val autoReviewSettings: dev.min.agent.spi.AutoReviewSettingsLoaded = dev.min.agent.spi.AutoReviewSettingsLoaded(),
     val advisor: dev.min.agent.spi.AdvisorConfigured = dev.min.agent.spi.AdvisorConfigured(),
     val autoReviewDenials: Int = 0,

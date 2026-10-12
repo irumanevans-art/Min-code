@@ -64,6 +64,8 @@ data class EngineCapabilities(
     val advisor: Boolean = false,
     /** 抽屉行菜单的「从这里分支」（[AgentEngine.branchSession]，Min 内核的 SessionHub.branch）。CC 的分支在它自己的 CLI 里（`/branch`），Codex 没有 */
     val branch: Boolean = false,
+    /** 设置里的「添加附加目录」（[SessionCommand.AddDirectory]，Min 内核的 `/add-dir`）。CC 的 `/add-dir` 在它自己的 CLI 里，Codex 没有 */
+    val addDirectory: Boolean = false,
 ) {
     /** 这条命令从能力位上看能不能受理。适配器的 `submit` 先问它，false 就直接返回 [CommandResult.Unsupported] */
     fun supports(command: SessionCommand): Boolean = when (command) {
@@ -77,6 +79,7 @@ data class EngineCapabilities(
         }
         is SessionCommand.SetModel -> modelHotSwap
         is SessionCommand.SetCwd -> cwdChange
+        is SessionCommand.AddDirectory -> addDirectory
         is SessionCommand.RunShell -> userShell
         is SessionCommand.StopSubagent -> subagents
         is SessionCommand.StopTask -> backgroundTasks
@@ -130,6 +133,7 @@ data class EngineCapabilities(
         "claudeConfigFiles" to claudeConfigFiles.name,
         "advisor" to advisor.toString(),
         "branch" to branch.toString(),
+        "addDirectory" to addDirectory.toString(),
     )
 
     companion object {
@@ -252,6 +256,7 @@ data class EngineCapabilities(
             autoReview = true,
             advisor = true,
             branch = true,
+            addDirectory = true,
             schedule = true,
             claudeConfigFiles = ConfigFiles.Partial,
         )
