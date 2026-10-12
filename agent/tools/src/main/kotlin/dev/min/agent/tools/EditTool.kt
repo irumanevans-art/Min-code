@@ -66,7 +66,7 @@ object EditTool : Tool<EditInput> {
         val path = input.path
         val stat = ctx.fs.stat(path)
         if (stat == null) {
-            if (input.oldString.isNotEmpty()) return failResult("$path 不存在。要新建文件时 old_string 留空，或改用 Write。")
+            if (input.oldString.isNotEmpty()) return failResult("$path 不存在。要新建文件时 old_string 留空，或改用 Write。", ENOENT)
             return write(ctx, path, null, TextFile(bom = false, crlf = false, text = ""), input.newString, 1, null, created = true)
         }
         if (stat.kind == FileKind.Directory) return failResult("$path 是目录，不能编辑。")

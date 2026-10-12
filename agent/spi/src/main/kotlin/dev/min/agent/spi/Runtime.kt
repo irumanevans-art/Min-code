@@ -38,6 +38,11 @@ class HttpRequest(
     val headers: List<Pair<String, String>>,
     val body: ByteArray? = null,
     val timeoutMs: Long,
+    /**
+     * 收到响应头（状态行与头）后回调一次，早于第一个 SSE 事件；只有 [HttpTransport.stream] 调它。
+     * 为什么是回调：`stream` 的返回是事件流，没有放响应头的地方，而遥测要 `request-id` 与 `traceresponse`。不关心的传输忽略它
+     */
+    val onResponseHeaders: ((List<Pair<String, String>>) -> Unit)? = null,
 ) {
     /** 头里可能有凭证，toString 只写方法与地址 */
     override fun toString(): String = "HttpRequest($method ${url.substringBefore('?').substringBefore('#').replace(Regex("//[^/]*@"), "//")})"

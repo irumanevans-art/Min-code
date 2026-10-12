@@ -166,6 +166,7 @@ class UrlConnectionTransport(
                     val preview = connection.inputStream.use(::readPreview)
                     throw HttpStatusException(status, headersOf(connection), preview)
                 }
+                request.onResponseHeaders?.invoke(headersOf(connection))
                 connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
                     SseReader(reader).forEach { events.send(it) }
                 }

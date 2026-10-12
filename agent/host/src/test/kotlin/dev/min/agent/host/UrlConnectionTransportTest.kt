@@ -64,6 +64,41 @@ class UrlConnectionTransportTest {
     }
 
     @Test
+    fun `the response headers reach the callback once, before the first event`() = runBlocking {
+        server.createContext("/hdr") { ex ->
+            ex.responseHeaders.add("content-type", "text/event-stream")
+            ex.responseHeaders.add("request-id", "req_011CT")
+            ex.responseHeaders.add("traceresponse", "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01")
+            ex.sendResponseHeaders(200, 0)
+            ex.responseBody.use { it.write("data: one\n\ndata: two\n\n".toByteArray()) }
+        }
+        val order = mutableListOf<String>()
+        var headers: List<Pair<String, String>> = emptyList()
+        val request = HttpRequest(
+            "POST", "$base/hdr", listOf("content-type" to "application/json"), "{}".toByteArray(), 10_000,
+            onResponseHeaders = { headers = it; order += "headers" },
+        )
+        transport.stream(request).toList().forEach { order += it.data }
+        assertEquals(listOf("headers", "one", "two"), order)
+        assertEquals("req_011CT", headers.first { it.first.equals("request-id", ignoreCase = true) }.second)
+        assertTrue(headers.any { it.first.equals("traceresponse", ignoreCase = true) })
+    }
+
+    @Test
+    fun `the header callback is not called for an error status, whose headers travel in the exception`() = runBlocking {
+        server.createContext("/hdr-err") { ex ->
+            ex.responseHeaders.add("request-id", "req_err")
+            ex.sendResponseHeaders(500, -1)
+            ex.close()
+        }
+        var called = false
+        val request = HttpRequest("POST", "$base/hdr-err", emptyList(), "{}".toByteArray(), 10_000, onResponseHeaders = { called = true })
+        val e = assertThrows(HttpStatusException::class.java) { runBlocking { transport.stream(request).toList() } }
+        assertTrue(!called)
+        assertEquals("req_err", e.headers.first { it.first.equals("request-id", ignoreCase = true) }.second)
+    }
+
+    @Test
     fun `non-2xx responses raise HttpStatusException with the body, never the key`() = runBlocking {
         server.createContext("/limited") { ex ->
             ex.responseHeaders.add("retry-after", "7")

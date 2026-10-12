@@ -627,7 +627,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         } catch (e: TurnAbort) {
             throw e
         } catch (e: Exception) {
-            errorResult("工具执行出错：${e.message ?: e::class.simpleName}")
+            errorResult("工具执行出错：${e.message ?: e::class.simpleName}").copy(errorKind = errorKindOf(e))
         } finally {
             networkApprovedCalls.remove(callId)
         }
@@ -779,6 +779,16 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             "PermissionRequest hook 拒绝了这次调用。" + (note?.let { "说明：$it" } ?: "不要原样重试，换个做法或先问清楚。")
 
         private fun errorResult(text: String) = ToolResult(listOf(TextPart(text)), isError = true)
+
+        /**
+         * 工具抛出的异常的类别（遥测 `tool.execution` 的 `error`）：文件不存在、没权限沿用 Node 的 `Error:ENOENT` / `Error:EACCES` 写法（原文示例），
+         * 其余取异常类的简单名（不含消息：消息里可能有路径、令牌）
+         */
+        internal fun errorKindOf(e: Exception): String = when (e) {
+            is java.nio.file.NoSuchFileException, is java.io.FileNotFoundException -> "Error:ENOENT"
+            is java.nio.file.AccessDeniedException -> "Error:EACCES"
+            else -> e::class.simpleName ?: "Error"
+        }
     }
 }
 

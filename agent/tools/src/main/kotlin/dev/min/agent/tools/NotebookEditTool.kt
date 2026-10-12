@@ -103,7 +103,7 @@ object NotebookEditTool : Tool<NotebookEditInput> {
     private suspend fun edit(input: NotebookEditInput, ctx: ToolContext): ToolResult {
         val path = input.path
         val stat = ctx.fs.stat(path)
-            ?: return failResult("$path 不存在。NotebookEdit 只能改已有的 notebook；新建请用 Write 写入一个 notebook 的 JSON。")
+            ?: return failResult("$path 不存在。NotebookEdit 只能改已有的 notebook；新建请用 Write 写入一个 notebook 的 JSON。", ENOENT)
         if (stat.kind == FileKind.Directory) return failResult("$path 是目录，不能编辑。")
         if (stat.size > MAX_NOTEBOOK_BYTES) return failResult("$path 有 ${stat.size} 字节，超过 NotebookEdit 能处理的 $MAX_NOTEBOOK_BYTES 字节上限。")
         val seen = ctx.lastSeen(path) ?: return failResult("修改 $path 之前先用 Read 读一遍。")

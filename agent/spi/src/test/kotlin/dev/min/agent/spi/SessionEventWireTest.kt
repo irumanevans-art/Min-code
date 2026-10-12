@@ -161,6 +161,26 @@ class SessionEventWireTest {
             HooksRan("PreToolUse", 1, "neutral", 5),
             """{"type":"hooks_ran","event":"PreToolUse","handlers":1,"decision":"neutral","durationMs":5}""",
         )
+        // 第四段：响应 id、traceresponse、客户端请求 id、超时、被取消的 hook 数（遥测要用，有值才落盘）
+        assertEventWire(
+            AssistantMessageCompleted(
+                TurnId("turn_1"), RequestId("req_1"), MessageId("msg_1"),
+                parts = emptyList(), usage = Usage(), stop = StopReason.EndTurn, responseId = "req_abc", traceResponse = "00-aa-bb-01",
+            ),
+            """{"type":"assistant_message_completed","turnId":"turn_1","requestId":"req_1","messageId":"msg_1","parts":[],"usage":{},"stop":{"type":"end_turn"},"responseId":"req_abc","traceResponse":"00-aa-bb-01"}""",
+        )
+        assertEventWire(
+            ModelRequestStarted(TurnId("turn_1"), RequestId("req_1"), 1, ModelRef("p", "m"), "fp", clientRequestId = "creq_1"),
+            """{"type":"model_request_started","turnId":"turn_1","requestId":"req_1","attempt":1,"model":{"providerId":"p","modelId":"m"},"prefixFingerprint":"fp","clientRequestId":"creq_1"}""",
+        )
+        assertEventWire(
+            ModelRequestFailed(TurnId("turn_1"), RequestId("req_1"), attempt = 1, kind = ModelFailureKind.Network, message = "t", timedOut = true, responseId = "req_x"),
+            """{"type":"model_request_failed","turnId":"turn_1","requestId":"req_1","attempt":1,"kind":"network","message":"t","timedOut":true,"responseId":"req_x"}""",
+        )
+        assertEventWire(
+            HooksRan("PreToolUse", 2, "cancelled", 40, TurnId("turn_1"), cancelled = 2),
+            """{"type":"hooks_ran","event":"PreToolUse","handlers":2,"decision":"cancelled","durationMs":40,"turnId":"turn_1","cancelled":2}""",
+        )
         // httpStatus / willRetry 默认不落盘
         assertEventWire(
             ModelRequestFailed(TurnId("turn_1"), RequestId("req_1"), attempt = 1, kind = ModelFailureKind.RateLimited, message = "429 too many"),
@@ -207,6 +227,11 @@ class SessionEventWireTest {
         assertEventWire(
             ToolOutcome(TurnId("turn_1"), CallId("call_1"), ToolResult(listOf(TextPart("ok")))),
             """{"type":"tool_outcome","turnId":"turn_1","callId":"call_1","result":{"content":[{"type":"text","text":"ok"}]}}""",
+        )
+        // 失败类别（遥测 tool.execution 的 error）有值才落盘
+        assertEventWire(
+            ToolOutcome(TurnId("turn_1"), CallId("call_1"), ToolResult(listOf(TextPart("no")), isError = true, errorKind = "Error:ENOENT")),
+            """{"type":"tool_outcome","turnId":"turn_1","callId":"call_1","result":{"content":[{"type":"text","text":"no"}],"isError":true,"errorKind":"Error:ENOENT"}}""",
         )
     }
 

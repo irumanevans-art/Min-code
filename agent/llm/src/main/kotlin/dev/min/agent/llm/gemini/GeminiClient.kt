@@ -32,7 +32,7 @@ class GeminiClient(
                 is CancellationException -> error
                 is ModelException -> error
                 is HttpStatusException -> geminiHttpError(error.status, error.headers, error.body, overflow)
-                is IOException -> ModelException(ModelFailureKind.Network, "网络中断", beforeFirstByte = parser.seen == 0, cause = error)
+                is IOException -> networkFailure("网络中断", parser.seen == 0, error)
                 else -> error
             }
         }.collect { event -> parser.feed(event).forEach { emit(it) } }

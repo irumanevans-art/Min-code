@@ -30,8 +30,11 @@ import dev.min.agent.spi.HooksRan
 import dev.min.agent.spi.Note
 import dev.min.agent.spi.catchingNonCancellation
 import dev.min.agent.spi.NoteLevel
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -209,7 +212,8 @@ internal class HookDriver(private val rt: SessionRuntime) {
         val timeoutCap = if (event == HookEvent.SessionEnd) SESSION_END_TIMEOUT_CAP else MAX_TIMEOUT
         val modelRunner = ModelHookRunner(rt)
         // command / http / 模型侧各批并发跑（CC：同一事件匹配上的 hook 并行），各自的超时不串行叠加
-        val batches = coroutineScope {
+        val handlerCount = commandHandlers.size + httpHandlers.size + promptHandlers.size + agentHandlers.size + mcpHandlers.size
+        val batches = try { coroutineScope {
             val commandBatch = async {
                 if (commandHandlers.isEmpty()) {
                     emptyList()
@@ -252,6 +256,19 @@ internal class HookDriver(private val rt: SessionRuntime) {
                 if (mcpHandlers.isEmpty()) emptyList() else modelRunner.runMcp(mcpHandlers, stdin, event)
             }
             HookBatches(commandBatch.await(), httpBatch.await(), promptBatch.await(), agentBatch.await(), mcpBatch.await())
+        } } catch (e: CancellationException) {
+            // 回合被中断时这批 hook 整批被取消：照样留一条记录（遥测 hook span 的 num_cancelled）。没有回合的批（SessionStart 一类）遥测没有 span 可挂，不记
+            if (turnId != null) {
+                withContext(NonCancellable) {
+                    catchingNonCancellation {
+                        rt.commit(
+                            listOf(HooksRan(event.name, handlerCount, "cancelled", deps.clock.nowMs() - started, turnId, callId, listOf("hook 被取消（回合中断）"), cancelled = handlerCount)),
+                            Durability.Batched,
+                        )
+                    }
+                }
+            }
+            throw e
         }
         val allRuns = batches.runs + batches.http.runs + batches.mcpRuns
         val verdicts = allRuns.map { interpret(event, it) } + batches.promptVerdicts + batches.agentVerdicts

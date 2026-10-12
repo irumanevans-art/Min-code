@@ -128,6 +128,7 @@ class GlobToolTest {
         val missing = GlobTool.call(ctx, "pattern" to "*", "path" to "/nope")
         assertTrue(missing.isError)
         assertEquals("目录不存在：/nope。", missing.text)
+        assertEquals("Error:ENOENT", missing.errorKind)
         fs.put("/work/f.txt", "")
         val file = GlobTool.call(ctx, "pattern" to "*", "path" to "/work/f.txt")
         assertTrue(file.isError)

@@ -51,7 +51,7 @@ internal class ModelBilling(private val rt: SessionRuntime) {
                 }
                 true
             }
-            if (finished == null) throw ModelException(ModelFailureKind.Network, "模型请求超时", beforeFirstByte = false)
+            if (finished == null) throw ModelException(ModelFailureKind.Network, "模型请求超时", beforeFirstByte = false, timedOut = true)
         }
         // 有预算时串行检查与扣账，避免同一会话的多个辅助请求同时读到尚未花费的余额。
         if (rt.deps.maxBudgetUsd == null && rt.treeCronRun() == null) collect() else lock.withLock { collect() }

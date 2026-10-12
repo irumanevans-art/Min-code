@@ -87,7 +87,7 @@ object ReadTool : Tool<ReadInput> {
 
     private suspend fun read(input: ReadInput, ctx: ToolContext): ToolResult {
         val path = input.path
-        val stat = ctx.fs.stat(path) ?: return failResult("文件不存在：$path。可以用 Glob 找一找正确的路径。")
+        val stat = ctx.fs.stat(path) ?: return failResult("文件不存在：$path。可以用 Glob 找一找正确的路径。", ENOENT)
         if (stat.kind == FileKind.Directory) {
             return failResult("$path 是目录，不是文件。列目录请用 Glob（如 pattern=\"*\"）或 Bash 的 ls。")
         }

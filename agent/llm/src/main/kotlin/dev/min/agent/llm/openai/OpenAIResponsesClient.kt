@@ -5,6 +5,7 @@ import dev.min.agent.llm.ModelClient
 import dev.min.agent.llm.ModelException
 import dev.min.agent.llm.ModelRequest
 import dev.min.agent.llm.ModelStreamEvent
+import dev.min.agent.llm.networkFailure
 import dev.min.agent.llm.ProviderDescriptor
 import dev.min.agent.protocol.AgentJson
 import dev.min.agent.spi.HttpRequest
@@ -52,7 +53,7 @@ class OpenAIResponsesClient(
             is CancellationException -> e
             is ModelException -> e
             is HttpStatusException -> classifyHttpFailure(e.status, e.headers, e.body, overflow)
-            is IOException -> ModelException(ModelFailureKind.Network, "网络中断", beforeFirstByte = parser.seen == 0, cause = e)
+            is IOException -> networkFailure("网络中断", parser.seen == 0, e)
             else -> e
         } })
         if (!parser.finished) throw ModelException(ModelFailureKind.Network, "Responses 流在终止事件之前结束", beforeFirstByte = parser.seen == 0)
