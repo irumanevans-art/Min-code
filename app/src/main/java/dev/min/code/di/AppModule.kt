@@ -34,6 +34,7 @@ import dev.min.code.core.device.DeviceController
 import dev.min.code.core.device.DeviceMcpRegistrar
 import dev.min.code.core.device.DeviceMcpServer
 import dev.min.code.core.network.NetworkProbe
+import dev.min.code.core.rootfs.workspacesBaseDir
 import dev.min.code.privileged.MinAdbManager
 import dev.min.code.privileged.PrivilegedClient
 import dev.min.code.privileged.PrivilegedStarter
@@ -71,8 +72,6 @@ val appModule = module {
     single { AppScope() }
     // 前后台与离开时长：自动会话回顾、进后台关闲置 MCP 连接用
     single { dev.min.code.core.service.AppForeground(get<AppScope>()) }
-    // 前后台与离开时长：自动会话回顾、进后台关闲置 MCP 连接用
-    single { dev.min.code.core.service.AppForeground(get<AppScope>()) }
     single { SettingsStore(get(), get<AppScope>()) }
     // 机内协议路由：只在当前供应商的方言不是原生时才起来，见 RelayController
     single { RelayController(get()) }
@@ -84,7 +83,7 @@ val appModule = module {
         val context: android.content.Context = get()
         val settings: SettingsStore = get()
         WorkspaceManager(
-            baseDir = File(context.filesDir, "workspaces"),
+            baseDir = workspacesBaseDir(context),
             // 参数类型是接口 WorkspaceShellRunner，而 single 只按 ProotShellRunner 登记：
             // 不写明类型，Koin 会去找接口的定义，找不到就在 App 启动时崩（编译期看不出来）
             shellRunner = get<ProotShellRunner>(),
@@ -279,7 +278,7 @@ val appModule = module {
     // 盯投递目录的人不能等某个页面先打开（见 GuestOpenInbox）
     single(createdAtStart = true) { GuestOpenInbox(get(), get<AppScope>()) }
 
-    // 原来的 ClaudeCodeVM 按职责拆成五个（M2-B B6a）；ClaudeCodePage 一次取齐
+    // ClaudeCodeVM 按职责拆成了五个，ClaudeCodePage 一次取齐
     viewModelOf(::SessionVM)
     // Min 会话的元数据是 named("min") 那一份（与 Min 引擎读标题的是同一个），viewModelOf 按类型解析取不到它
     viewModel { SessionListVM(get(), get(), get(), get(), get(), get(named("min")), get(named("codex")), get()) }

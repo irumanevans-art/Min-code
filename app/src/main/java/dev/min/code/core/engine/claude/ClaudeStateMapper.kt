@@ -3,6 +3,7 @@ package dev.min.code.core.engine.claude
 import dev.min.code.core.claudecode.BackgroundShell
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeModelCatalog
+import dev.min.code.core.claudecode.ClaudeCodeModelList
 import dev.min.code.core.claudecode.ClaudeCodePermissionMode
 import dev.min.code.core.claudecode.FORK_SUBAGENT_TYPE
 import dev.min.code.core.claudecode.ReasoningLevel
@@ -168,8 +169,8 @@ object ClaudeStateMapper {
             relayModels = state.relayModels.map { Choice(it.id, it.displayName ?: it.id, description = if (it.displayName != null) it.id else null) },
             modelsError = state.relayModelsError,
             // 目录里缺席的别名（Fable 这类）：CLI 只把当前选中的放进 list_models，不补这一格用户会陷进「选不到」
-            aliasModels = ClaudeCodeManager.HIDDEN_MODEL_ALIASES.map {
-                Choice(it.value, it.displayName, it.description, recommended = it.value in ClaudeCodeManager.PROMOTED_MODEL_IDS)
+            aliasModels = ClaudeCodeModelList.HIDDEN_MODEL_ALIASES.map {
+                Choice(it.value, it.displayName, it.description, recommended = it.value in ClaudeCodeModelList.PROMOTED_MODEL_IDS)
             },
             applied = AppliedSettings(state.appliedModel, state.appliedEffort, state.appliedUltracode),
             effort = Choice(options.effort ?: FOLLOW_DEFAULT, chipEffort),
@@ -203,7 +204,7 @@ object ClaudeStateMapper {
     private fun modelChipLabel(state: ClaudeCodeManager.SessionState): String {
         val selected = state.options.model
         if (selected != null) {
-            return (state.availableModels + ClaudeCodeManager.HIDDEN_MODEL_ALIASES)
+            return (state.availableModels + ClaudeCodeModelList.HIDDEN_MODEL_ALIASES)
                 .firstOrNull { it.value == selected }?.displayName ?: selected
         }
         return state.appliedModel ?: state.model ?: ""

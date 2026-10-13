@@ -3,7 +3,6 @@ package dev.min.code.ui.terminal
 import android.graphics.Typeface
 import android.graphics.Color as AndroidColor
 import android.view.MotionEvent
-import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
@@ -71,6 +70,7 @@ import dev.min.code.ui.components.InkLoading
 import dev.min.code.ui.components.InkTabIndicator
 import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.components.InkTopBar
+import dev.min.code.ui.components.LocalToaster
 import dev.min.code.ui.files.WorkspaceDetailVM
 import dev.min.code.ui.theme.InkMotion
 import dev.min.code.ui.theme.JetbrainsMono
@@ -196,7 +196,7 @@ private enum class TerminalPhase { Loading, Empty, Content }
  */
 @Composable
 internal fun TerminalKeyboardToggle(enabled: Boolean, onToggle: (Boolean) -> Unit) {
-    val context = LocalContext.current
+    val toaster = LocalToaster.current
     val on = stringResource(R.string.terminal_auto_keyboard_on)
     val off = stringResource(R.string.terminal_auto_keyboard_off)
     InkIconButton(
@@ -204,7 +204,7 @@ internal fun TerminalKeyboardToggle(enabled: Boolean, onToggle: (Boolean) -> Uni
         contentDescription = if (enabled) on else off,
         onClick = {
             onToggle(!enabled)
-            Toast.makeText(context, if (enabled) off else on, Toast.LENGTH_SHORT).show()
+            toaster.show(if (enabled) off else on)
         },
         tint = if (enabled) {
             MaterialTheme.sea.seaDeep

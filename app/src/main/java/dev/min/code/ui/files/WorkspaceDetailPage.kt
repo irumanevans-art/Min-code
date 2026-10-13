@@ -266,13 +266,7 @@ fun WorkspaceDetailPage(id: String) {
         archiveBasePath = archiveBase(state.inSearch, state.path)
         val selected = state.selectedEntries
         archiveExportLauncher.launch(
-            archiveName(
-                selectedNames = selected.map { it.name },
-                selectedIsSingleFolder = selected.size == 1 && selected.first().isDirectory,
-                currentFolderName = state.currentFolderName,
-                areaLabel = if (state.area == WorkspaceStorageArea.FILES) "workspace" else "rootfs",
-                date = today(),
-            )
+            archiveNameFor(selected, state.currentFolderName, state.area, today())
         )
     }
 
@@ -411,17 +405,7 @@ fun WorkspaceDetailPage(id: String) {
                                     entries = selected,
                                     base = archiveBase(state.inSearch, state.path),
                                     cacheDir = context.cacheDir,
-                                    name = archiveName(
-                                        selectedNames = selected.map { it.name },
-                                        selectedIsSingleFolder = selected.size == 1 && selected.first().isDirectory,
-                                        currentFolderName = state.currentFolderName,
-                                        areaLabel = if (state.area == WorkspaceStorageArea.FILES) {
-                                            "workspace"
-                                        } else {
-                                            "rootfs"
-                                        },
-                                        date = today(),
-                                    ),
+                                    name = archiveNameFor(selected, state.currentFolderName, state.area, today()),
                                 ) { file -> context.shareFile(file, "application/zip") }
                             }
                             vm.exitSelection()

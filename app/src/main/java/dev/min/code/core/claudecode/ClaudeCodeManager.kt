@@ -10,11 +10,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -23,15 +21,16 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlinx.serialization.json.contentOrNull
 import dev.min.code.core.network.NetworkProbe
 import dev.min.code.core.crash.CrashRecorder
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
+import dev.min.code.core.rootfs.DEFAULT_CWD
+import dev.min.code.core.rootfs.linuxDirFor
+import dev.min.code.core.rootfs.workspaceDirFor
 import dev.min.code.core.service.LocalServiceIntent
 import dev.min.code.core.service.AgentServiceHost
 import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.MAX_TOOL_RESULT_CHARS
-import dev.min.code.core.session.editTargetPath
 import dev.min.code.core.session.appendProcessOutputLine
 import dev.min.code.core.session.withClippedResult
 import dev.min.code.core.session.SessionStatus
@@ -46,7 +45,6 @@ import dev.min.code.core.rootfs.MENTION_LIMIT
 import dev.min.code.core.rootfs.findMentionFiles
 import java.io.File
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Claude Code 会话管理：在 Claude Code 工作区的 Rootfs 里启动真正的官方
@@ -86,7 +84,7 @@ class ClaudeCodeManager(
     installer: ClaudeCodeInstaller,
     private val costLedger: ClaudeCodeCostLedger,
     networkProbe: NetworkProbe = NetworkProbe(context),
-    private val localServices: AgentServiceHost? = null,
+    localServices: AgentServiceHost? = null,
     private val sessionStore: ClaudeCodeSessionStore = ClaudeCodeSessionStore(),
     private val drafts: ComposerDraftStore = ComposerDraftStore(context),
     /**
@@ -333,7 +331,7 @@ class ClaudeCodeManager(
         val supportedEffortLevels: List<String> = emptyList(),
         /** CLI 解析后的真实模型 id，如 value="fable" → resolvedModel="claude-fable-5" */
         val resolvedModel: String? = null,
-        /** true 表示这一项是我们补上的、CLI 当前没列出来的（见 HIDDEN_MODEL_ALIASES） */
+        /** true 表示这一项是我们补上的、CLI 当前没列出来的（见 [ClaudeCodeModelList.HIDDEN_MODEL_ALIASES]） */
         val hiddenAlias: Boolean = false,
     )
 
@@ -346,12 +344,8 @@ class ClaudeCodeManager(
     val state: StateFlow<SessionState> get() = _state
     private val _state = MutableStateFlow(SessionState())
 
-    /**
-     * 被 Esc 撤回、要退还给输入框的消息。一次性事件，不能放进 [SessionState] ——
-     * 状态会被重放，输入框就会在每次重组时被重新塞满。
-     */
-    private val _withdrawnMessages = MutableSharedFlow<ComposerDraft>(extraBufferCapacity = 4)
-    val withdrawnMessages: SharedFlow<ComposerDraft> = _withdrawnMessages.asSharedFlow()
+    /** 被 Esc 撤回、要退还给输入框的消息。一次性事件，不进 [SessionState]，见 [ClaudeCodeSendCoordinator] */
+    val withdrawnMessages: SharedFlow<ComposerDraft> get() = sendCoordinator.withdrawnMessages
 
     // SupervisorJob 把子协程的未捕获异常交给默认 handler，在 Android 上就是整 App 崩掉，
     // 所以装 CoroutineExceptionHandler：记日志 + 落盘，不往上传
@@ -435,76 +429,43 @@ class ClaudeCodeManager(
         write = { cli.write(it) },
     )
 
+    /** 发送 / 排队 / 打断 / 撤回的状态机，和它独占的轮次记账 */
+    private val sendCoordinator = ClaudeCodeSendCoordinator(
+        scope = scope,
+        state = _state,
+        write = { cli.write(it) },
+        isClosing = { cli.stopping },
+        drafts = drafts,
+        newId = ::newId,
+    )
+
     /** 用量 / 计划各自同时只跑一条，握手完之前只攒着（见 [CoalescedRefresh] 的头注释） */
     private val usageRefresh = CoalescedRefresh(scope) { fetchUsage() }
     private val planRefresh = CoalescedRefresh(scope) { fetchPlan() }
+
+    /** 后台 / 长驻 Bash 的托管，以及由此冒出来的本机预览地址 */
+    private val hostedBash = ClaudeCodeHostedBash(
+        services = localServices,
+        state = _state,
+        sessionScope = { cli.sessionScope },
+        currentTurn = { sendCoordinator.currentTurn },
+        interruptedTurn = { sendCoordinator.interruptedTurn },
+        answerCli = ::answerCli,
+        newId = ::newId,
+    )
 
     /**
      * 本机预览 URL（loopback）。UI 收集后 **填预览位**（可自动展开一次）。
      * 不经系统浏览器。
      */
-    private val _localPreviewUrls = MutableSharedFlow<String>(extraBufferCapacity = 8)
-    val localPreviewUrls: SharedFlow<String> = _localPreviewUrls.asSharedFlow()
+    val localPreviewUrls: SharedFlow<String> get() = hostedBash.localPreviewUrls
 
-    /**
-     * 每轮任务自增，用于给中断兜底做"还是同一轮吗"的判断。
-     * 收尾（readLoop 线程）和中断兜底（scope 上的计时协程）会同时动它，所以是原子的
-     */
-    private val turnSeq = AtomicInteger(0)
-
-    /**
-     * 停止键打断的是哪一轮（打断那一刻的 [turnSeq]），以及那次是不是撤回。
-     *
-     * CLI 对打断回的是 `is_error` 的 result（`error_during_execution`，实测 2.1.280），
-     * 不认出来的话，用户自己按了停止，对话流里还要挂一条红字「任务失败」。
-     */
-    @Volatile
-    private var interruptedTurn: Int? = null
-
-    @Volatile
-    private var interruptWithdrew: Boolean = false
-
-    /** 用户点「拒绝」停下的那一轮（turnSeq），它收尾时不算失败，见 [answerPermission] */
+    /** 用户点「拒绝」停下的那一轮（轮次号，见 [ClaudeCodeSendCoordinator.currentTurn]），它收尾时不算失败，见 [answerPermission] */
     @Volatile
     private var deniedTurn: Int? = null
 
     /** 本轮用户亲手拒掉的 tool_use id。result 的 permission_denials 也会列它们，但那不是规则拦的 */
     private val userDeniedToolUses = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-
-    /**
-     * 一条用户消息在离开我们视线之前的样子。
-     * [label] 是对话流里那条 [ChatItem.UserText] 的文本，撤回时要按 [itemId] 把它摘掉。
-     */
-    private data class PendingSend(
-        val itemId: String,
-        val text: String,
-        val images: List<ClaudeCodeImage>,
-        val label: String,
-        /** 之前 `!` 命令攒下的输入输出，附在这条前面交给模型（见 UserShell.kt）；界面上不显示 */
-        val shellContext: String = "",
-        /** 这句是请主会话转交给某个已停的子 agent 的（见 [sendToSubagent]）；null = 说给主会话 */
-        val relay: SubagentThread? = null,
-    ) {
-        /** 真正写进 stdin 的正文 */
-        val wireText: String get() {
-            val body = relay?.agentId?.let { relayToSubagentPrompt(it, relay.agentType, text) } ?: text
-            return if (shellContext.isEmpty()) body else "$shellContext\n\n$body"
-        }
-
-        /** 气泡上那行小字：转交给谁 */
-        val handoff: ChatItem.Handoff?
-            get() = relay?.let { ChatItem.Handoff(it.agentType, ChatItem.HandoffState.Relayed) }
-    }
-
-    /** `!` 命令跑完攒下的上下文，等下一条消息带走 */
-    private val shellContext = StringBuilder()
-
-    /** 追加消息的调度台。两格的含义、以及为什么是交棒而不是攥着，见 [ClaudeCodeSendQueue] */
-    private val sendQueue = ClaudeCodeSendQueue<PendingSend>()
-
-    /** 当前这一轮是哪条消息开的头。按 Esc 撤回时要把它退还给输入框 */
-    @Volatile
-    private var inFlight: PendingSend? = null
 
     /** 当前会话的 rootfs 目录，供会话仓库读 transcript */
     @Volatile
@@ -517,9 +478,6 @@ class ClaudeCodeManager(
      * 用并发集合：写在 answerQuestions（UI 线程发起），读在 readLoop 的 dispatch 里。
      */
     private val skippedQuestions = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-
-    /** 权限路径已排他托管的 Bash tool_use_id，避免 ToolUse 上再 start 一次 */
-    private val exclusiveHostedToolUses = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /** CLI 已撤回（control_cancel_request）、不能再应答的请求，见 [answerCli] */
     private val withdrawnCliRequests = WithdrawnCliRequests()
@@ -588,7 +546,7 @@ class ClaudeCodeManager(
             shutdown()
             titleGenerationAttemptedFor = null
             // 上一个会话里 `!` 攒下的输出不能带进新会话
-            takeShellContext()
+            sendCoordinator.takeShellContext()
             _state.value = SessionState(
                 status = SessionStatus.Starting,
                 options = options,
@@ -598,7 +556,7 @@ class ClaudeCodeManager(
             runCatching { launchCli(options) }.onFailure { e ->
                 Log.e(TAG, "startSession failed", e)
                 // 启动中打的字还攥在调度台上，shutdown 会连队列一起清掉 —— 先退回输入框
-                refundHeldMessages("会话启动失败，消息已退回输入框")
+                sendCoordinator.refundHeldMessages("会话启动失败，消息已退回输入框")
                 shutdown()
                 _state.update {
                     it.copy(status = SessionStatus.Failed, errorMessage = e.message ?: e.toString())
@@ -718,11 +676,30 @@ class ClaudeCodeManager(
     private var replaying = false
 
     /**
-     * 正在流式到达的那条工具入参，片段按顺序拼接。
+     * 流式工具入参的暂存三件套：[streamingToolInput]、[streamingToolUseId]、[unconfirmedToolCards]。
+     * 只在「一条消息还没流完」的那一小段有意义，不是会话状态，所以不进 [SessionState]，
+     * 也**没有加锁、没有 @Volatile**——靠下面这条约定保证同一时刻只有一个线程碰它们。
      *
-     * 协议里一条消息的内容块是按顺序流的（一个块 stop 之后下一个才 start），
-     * 所以会话级一份就够，不用按 tool_use id 分桶。整块 [ClaudeCodeEvent.ToolUse]
-     * 到达、或下一条消息开始时清空。
+     * **谁写、在哪个线程：**
+     * - 读循环那一个协程（[ClaudeCodeCliPipe.startReading] → dispatch → onToolBlockStart / onToolInputDelta /
+     *   onToolUse / onResult / PartialStart 分支）。正常运行时它是唯一的写者；
+     * - [openSession] 回放 transcript：在 scope 的线程上直接调 dispatch，持着 [sessionMutex]，
+     *   此刻 shutdown 已经跑完、新进程还没拉起，没有读循环在跑；
+     * - [relaunchWith]：持着 [sessionMutex]，在 shutdown 之后、launchCli 之前清零。
+     *
+     * **为什么不会同时写：** 三处写者被 [sessionMutex] 和「先 shutdown、再 launchCli」的顺序排开。
+     * shutdown 返回前要等旧进程退出（[ClaudeCodeCliPipe.close]），stdout 随之 EOF、旧读循环自然结束，
+     * 之后才有新进程和新读循环。
+     *
+     * **边界要看清：** shutdown 等的是**进程退出**，不是 join 读循环的协程（`cancel()` 打不断阻塞的
+     * `readLine`）。所以旧读循环理论上还能把管道里已缓冲的最后几行分发完，与 relaunchWith 的清零交错。
+     * 没有加锁是因为后果有限：每条消息开头（PartialStart / ToolBlockStart / ToolUse）都会重置这三样，
+     * 残留的脏值最多让一张卡的入参摘要晚一帧刷新。**不要**把别的线程（UI、control 回调）接到这三个字段上，
+     * 那就破了这条约定。
+     *
+     * [streamingToolInput]：正在流式到达的那条工具入参，片段按顺序拼接。协议里一条消息的内容块是按顺序流的
+     * （一个块 stop 之后下一个才 start），所以会话级一份就够，不用按 tool_use id 分桶。
+     * 整块 [ClaudeCodeEvent.ToolUse] 到达、或下一条消息开始时清空。
      */
     private var streamingToolInput: String? = null
 
@@ -730,7 +707,7 @@ class ClaudeCodeManager(
     private var streamingToolUseId: String? = null
 
     /**
-     * 靠增量帧提前插进去、还没等到整块 tool_use 的卡（按 tool_use id）。
+     * 靠增量帧提前插进去、还没等到整块 tool_use 的卡（按 tool_use id）。线程约定见 [streamingToolInput]。
      *
      * 入参还在流的时候被打断，整块 tool_use 就永远不会来 —— CLI 根本没跑这个工具，
      * 也不会有 tool_result，卡会一直转圈。下一条消息开始、或这一轮收尾时还没被确认的，
@@ -753,79 +730,7 @@ class ClaudeCodeManager(
 
     private fun dispatch(event: ClaudeCodeEvent, fromProcess: Process) {
         when (event) {
-            // CLI 每一轮都会重发 system/init，不能每次都往聊天流里塞一条「会话已建立」——
-            // 模型和工具数放到顶栏副标题即可，这里只在第一次或模型变了时提示
-            is ClaudeCodeEvent.Init -> {
-                val noteId = newId()
-                val startedAt = System.currentTimeMillis()
-                _state.update { state ->
-                    val changed = state.model != event.model
-                    val fresh = !state.announcedInit || changed
-                    val text = "会话已建立 · ${event.model ?: "未知模型"} · ${event.tools.size} 个工具"
-                    // 已经发出去的那条提示在 items 里的位置（没发过 / 被清过就是 -1）
-                    val at = state.initNoteId
-                        ?.let { id -> state.items.indexOfFirst { item -> item.id == id } }
-                        ?: -1
-                    // MCP 服务器连不上 / 需要授权时在聊天流里说一声。CLI 不发 mcp_status 帧，
-                    // 失败状态只随 system/init 来（CLI 2.1.283 实测，见 tools/probe_frames.py 的
-                    // bad_mcp 场景），而 init 每轮都重发 —— 同一台服务器的同一个状态只提示一次，
-                    // 之后变回 connected 也不补提示。集合跟随 SessionState 整体重建清空
-                    // （startSession / openSession 换会话）；relaunchWith 续的是同一个 CLI 会话，
-                    // 和 announcedInit 一样不清。
-                    val mcpNotes = event.mcpServers.mapNotNull { server ->
-                        val mcpText = when (server.status) {
-                            "failed" -> "MCP 服务器 ${server.name} 连不上，它的工具这次用不了"
-                            "needs-auth" -> "MCP 服务器 ${server.name} 需要登录授权"
-                            else -> return@mapNotNull null
-                        }
-                        val key = "${server.name}:${server.status}"
-                        if (key in state.announcedMcp) null
-                        else key to ChatItem.Note(id = newId(), text = mcpText)
-                    }
-                    val baseItems = when {
-                        fresh -> state.items + ChatItem.Note(id = noteId, text = text)
-                        // CLI 2.1.274 起，首轮不再为还在连的 MCP 服务器等那两秒，被工具搜索
-                        // 延迟加载的工具要到后面某一轮才报上来。顶栏的 toolCount 每轮都刷，
-                        // 而这条提示发出去就不动了 —— 不改的话它会永远停在首轮那个偏小的数
-                        // 字上，和顶栏对不上。只在数字变大时就地改文案，id 保持原样，
-                        // 免得 LazyColumn 当成新条目又淡入一次。
-                        at >= 0 && event.tools.size > state.toolCount ->
-                            state.items.toMutableList().also { list ->
-                                list[at] = ChatItem.Note(id = state.initNoteId!!, text = text)
-                            }
-                        else -> state.items
-                    }
-                    state.copy(
-                        sessionId = event.sessionId.ifBlank { state.sessionId },
-                        model = event.model,
-                        toolCount = event.tools.size,
-                        initNoteId = if (fresh) noteId else state.initNoteId,
-                        announcedMcp = state.announcedMcp + mcpNotes.map { (key, _) -> key },
-                        items = baseItems + mcpNotes.map { (_, note) -> note },
-                        announcedInit = true,
-                    ).let { s ->
-                        // 这边没有在跑的消息、init 却来了 = CLI **自己**开了一轮：后台子 agent
-                        // 做完后它会拿 task_notification 当新的一问接着跑（CLI 2.1.283 实测，
-                        // 夹具 background_agents_followup）。busy 只在 dispatchSend 里点亮，
-                        // 不补的话这一轮照样在流，却没有「工作中」、停止键也是灭的。
-                        // turnProduced 直接为真：这一轮不是哪条消息开的，停止只能是打断、没有可撤回的
-                        if (s.busy || inFlight != null || fromProcess !== cli.process) s
-                        else s.copy(
-                            busy = true,
-                            turnProduced = true,
-                            streamingText = "",
-                            streamingThinking = "",
-                            retryNotice = null,
-                            turnStartedAt = startedAt,
-                            outputTokensSettled = 0,
-                            outputTokensCurrent = 0,
-                            lastTurnDurationMs = null,
-                            lastTurnFinishedAt = null,
-                            lastTurnEnd = null,
-                        )
-                    }
-                }
-            }
+            is ClaudeCodeEvent.Init -> onInit(event, fromProcess)
 
             // 整块消息到达：丢掉增量缓冲，换成正式条目，避免文本翻倍
             is ClaudeCodeEvent.AssistantText -> {
@@ -921,7 +826,7 @@ class ClaudeCodeManager(
             is ClaudeCodeEvent.Status -> {
                 // `requesting` 就打在每次发请求之前，而 CLI 的输入队列正是在那一刻排空的：
                 // 此前交棒的追加消息已经进了这次请求的上下文，「排队中」可以摘了。
-                if (event.phase == STATUS_REQUESTING) confirmHandedOff()
+                if (event.phase == STATUS_REQUESTING) sendCoordinator.confirmHandedOff()
                 _state.update {
                     it.copy(
                         statusPhase = event.phase ?: it.statusPhase,
@@ -966,154 +871,17 @@ class ClaudeCodeManager(
                 }
             }
 
-            // 工具块刚开始：名字和 id 已经完整，入参还是空的。先把卡插进去，
-            // 等入参一个片段一个片段地到（见 ToolInputDelta），而不是等整条
-            // assistant 消息到齐后整张卡一下子冒出来。
-            //
-            // 回放没有增量帧，历史里的卡一律走下面的 ToolUse，这里不会双插。
-            is ClaudeCodeEvent.ToolBlockStart -> if (!replaying) {
-                streamingToolInput = null
-                // 记下这份入参属于谁：后面的片段只允许写进这张卡，
-                // 不能按"最后一张正在跑的"去猜 —— 并行的工具调用会猜错
-                streamingToolUseId = event.id
-                if (event.id.isNotBlank()) unconfirmedToolCards += event.id
-                val cardId = newId()
-                _state.update {
-                    val base = if (it.retryNotice == null && it.turnProduced) it
-                    else it.copy(retryNotice = null, turnProduced = true)
-                    // 同一条消息里整块 tool_use 先到（中转站不回增量帧时）：卡已经在了，
-                    // 这一帧只是迟到的回声，不能再插一张
-                    if (event.id.isNotBlank() && base.items.anyToolCall(event.id)) base
-                    else base.copy(
-                        items = base.items + ChatItem.ToolCall(
-                            id = cardId,
-                            toolUseId = event.id,
-                            name = event.name,
-                            input = kotlinx.serialization.json.JsonObject(emptyMap()),
-                            status = ChatItem.ToolCall.Status.Running,
-                        )
-                    )
-                }
-            }
+            is ClaudeCodeEvent.ToolBlockStart -> onToolBlockStart(event)
 
-            // 入参片段按到达顺序拼接。能解出完整字段就刷新卡片摘要，解不出就保持
-            // 上一份 —— 摘要只会往前长，不会闪回成空。拼接是会话级的一份：协议里
-            // 同一条消息的内容块按顺序流，不会两个工具交错着吐入参。
-            is ClaudeCodeEvent.ToolInputDelta -> if (!replaying) {
-                val accumulated = (streamingToolInput ?: "") + event.partialJson
-                streamingToolInput = accumulated
-                val parsed = completePartialJsonObject(accumulated)
-                if (parsed != null) {
-                    val target = streamingToolUseId
-                    _state.update { state ->
-                        val at = state.items.indexOfLast { item ->
-                            item is ChatItem.ToolCall && item.toolUseId == target &&
-                                item.status == ChatItem.ToolCall.Status.Running
-                        }
-                        val card = state.items.getOrNull(at) as? ChatItem.ToolCall ?: return@update state
-                        if (parsed == card.input) state
-                        else state.copy(items = state.items.toMutableList().also { list ->
-                            list[at] = card.copy(input = parsed)
-                        })
-                    }
-                }
-            }
+            is ClaudeCodeEvent.ToolInputDelta -> onToolInputDelta(event)
 
-            is ClaudeCodeEvent.ToolUse -> {
-                // 只出工具调用、一个字都不说的那一轮不会有 AssistantText，
-                // 但工具调用同样证明请求已经接通了
-                _state.update {
-                    if (it.retryNotice == null && it.turnProduced) it
-                    else it.copy(retryNotice = null, turnProduced = true)
-                }
-                // 快照要在工具跑之前拿；tool_use 帧就是那个时刻（tool_result 才是跑完）。
-                // 入参到这里才是完整的，所以快照不能提前到 ToolBlockStart
-                snapshotBeforeEdit(event)
-                streamingToolInput = null
-                streamingToolUseId = null
-                unconfirmedToolCards -= event.id
-                // 增量帧已经把这张卡插进去了：这里只补齐入参，再插一张就是同一条调用出现两次。
-                // 对不上（回放、或中转站不回增量帧）才新插
-                val filled = _state.value.items.indexOfLast { item ->
-                    item is ChatItem.ToolCall && item.toolUseId == event.id &&
-                        item.status == ChatItem.ToolCall.Status.Running
-                }
-                if (filled >= 0) {
-                    _state.update { state ->
-                        val card = state.items.getOrNull(filled) as? ChatItem.ToolCall ?: return@update state
-                        state.copy(items = state.items.toMutableList().also { list ->
-                            list[filled] = card.copy(name = event.name, input = event.input)
-                        })
-                    }
-                } else {
-                    appendItem(
-                        ChatItem.ToolCall(
-                            id = newId(),
-                            toolUseId = event.id,
-                            name = event.name,
-                            input = event.input,
-                            status = ChatItem.ToolCall.Status.Running,
-                        )
-                    )
-                }
-                // 仅 bypass：不会有 can_use_tool。Manual 必须等 PermissionRequest 排他托管，
-                // 否则 ToolUse 先到再 start = 与即将到来的 permission 路径双跑。
-                if (!replaying &&
-                    event.name == TOOL_BASH &&
-                    _state.value.permissionMode == ClaudeCodePermissionMode.BYPASS &&
-                    (event.id.isBlank() || !exclusiveHostedToolUses.contains(event.id))
-                ) {
-                    maybeHostWhenNoPermissionGate(event)
-                }
-            }
+            is ClaudeCodeEvent.ToolUse -> onToolUse(event)
 
-            is ClaudeCodeEvent.ToolResult -> {
-                val call = _state.value.items
-                    .filterIsInstance<ChatItem.ToolCall>()
-                    .firstOrNull { it.toolUseId == event.toolUseId }
-                // 排他托管的卡已经被标成 Done（服务还在进程表里活着），CLI 随后收到的
-                // deny tool_result 不能再把它改回 Error —— 同一张卡状态会自相矛盾
-                val exclusiveHosted = event.toolUseId in exclusiveHostedToolUses
-                if (!exclusiveHosted) {
-                    _state.update { state ->
-                        state.copy(items = state.items.mapToolCall(event.toolUseId) { it.withResult(event, MAX_RESULT_CHARS) })
-                    }
-                }
-                // 提问被"空答案"跑完了：必须说清楚，否则用户只会看到模型自说自话地
-                // "没收到选择"然后继续瞎猜。判断放在 update 之外 —— update 的 lambda
-                // 在 CAS 失败时会重跑，在里面追加会插出两条。
-                //
-                // 用户自己按了「跳过」时不提示：那是他明确的选择，再弹一条红字是噪声。
-                val skipped = call?.toolUseId?.let { skippedQuestions.remove(it) } == true
-                if (!skipped &&
-                    call?.name == ASK_USER_QUESTION_TOOL &&
-                    looksLikeUnansweredQuestion(event.content)
-                ) {
-                    appendItem(
-                        ChatItem.Note(
-                            newId(),
-                            "这次提问没有把选择传回 CLI（工具收到的是空答案）。" +
-                                "如果你并没有点「跳过」，多半是 CLI 版本改了 AskUserQuestion 的入参形状，" +
-                                "请重试一次并反馈。",
-                            isError = true,
-                        )
-                    )
-                }
-                if (!event.isError && !replaying) {
-                    maybeOfferLocalPreview(event.content)
-                    // 结果路径：只扫预览 URL / 补 port 线索；不再二次 startFromAgent
-                    //（CLI 已跑过的命令再托管 = 端口战）。
-                    if (call?.name == TOOL_BASH) {
-                        val cmd = call.input["command"].asStringOrNull().orEmpty()
-                        val port = LocalServiceIntent.guessPort(cmd)
-                        if (port != null) maybeOfferLocalPreview(LocalUrls.loopbackUrl(port))
-                    }
-                }
-            }
+            is ClaudeCodeEvent.ToolResult -> onToolResult(event)
 
             is ClaudeCodeEvent.PermissionRequest -> {
                 // 后台/长驻 Bash：排他进表，deny CLI 执行，消双跑。
-                if (tryHostBashInsteadOfPermission(event)) {
+                if (hostedBash.tryHostInsteadOfPermission(event)) {
                     // 已应答，不挂 pending sheet
                 } else {
                     _state.update { it.copy(permissionQueue = it.permissionQueue.enqueued(event)) }
@@ -1161,97 +929,317 @@ class ClaudeCodeManager(
 
             is ClaudeCodeEvent.HookCallback -> answerSubagentHook(event, fromProcess)
 
-            is ClaudeCodeEvent.Result -> {
-                // 自增放在 update 外面：MutableStateFlow.update 的 lambda 在 CAS 失败时会重跑
-                val endedTurn = turnSeq.getAndIncrement()
-                // 入参流到一半被打断的那张卡：CLI 没跑它，也不会再有结果
-                streamingToolInput = null
-                streamingToolUseId = null
-                dropUnconfirmedToolCards()
-                val interrupted = interruptedTurn == endedTurn
-                val withdrew = interrupted && interruptWithdrew
-                interruptedTurn = null
-                val finishedAt = System.currentTimeMillis()
-                val durationMs = event.durationMs
-                    ?: _state.value.turnStartedAt?.let { finishedAt - it }
-                val outputTokens = _state.value.turnOutputTokens
-                inFlight = null
-                // 还有活时 busy 不许落地：中间那一帧 false 会让输入坞的停止键闪一下，
-                // 下一轮紧接着又把它点亮。
-                //
-                // 调度台上还有已交棒未确认的，说明有一条帧写出去了却没赶上这一轮的任何一次请求
-                // （写进 stdin 的那一刻 CLI 正好在收尾）。CLI 会把它当成新的一问自己开一轮，
-                // 所以 busy 继续为真是对的；真没动静就交给下面的看门狗兜底。
-                val queuedNext = hasQueuedWork()
-                // 用户拒绝带着 interrupt 停下的一轮，CLI 报 error_during_execution —— 那是用户要的结果，不是失败。
-                // 工具卡上已经是被拒的样子，busy 落下、输入框亮起就是「等你」
-                val deniedStop = deniedTurn == endedTurn
-                deniedTurn = null
-                val errorNoteId = if (event.isError && !deniedStop) newId() else null
-                val turnEnd = turnEndOfResult(
-                    isError = event.isError, subtype = event.subtype, resultText = event.resultText,
-                    interrupted = interrupted, withdrew = withdrew, deniedStop = deniedStop, atMs = finishedAt,
+            is ClaudeCodeEvent.Result -> onResult(event)
+        }
+    }
+
+    /**
+     * CLI 每一轮都会重发 system/init，不能每次都往聊天流里塞一条「会话已建立」——
+     * 模型和工具数放到顶栏副标题即可，这里只在第一次或模型变了时提示
+     */
+    private fun onInit(event: ClaudeCodeEvent.Init, fromProcess: Process) {
+        val noteId = newId()
+        val startedAt = System.currentTimeMillis()
+        _state.update { state ->
+            val changed = state.model != event.model
+            val fresh = !state.announcedInit || changed
+            val text = "会话已建立 · ${event.model ?: "未知模型"} · ${event.tools.size} 个工具"
+            // 已经发出去的那条提示在 items 里的位置（没发过 / 被清过就是 -1）
+            val at = state.initNoteId
+                ?.let { id -> state.items.indexOfFirst { item -> item.id == id } }
+                ?: -1
+            // MCP 服务器连不上 / 需要授权时在聊天流里说一声。CLI 不发 mcp_status 帧，
+            // 失败状态只随 system/init 来（CLI 2.1.283 实测，见 tools/probe_frames.py 的
+            // bad_mcp 场景），而 init 每轮都重发 —— 同一台服务器的同一个状态只提示一次，
+            // 之后变回 connected 也不补提示。集合跟随 SessionState 整体重建清空
+            // （startSession / openSession 换会话）；relaunchWith 续的是同一个 CLI 会话，
+            // 和 announcedInit 一样不清。
+            val mcpNotes = event.mcpServers.mapNotNull { server ->
+                val mcpText = when (server.status) {
+                    "failed" -> "MCP 服务器 ${server.name} 连不上，它的工具这次用不了"
+                    "needs-auth" -> "MCP 服务器 ${server.name} 需要登录授权"
+                    else -> return@mapNotNull null
+                }
+                val key = "${server.name}:${server.status}"
+                if (key in state.announcedMcp) null
+                else key to ChatItem.Note(id = newId(), text = mcpText)
+            }
+            val baseItems = when {
+                fresh -> state.items + ChatItem.Note(id = noteId, text = text)
+                // CLI 2.1.274 起，首轮不再为还在连的 MCP 服务器等那两秒，被工具搜索
+                // 延迟加载的工具要到后面某一轮才报上来。顶栏的 toolCount 每轮都刷，
+                // 而这条提示发出去就不动了 —— 不改的话它会永远停在首轮那个偏小的数
+                // 字上，和顶栏对不上。只在数字变大时就地改文案，id 保持原样，
+                // 免得 LazyColumn 当成新条目又淡入一次。
+                at >= 0 && event.tools.size > state.toolCount ->
+                    state.items.toMutableList().also { list ->
+                        list[at] = ChatItem.Note(id = state.initNoteId!!, text = text)
+                    }
+                else -> state.items
+            }
+            state.copy(
+                sessionId = event.sessionId.ifBlank { state.sessionId },
+                model = event.model,
+                toolCount = event.tools.size,
+                initNoteId = if (fresh) noteId else state.initNoteId,
+                announcedMcp = state.announcedMcp + mcpNotes.map { (key, _) -> key },
+                items = baseItems + mcpNotes.map { (_, note) -> note },
+                announcedInit = true,
+            ).let { s ->
+                // 这边没有在跑的消息、init 却来了 = CLI **自己**开了一轮：后台子 agent
+                // 做完后它会拿 task_notification 当新的一问接着跑（CLI 2.1.283 实测，
+                // 夹具 background_agents_followup）。busy 只在 dispatchSend 里点亮，
+                // 不补的话这一轮照样在流，却没有「工作中」、停止键也是灭的。
+                // turnProduced 直接为真：这一轮不是哪条消息开的，停止只能是打断、没有可撤回的
+                if (s.busy || sendCoordinator.hasTurnInFlight || fromProcess !== cli.process) s
+                else s.copy(
+                    busy = true,
+                    turnProduced = true,
+                    streamingText = "",
+                    streamingThinking = "",
+                    retryNotice = null,
+                    turnStartedAt = startedAt,
+                    outputTokensSettled = 0,
+                    outputTokensCurrent = 0,
+                    lastTurnDurationMs = null,
+                    lastTurnFinishedAt = null,
+                    lastTurnEnd = null,
                 )
-                // 托管进进程表的那几条也是 deny 掉的，CLI 同样列进 permission_denials；
-                // 它们上面已经有托管结局的提示，再说一句「被权限规则拦截」就自相矛盾了。
-                // 用户亲手拒的同理：那是人拒的，不是规则
-                val denials = event.permissionDenials.filterNot {
-                    it.toolUseId in exclusiveHostedToolUses || it.toolUseId in userDeniedToolUses
-                }
-                userDeniedToolUses.clear()
-                val denialNoteId = if (denials.isNotEmpty()) newId() else null
-                val denialNote = formatPermissionDenialsNote(denials)
-                _state.update {
-                    it.copy(
-                        busy = queuedNext,
-                        turnProduced = false,
-                        // 用时优先用 CLI 报的 duration_ms（它从真正发出请求那一刻算起，
-                        // 比我们在 send() 里打的时间戳准）；没有才退回本地计时
-                        lastTurnDurationMs = durationMs,
-                        lastTurnFinishedAt = finishedAt,
-                        lastTurnEnd = turnEnd,
-                        // 收尾时把最后一条消息的 token 结转，那一轮的总数才是完整的
-                        outputTokensSettled = it.outputTokensSettled + it.outputTokensCurrent,
-                        outputTokensCurrent = 0,
-                        // 在跑的后台子 agent 的请求跨轮活着（CLI 2.1.285 起才有），主线程的不会再有人收
-                        permissionQueue = it.permissionQueue.survivingTurnEnd(it.tasks),
-                        streamingText = "",
-                        streamingThinking = "",
-                        sessionId = event.sessionId ?: it.sessionId,
-                        // 一轮结束：瞬时状态全部归零，否则会一直挂着上一轮的"工作中"和重试提示
-                        statusPhase = null,
-                        statusDetail = null,
-                        retryNotice = null,
-                        // 成功收尾的子任务不再占位；失败/被杀的留着，否则用户永远看不到它出过错。
-                        // 转到后台还在跑的（run_in_background 的 shell、后台子 agent）要跨轮活着——
-                        // 它们本来就是为了在这一轮结束后继续跑
-                        tasks = it.tasks.keptAcrossTurns(),
-                        items = run {
-                            var updated = it.items.updateLastAssistantMeta(durationMs, outputTokens, finishedAt)
-                            if (errorNoteId != null) {
-                                resultErrorNote(errorNoteId, event, interrupted, withdrew, updated)
-                                    ?.let { note -> updated = updated + note }
-                            }
-                            if (denialNote != null) {
-                                updated = updated + ChatItem.Note(
-                                    denialNoteId!!,
-                                    denialNote,
-                                    isError = false,
-                                )
-                            }
-                            updated
-                        },
-                    )
-                }
-                // 一轮结束就把用量/花费读回来。不能只靠页面那个 LaunchedEffect ——
-                // 切到后台跑长任务时这一页根本没在组合，单日台账会漏掉整段花费
-                refreshUsage()
-                // 无头模式不会自动拟名；首轮成功后主动让 CLI 写 ai-title
-                if (!event.isError) maybeGenerateSessionTitle()
-                // 还攥在手里的（打断之后要回来的那批）接着开跑
-                if (!flushPendingSend()) watchHandedOff(turnSeq.get())
             }
         }
+    }
+
+    /**
+     * 工具块刚开始：名字和 id 已经完整，入参还是空的。先把卡插进去，
+     * 等入参一个片段一个片段地到（见 ToolInputDelta），而不是等整条
+     * assistant 消息到齐后整张卡一下子冒出来。
+     *
+     * 回放没有增量帧，历史里的卡一律走下面的 ToolUse，这里不会双插。
+     */
+    private fun onToolBlockStart(event: ClaudeCodeEvent.ToolBlockStart) {
+        if (replaying) return
+        streamingToolInput = null
+        // 记下这份入参属于谁：后面的片段只允许写进这张卡，
+        // 不能按"最后一张正在跑的"去猜 —— 并行的工具调用会猜错
+        streamingToolUseId = event.id
+        if (event.id.isNotBlank()) unconfirmedToolCards += event.id
+        val cardId = newId()
+        _state.update {
+            val base = if (it.retryNotice == null && it.turnProduced) it
+            else it.copy(retryNotice = null, turnProduced = true)
+            // 同一条消息里整块 tool_use 先到（中转站不回增量帧时）：卡已经在了，
+            // 这一帧只是迟到的回声，不能再插一张
+            if (event.id.isNotBlank() && base.items.anyToolCall(event.id)) base
+            else base.copy(
+                items = base.items + ChatItem.ToolCall(
+                    id = cardId,
+                    toolUseId = event.id,
+                    name = event.name,
+                    input = kotlinx.serialization.json.JsonObject(emptyMap()),
+                    status = ChatItem.ToolCall.Status.Running,
+                )
+            )
+        }
+    }
+
+    /**
+     * 入参片段按到达顺序拼接。能解出完整字段就刷新卡片摘要，解不出就保持
+     * 上一份 —— 摘要只会往前长，不会闪回成空。拼接是会话级的一份：协议里
+     * 同一条消息的内容块按顺序流，不会两个工具交错着吐入参。
+     */
+    private fun onToolInputDelta(event: ClaudeCodeEvent.ToolInputDelta) {
+        if (replaying) return
+        val accumulated = (streamingToolInput ?: "") + event.partialJson
+        streamingToolInput = accumulated
+        val parsed = completePartialJsonObject(accumulated)
+        if (parsed != null) {
+            val target = streamingToolUseId
+            _state.update { state ->
+                val at = state.items.indexOfLast { item ->
+                    item is ChatItem.ToolCall && item.toolUseId == target &&
+                        item.status == ChatItem.ToolCall.Status.Running
+                }
+                val card = state.items.getOrNull(at) as? ChatItem.ToolCall ?: return@update state
+                if (parsed == card.input) state
+                else state.copy(items = state.items.toMutableList().also { list ->
+                    list[at] = card.copy(input = parsed)
+                })
+            }
+        }
+    }
+
+    private fun onToolUse(event: ClaudeCodeEvent.ToolUse) {
+        // 只出工具调用、一个字都不说的那一轮不会有 AssistantText，
+        // 但工具调用同样证明请求已经接通了
+        _state.update {
+            if (it.retryNotice == null && it.turnProduced) it
+            else it.copy(retryNotice = null, turnProduced = true)
+        }
+        // 快照要在工具跑之前拿；tool_use 帧就是那个时刻（tool_result 才是跑完）。
+        // 入参到这里才是完整的，所以快照不能提前到 ToolBlockStart
+        checkpoints.snapshotBeforeEdit(event)
+        streamingToolInput = null
+        streamingToolUseId = null
+        unconfirmedToolCards -= event.id
+        // 增量帧已经把这张卡插进去了：这里只补齐入参，再插一张就是同一条调用出现两次。
+        // 对不上（回放、或中转站不回增量帧）才新插
+        val filled = _state.value.items.indexOfLast { item ->
+            item is ChatItem.ToolCall && item.toolUseId == event.id &&
+                item.status == ChatItem.ToolCall.Status.Running
+        }
+        if (filled >= 0) {
+            _state.update { state ->
+                val card = state.items.getOrNull(filled) as? ChatItem.ToolCall ?: return@update state
+                state.copy(items = state.items.toMutableList().also { list ->
+                    list[filled] = card.copy(name = event.name, input = event.input)
+                })
+            }
+        } else {
+            appendItem(
+                ChatItem.ToolCall(
+                    id = newId(),
+                    toolUseId = event.id,
+                    name = event.name,
+                    input = event.input,
+                    status = ChatItem.ToolCall.Status.Running,
+                )
+            )
+        }
+        // 仅 bypass：不会有 can_use_tool。Manual 必须等 PermissionRequest 排他托管，
+        // 否则 ToolUse 先到再 start = 与即将到来的 permission 路径双跑。
+        if (!replaying &&
+            event.name == TOOL_BASH &&
+            _state.value.permissionMode == ClaudeCodePermissionMode.BYPASS &&
+            (event.id.isBlank() || !hostedBash.isExclusive(event.id))
+        ) {
+            hostedBash.hostWithoutPermissionGate(event)
+        }
+    }
+
+    private fun onToolResult(event: ClaudeCodeEvent.ToolResult) {
+        val call = _state.value.items
+            .filterIsInstance<ChatItem.ToolCall>()
+            .firstOrNull { it.toolUseId == event.toolUseId }
+        // 排他托管的卡已经被标成 Done（服务还在进程表里活着），CLI 随后收到的
+        // deny tool_result 不能再把它改回 Error —— 同一张卡状态会自相矛盾
+        val exclusiveHosted = hostedBash.isExclusive(event.toolUseId)
+        if (!exclusiveHosted) {
+            _state.update { state ->
+                state.copy(items = state.items.mapToolCall(event.toolUseId) { it.withResult(event, MAX_RESULT_CHARS) })
+            }
+        }
+        // 提问被"空答案"跑完了：必须说清楚，否则用户只会看到模型自说自话地
+        // "没收到选择"然后继续瞎猜。判断放在 update 之外 —— update 的 lambda
+        // 在 CAS 失败时会重跑，在里面追加会插出两条。
+        //
+        // 用户自己按了「跳过」时不提示：那是他明确的选择，再弹一条红字是噪声。
+        val skipped = call?.toolUseId?.let { skippedQuestions.remove(it) } == true
+        if (!skipped &&
+            call?.name == ASK_USER_QUESTION_TOOL &&
+            looksLikeUnansweredQuestion(event.content)
+        ) {
+            appendItem(
+                ChatItem.Note(
+                    newId(),
+                    "这次提问没有把选择传回 CLI（工具收到的是空答案）。" +
+                        "如果你并没有点「跳过」，多半是 CLI 版本改了 AskUserQuestion 的入参形状，" +
+                        "请重试一次并反馈。",
+                    isError = true,
+                )
+            )
+        }
+        if (!event.isError && !replaying) {
+            hostedBash.offerPreview(event.content)
+            // 结果路径：只扫预览 URL / 补 port 线索；不再二次 startFromAgent
+            //（CLI 已跑过的命令再托管 = 端口战）。
+            if (call?.name == TOOL_BASH) {
+                val cmd = call.input["command"].asStringOrNull().orEmpty()
+                val port = LocalServiceIntent.guessPort(cmd)
+                if (port != null) hostedBash.offerPreview(LocalUrls.loopbackUrl(port))
+            }
+        }
+    }
+
+    private fun onResult(event: ClaudeCodeEvent.Result) {
+        // 自增放在 update 外面：MutableStateFlow.update 的 lambda 在 CAS 失败时会重跑
+        val endedTurn = sendCoordinator.endTurn()
+        // 入参流到一半被打断的那张卡：CLI 没跑它，也不会再有结果
+        streamingToolInput = null
+        streamingToolUseId = null
+        dropUnconfirmedToolCards()
+        val finishedAt = System.currentTimeMillis()
+        // 「这一轮是被谁收的尾」在 judgeTurnEnd 里判；标记读完就清，不能留给下一轮
+        val verdict = judgeTurnEnd(
+            result = event, endedTurn = endedTurn, interruptedTurn = sendCoordinator.interruptedTurn,
+            interruptWithdrew = sendCoordinator.interruptWithdrew, deniedTurn = deniedTurn, atMs = finishedAt,
+        )
+        sendCoordinator.clearInterruptMark()
+        deniedTurn = null
+        val durationMs = event.durationMs
+            ?: _state.value.turnStartedAt?.let { finishedAt - it }
+        val outputTokens = _state.value.turnOutputTokens
+        sendCoordinator.clearInFlight()
+        // 还有活时 busy 不许落地：中间那一帧 false 会让输入坞的停止键闪一下，
+        // 下一轮紧接着又把它点亮。
+        //
+        // 调度台上还有已交棒未确认的，说明有一条帧写出去了却没赶上这一轮的任何一次请求
+        // （写进 stdin 的那一刻 CLI 正好在收尾）。CLI 会把它当成新的一问自己开一轮，
+        // 所以 busy 继续为真是对的；真没动静就交给下面的看门狗兜底。
+        val queuedNext = sendCoordinator.hasQueuedWork()
+        val errorNoteId = if (verdict.noteError) newId() else null
+        val denials = deniedByRule(event.permissionDenials, hostedBash.exclusiveToolUseIds, userDeniedToolUses)
+        userDeniedToolUses.clear()
+        val denialNoteId = if (denials.isNotEmpty()) newId() else null
+        val denialNote = formatPermissionDenialsNote(denials)
+        _state.update {
+            it.copy(
+                busy = queuedNext,
+                turnProduced = false,
+                // 用时优先用 CLI 报的 duration_ms（它从真正发出请求那一刻算起，
+                // 比我们在 send() 里打的时间戳准）；没有才退回本地计时
+                lastTurnDurationMs = durationMs,
+                lastTurnFinishedAt = finishedAt,
+                lastTurnEnd = verdict.turnEnd,
+                // 收尾时把最后一条消息的 token 结转，那一轮的总数才是完整的
+                outputTokensSettled = it.outputTokensSettled + it.outputTokensCurrent,
+                outputTokensCurrent = 0,
+                // 在跑的后台子 agent 的请求跨轮活着（CLI 2.1.285 起才有），主线程的不会再有人收
+                permissionQueue = it.permissionQueue.survivingTurnEnd(it.tasks),
+                streamingText = "",
+                streamingThinking = "",
+                sessionId = event.sessionId ?: it.sessionId,
+                // 一轮结束：瞬时状态全部归零，否则会一直挂着上一轮的"工作中"和重试提示
+                statusPhase = null,
+                statusDetail = null,
+                retryNotice = null,
+                // 成功收尾的子任务不再占位；失败/被杀的留着，否则用户永远看不到它出过错。
+                // 转到后台还在跑的（run_in_background 的 shell、后台子 agent）要跨轮活着——
+                // 它们本来就是为了在这一轮结束后继续跑
+                tasks = it.tasks.keptAcrossTurns(),
+                items = run {
+                    var updated = it.items.updateLastAssistantMeta(durationMs, outputTokens, finishedAt)
+                    if (errorNoteId != null) {
+                        resultErrorNote(errorNoteId, event, verdict.interrupted, verdict.withdrew, updated)
+                            ?.let { note -> updated = updated + note }
+                    }
+                    if (denialNote != null) {
+                        updated = updated + ChatItem.Note(
+                            denialNoteId!!,
+                            denialNote,
+                            isError = false,
+                        )
+                    }
+                    updated
+                },
+            )
+        }
+        // 一轮结束就把用量/花费读回来。不能只靠页面那个 LaunchedEffect ——
+        // 切到后台跑长任务时这一页根本没在组合，单日台账会漏掉整段花费
+        refreshUsage()
+        // 无头模式不会自动拟名；首轮成功后主动让 CLI 写 ai-title
+        if (!event.isError) maybeGenerateSessionTitle()
+        // 还攥在手里的（打断之后要回来的那批）接着开跑
+        if (!sendCoordinator.flushPendingSend()) sendCoordinator.watchHandedOff(sendCoordinator.currentTurn)
     }
 
     /**
@@ -1309,7 +1297,7 @@ class ClaudeCodeManager(
      * 把它插进当前这一轮（实测见 [ClaudeCodeSendQueue]）——所以「跑完这一小步就听见你」，
      * 而不是等整个任务收尾。1.1.7 之前是攥到本轮 `result` 才发，那正是用户说的那段落差。
      *
-     * 攥在手里换来的两件事并没有丢：副本留在 [sendQueue] 上，Esc 仍然能打断当前轮、
+     * 攥在手里换来的两件事并没有丢：副本留在 [ClaudeCodeSendQueue] 上，Esc 仍然能打断当前轮、
      * 把这条从 CLI 队列里要回来再重发（见 [interrupt]）。
      *
      * 会话还没 Running 时不再静默丢掉，而是先攥着，握手完成后一起交棒。
@@ -1317,47 +1305,8 @@ class ClaudeCodeManager(
      * [images] 作为 image content block 随消息一起发（截图、相册照片）。
      * 有图时允许空文本 —— "看这张图" 里那句话往往就是多余的。
      */
-    fun send(text: String, images: List<ClaudeCodeImage> = emptyList()) = send(text, images, relay = null)
-
-    private fun send(text: String, images: List<ClaudeCodeImage>, relay: SubagentThread?) {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty() && images.isEmpty()) return
-        val current = _state.value
-        val label = when {
-            trimmed.isNotEmpty() && images.isNotEmpty() -> "$trimmed\n[${images.size} 张图片]"
-            images.isNotEmpty() -> "[${images.size} 张图片]"
-            else -> trimmed
-        }
-        // 已经关掉 / 起不来的会话没有 stdin 可写。文本不能就这么吞掉 —— 原样退回输入框，
-        // 用户改改还能在下一个会话里发出去
-        if (current.status != SessionStatus.Running && current.status != SessionStatus.Starting) {
-            emitWithdrawn(PendingSend(newId(), trimmed, images, label).toComposerDraft())
-            return
-        }
-        val pending = PendingSend(newId(), trimmed, images, label, takeShellContext(), relay)
-        if (current.status != SessionStatus.Running) {
-            // 启动中打的字：攥着，握手把 cwd 切好之后再发（handshake 末尾 flushPendingSend）
-            sendQueue.hold(pending)
-            _state.update {
-                it.copy(items = it.items + ChatItem.UserText(pending.itemId, label, queued = true, handoff = pending.handoff))
-            }
-            return
-        }
-        if (current.busy) {
-            // 追加：只往对话流里放一条标着「排队中」的消息，不碰正在跑的那一轮的
-            // 正文、计时和 token —— 否则界面上正在打的字突然消失，计时也从零开始。
-            // 帧本身立刻出手，插入时机由 CLI 定。
-            _state.update {
-                it.copy(items = it.items + ChatItem.UserText(pending.itemId, label, queued = true, handoff = pending.handoff))
-            }
-            handOff(pending)
-        } else {
-            _state.update {
-                it.copy(items = it.items + ChatItem.UserText(pending.itemId, label, handoff = pending.handoff))
-            }
-            dispatchSend(pending)
-        }
-    }
+    fun send(text: String, images: List<ClaudeCodeImage> = emptyList()) =
+        sendCoordinator.send(text, images, relay = null)
 
     /**
      * 用户在子 agent 视图里打的字。
@@ -1403,7 +1352,7 @@ class ClaudeCodeManager(
             }
             return
         }
-        send(trimmed, emptyList(), relay = thread)
+        sendCoordinator.send(trimmed, emptyList(), relay = thread)
     }
 
     /** 子 agent 视图里的停止键：只停这一个（stop_task），主会话照常。停下后它的部分结果交回主线程 */
@@ -1414,13 +1363,8 @@ class ClaudeCodeManager(
         scope.launch {
             val id = controls.newRequestId()
             val outcome = controls.request(id, encodeClaudeCodeStopTask(id, agentId))
-            if (outcome !is ControlOutcome.Ok) {
-                // 与 stopTask 同一口径：Error 走人话解释（describeControlError），Timeout 单独说
-                val why = when (outcome) {
-                    is ControlOutcome.Error -> describeControlError(outcome.message, outcome.code)
-                    else -> "CLI 未应答（${ClaudeCodeControlChannel.TIMEOUT_MS / 1000} 秒超时）"
-                }
-                appendItem(ChatItem.Note(newId(), "停止子 agent 失败：$why", isError = true))
+            if (outcome is ControlOutcome.Failure) {
+                appendItem(ChatItem.Note(newId(), "停止子 agent 失败：${outcome.reason()}", isError = true))
             }
         }
     }
@@ -1456,113 +1400,6 @@ class ClaudeCodeManager(
     }
 
     /**
-     * 真正把一条消息写出去，并把「新的一轮开始了」这件事落到状态上。
-     *
-     * 首发和排队消息轮到时走的是同一条路，所以轮次归零只需要写在这里一处。
-     */
-    private fun dispatchSend(pending: PendingSend) {
-        inFlight = pending
-        _state.update {
-            it.copy(
-                busy = true,
-                turnProduced = false,
-                streamingText = "",
-                streamingThinking = "",
-                retryNotice = null,
-                tasks = it.tasks.filter { t -> t.isRunning },
-                turnStartedAt = System.currentTimeMillis(),
-                outputTokensSettled = 0,
-                outputTokensCurrent = 0,
-                lastTurnDurationMs = null,
-                lastTurnFinishedAt = null,
-                lastTurnEnd = null,
-                // 轮到它了，摘掉「排队中」的标记
-                items = it.items.map { item ->
-                    if (item.id == pending.itemId && item is ChatItem.UserText) item.copy(queued = false)
-                    else item
-                },
-            )
-        }
-        writeLine(encodeClaudeCodeUserMessage(pending.wireText, pending.images))
-    }
-
-    /** 还有没有没被模型看见的消息（攥在手里的 + 交棒了还没确认插入的） */
-    private fun hasQueuedWork(): Boolean = sendQueue.hasWork()
-
-    /** 交棒：帧写进 stdin，副本留在调度台上等 CLI 确认 */
-    private fun handOff(pending: PendingSend) {
-        sendQueue.handOff(pending) { writeLine(encodeClaudeCodeUserMessage(it.wireText, it.images)) }
-    }
-
-    /**
-     * 把还攥在手里的消息全部交棒出去（会话刚就绪、或打断之后要回来重发）。
-     *
-     * 调用点必须保证此刻 `busy` 已经是「有活 → 仍为 true」，否则界面会闪一下空闲态。
-     *
-     * 进程正在关（[ClaudeCodeCliPipe.stopping]）就什么都别发：换档时 shutdown 会给旧 CLI 最多 4 秒自己退，
-     * 它很可能在那期间把本轮跑完、吐一帧 `result`，而 result 的收尾正好会调到这里
-     * （见 [dispatch]）。那时 writer 已经是 null，发出去只是把消息喂给一个死进程 ——
-     * 队列留着不动，等新进程握手完再发才不会丢。
-     */
-    private fun flushPendingSend(): Boolean {
-        if (cli.stopping) return false
-        val queued = sendQueue.drainHeld()
-        if (queued.isEmpty()) return false
-        // 第一条要把「新的一轮开始了」落到状态上（计时、token 归零）；
-        // 后面的只是追加，CLI 会把它们插进同一轮。
-        dispatchSend(queued.first())
-        queued.drop(1).forEach { handOff(it) }
-        return true
-    }
-
-    /**
-     * CLI 要发请求了 —— 队列就是在这一刻被排空的，所以此前交棒的都已经进了这次请求的上下文。
-     * 把它们的「排队中」标记摘掉（Esc 不必再为它们重发）。
-     */
-    private fun confirmHandedOff() {
-        val confirmed = sendQueue.confirm()
-        if (confirmed.isEmpty()) return
-        val ids = confirmed.mapTo(mutableSetOf()) { it.itemId }
-        _state.update { state ->
-            state.copy(
-                items = state.items.map { item ->
-                    if (item is ChatItem.UserText && item.id in ids && item.queued) {
-                        item.copy(queued = false)
-                    } else {
-                        item
-                    }
-                },
-            )
-        }
-    }
-
-    /**
-     * 一轮收尾时调度台上还有已交棒未确认的：我们赌 CLI 会拿它另起一轮，于是 busy 继续挂着。
-     * 赌输了（协议漂移、进程半死）就不能让输入坞永远禁用 —— 这里是兜底。
-     *
-     * [seqAtResult] 是收尾那一刻的轮次号；期间真的开了新一轮的话它会变，兜底就不该动手。
-     */
-    private fun watchHandedOff(seqAtResult: Int) {
-        if (!hasQueuedWork()) return
-        scope.launch {
-            delay(HANDOFF_TIMEOUT_MS)
-            if (turnSeq.get() != seqAtResult || !hasQueuedWork()) return@launch
-            Log.w(TAG, "handed-off message never started a turn, clearing busy")
-            confirmHandedOff()
-            _state.update {
-                it.copy(
-                    busy = false,
-                    items = it.items + ChatItem.Note(
-                        newId(),
-                        "追加的消息发出去了，但 CLI 一直没接手",
-                        isError = true,
-                    ),
-                )
-            }
-        }
-    }
-
-    /**
      * 模糊搜索工作目录下的文件，供输入框的 `@` 提及用。
      *
      * 直接走宿主文件系统而不是让 CLI 跑 `find`：起一次工具调用要等模型那一轮，
@@ -1580,118 +1417,31 @@ class ClaudeCodeManager(
         }
 
     // ---------------------------------------------------------------------
-    // 文件检查点（撤销单次修改）
+    // 文件检查点（撤销单次修改）：逻辑在 [ClaudeCodeCheckpoints]，这里只是公开入口
     // ---------------------------------------------------------------------
 
-    /**
-     * 撤销一次编辑类工具调用造成的文件改动。
-     *
-     * **只还原文件，不动对话**。对话状态在 CLI 进程内部，无头模式下没有对应的控制请求
-     * 可以驱动它；把只能还原文件的操作说成"回到这一步"会让用户误以为模型也忘了这件事。
-     * 所以还原之后往聊天流里补一条说明，让模型和用户都知道文件被改回去了。
-     */
-    suspend fun revertToolCall(toolUseId: String): Boolean = revertFile(
-        name = _state.value.items.filterIsInstance<ChatItem.ToolCall>()
-            .firstOrNull { it.toolUseId == toolUseId }
-            ?.input?.let(::editTargetPath)
-            ?.substringAfterLast('/')
-            ?: "文件",
-        toolUseIds = listOf(toolUseId),
-        whole = false,
-    ).isNotEmpty()
+    private val checkpoints = ClaudeCodeCheckpoints(
+        scope = scope,
+        workspaceDir = ::workspaceDir,
+        linuxDir = { currentLinuxDir },
+        state = state,
+        isReplaying = { replaying },
+        appendNote = { text, isError -> appendItem(ChatItem.Note(newId(), text, isError = isError)) },
+    )
 
-    /**
-     * 把一个文件在这个会话里的改动**整批**撤回去：按 [toolUseIds] 从最后一次往前逐个还原，
-     * 最终落到第一次改动之前（`restoreAll` 自己会逆序，这里按会话顺序传）。
-     *
-     * 语义与单条撤销一致 —— **只还原文件，不动对话**；所以同样往聊天流里补一条说明，
-     * 让模型和用户都知道文件被改回去了。快照缺失的调用会被跳过，还原条数如实回报。
-     *
-     * @return **真的还原成功**的 toolUseId。界面只把这些标成「已撤销」，失败的不标
-     *   —— 先标后还原的话，失败时面板会说撤销了而文件其实没动。
-     */
-    suspend fun revertFile(name: String, toolUseIds: List<String>, whole: Boolean = true): Set<String> {
-        if (toolUseIds.isEmpty()) return emptySet()
-        val sessionId = _state.value.sessionId ?: return emptySet()
-        val workspaceDir = workspaceDir()
-        if (workspaceDir == null) {
-            appendItem(ChatItem.Note(newId(), "撤销失败：找不到工作区", isError = true))
-            return emptySet()
-        }
-        val store = checkpointStore(workspaceDir)
-        val restored = withContext(Dispatchers.IO) {
-            store.restoreEach(sessionId, toolUseIds) { guestPath -> guestToHost(workspaceDir, guestPath) }
-        }
-        val missing = toolUseIds.size - restored.size
-        appendItem(
-            when {
-                restored.isEmpty() -> ChatItem.Note(newId(), "撤销失败：找不到 $name 的快照", isError = true)
-                !whole -> ChatItem.Note(newId(), "已把 $name 还原到这次修改之前（仅文件，对话历史不变）")
-                else -> {
-                    val suffix = if (missing > 0) "（其中 $missing 次没有快照，未还原）" else ""
-                    ChatItem.Note(newId(), "已把 $name 还原到这个会话开始前（${restored.size} 次改动，仅文件，对话历史不变）$suffix")
-                }
-            },
-        )
-        return restored
-    }
+    /** 撤销一次编辑类工具调用造成的文件改动（只还原文件，不动对话），见 [ClaudeCodeCheckpoints.revertToolCall] */
+    suspend fun revertToolCall(toolUseId: String): Boolean = checkpoints.revertToolCall(toolUseId)
 
-    /**
-     * [toolUseIds] 里哪些存过快照 —— 「改动过的文件」面板靠它决定哪些改动给撤销按钮。
-     * 子 agent 里的编辑不走 [snapshotBeforeEdit]（它的 tool_use 被包成 `ClaudeCodeEvent.Subagent`），
-     * 永远不会在结果里，面板如实说撤不了。
-     */
-    suspend fun checkpointed(toolUseIds: Collection<String>): Set<String> = withContext(Dispatchers.IO) {
-        val sessionId = _state.value.sessionId ?: return@withContext emptySet()
-        val workspaceDir = workspaceDir() ?: return@withContext emptySet()
-        val store = checkpointStore(workspaceDir)
-        toolUseIds.filterTo(LinkedHashSet()) { store.hasSnapshot(sessionId, it) }
-    }
+    /** 把一个文件在这个会话里的改动整批撤回去，见 [ClaudeCodeCheckpoints.revertFile] */
+    suspend fun revertFile(name: String, toolUseIds: List<String>, whole: Boolean = true): Set<String> =
+        checkpoints.revertFile(name, toolUseIds, whole)
 
-    /**
-     * 编辑类工具执行前存一份原文件。
-     *
-     * 在 `tool_use` 帧到达时调用 —— 那时工具还没跑（`tool_result` 才是跑完），
-     * 拿到的就是修改前的内容。失败只记日志：快照是锦上添花，绝不能让它挡住工具执行。
-     */
-    private fun snapshotBeforeEdit(event: ClaudeCodeEvent.ToolUse) {
-        // 回放只是重画卡片（见 openSession），历史里的工具早跑完了，
-        // 再存快照只会把"现在的文件"当成"修改前"盖住真快照 —— 靠 sessionId 为 null
-        // 早退是侥幸，这里和预览扫描 / bypass 托管一样显式拦掉
-        if (replaying) return
-        if (event.name !in CHECKPOINT_TOOLS) return
-        val guestPath = editTargetPath(event.input) ?: return
-        val sessionId = _state.value.sessionId ?: return
-        // 快照竞态：异步协程排队期间，bypass 下的快工具可能已经改完文件，存进去的
-        // 就成了修改后的内容，撤销等于空操作。先在 dispatch 线程同步取样（existence +
-        // mtime，两次 stat，微秒级）；写快照前再比一次，变了就说明工具已动手，这份
-        // "修改前"已经拿不回来了 —— 跳过，让用户看不到撤销钮，也好过撤销个空气。
-        // launchCli 之后 currentLinuxDir 必有值；取样不到就退回原来的异步盲拍。
-        val probe = currentLinuxDir?.parentFile?.let { guestToHost(it, guestPath) }
-        val existedAtDispatch = probe?.isFile == true
-        val mtimeAtDispatch = if (existedAtDispatch) probe!!.lastModified() else null
-        scope.launch(Dispatchers.IO) {
-            val workspaceDir = workspaceDir() ?: return@launch
-            val host = guestToHost(workspaceDir, guestPath)
-            if (probe != null) {
-                val existsNow = host?.isFile == true
-                if (existsNow != existedAtDispatch ||
-                    (existsNow && host!!.lastModified() != mtimeAtDispatch)
-                ) {
-                    Log.w(TAG, "skip stale snapshot for ${event.id}: $guestPath changed before snapshot")
-                    return@launch
-                }
-            }
-            checkpointStore(workspaceDir).snapshot(sessionId, event.id, guestPath, host)
-        }
-    }
-
-    private fun checkpointStore(workspaceDir: File) =
-        ClaudeCodeCheckpointStore(File(workspaceDir, CHECKPOINT_DIR))
+    /** [toolUseIds] 里哪些存过快照，见 [ClaudeCodeCheckpoints.checkpointed] */
+    suspend fun checkpointed(toolUseIds: Collection<String>): Set<String> = checkpoints.checkpointed(toolUseIds)
 
     private suspend fun workspaceDir(): File? {
         val workspace = workspaceRepository.getById(CLAUDE_CODE_WORKSPACE_ID.toString()) ?: return null
-        return File(File(context.filesDir, "workspaces"), workspace.root)
+        return workspaceDirFor(context, workspace.root)
     }
 
     /**
@@ -1742,7 +1492,7 @@ class ClaudeCodeManager(
         // （Bash 被拒就改用 Write，CLI 2.1.283 实测），手机上就是又弹一次授权。
         // 带话的拒绝（托管结局）是在给模型解释，让它接着干
         val stop = !allow && denyMessage == null
-        val seq = turnSeq.get()
+        val seq = sendCoordinator.currentTurn
         val answered = answerCli(
             pending.requestId,
             encodeClaudeCodePermissionResponse(
@@ -1824,208 +1574,15 @@ class ClaudeCodeManager(
             if (p == null) st else st.copy(permissionQueue = st.permissionQueue.without(requestId))
         }
         val card = withdrawn ?: return
-        cliWithdrawalNote(card, byOurInterrupt = interruptedTurn == turnSeq.get())
+        cliWithdrawalNote(card, byOurInterrupt = sendCoordinator.interruptedTurn == sendCoordinator.currentTurn)
             ?.let { appendItem(ChatItem.Note(newId(), it)) }
     }
 
-    /**
-     * 停止键 = 电脑上的 **Esc**。按官方终端的三档行为分派：
-     *
-     * 1. **有排队的消息** → 打断当前轮，排队那条紧接着开跑。终端里正是这样：
-     *    任务跑着的时候补一句、等不及了按 Esc，它立刻掉头处理新的那条。
-     * 2. **本轮还一个字都没产出** → 这条根本没开始，撤回它：对话流里摘掉那条消息，
-     *    原文退还给输入框，界面回到发送前。
-     * 3. **其余** → 就是打断。
-     *
-     * 追加的那条现在是**立刻交棒**给 CLI 的（见 [ClaudeCodeSendQueue]），但 interrupt 帧带
-     * `cancel_queued`，CLI 侧队列会连同这一轮一起被清掉 —— 所以第 1 档要把我们留的副本
-     * 要回来攥住，等这一轮收尾时原样重发。副本在 CLI 确认吃下之前一直留着
-     * （[confirmHandedOff]），因此这条路不会丢消息，也不会重复发。
-     *
-     * 第 2 档撤回的消息则已经写进了 CLI 的 stdin：无头协议只有 interrupt，没有 rewind，
-     * 所以 CLI 的上下文里很可能仍留着它。界面与模型记忆在这一点上可能对不齐，
-     * 代价是下一轮模型也许会看到被撤回的那一版。
-     *
-     * CLI 正常会回一个 result 帧来解除 busy；万一没回（协议版本差异、进程半死），
-     * 这里有个超时兜底，否则输入框会永久禁用。
-     */
-    fun interrupt() {
-        val current = _state.value
-        interruptWith(
-            escapeAction(
-                busy = current.busy,
-                hasQueued = hasQueuedWork(),
-                turnProduced = current.turnProduced,
-            ),
-        )
-    }
+    /** 停止键：按当前局面分「撤回 / 打断 / 打断后跑排队」三档，见 [ClaudeCodeSendCoordinator.interrupt] */
+    fun interrupt() = sendCoordinator.interrupt()
 
-    /**
-     * 停止键的另一种默认：**全停，排队的话退回输入框**（设计 §10.2 拍板 2，与 Codex 的 ■ 同口径），
-     * 不是 [interrupt] 第 1 档那样「打断后排队的紧接着跑」。后者仍由 [interrupt] 保留，给显式的「打断后跑排队」用。
-     *
-     * 先把没被模型看见的消息（攥着的 + 已交棒未确认的）全部从发送队列取走，对话流里摘掉它们的「排队中」气泡，
-     * 合成**一份**草稿交给 [emitWithdrawn]（没人收就落盘，话不会丢），再写 interrupt 帧：
-     * 帧带 `cancel_queued`，CLI 侧队列随之清空，所以不会有哪一条还被偷偷跑掉，收尾时 [flushPendingSend] 也无副本可发。
-     * 开启本轮的那条留着（与第 1 档一致，不是第 2 档的撤回）。
-     *
-     * 取走与 CLI 确认之间有一道窄缝：某条恰在取走后、interrupt 帧到达前被 CLI 吃进请求，它会既在上下文里又退回了输入框。
-     * 比起「按了 ■ 排队的还照跑」这是更可接受的一边，且 [confirmHandedOff] 的窗口只有一个请求间隔。
-     *
-     * 没有排队的消息时就是普通的 [interrupt]（撤回 / 打断两档照旧）；没在跑则什么都不做。
-     */
-    fun interruptReturningQueued() {
-        val current = _state.value
-        if (!current.busy) return
-        val stranded = sendQueue.drain()
-        if (stranded.isEmpty()) {
-            interrupt()
-            return
-        }
-        val ids = stranded.mapTo(mutableSetOf()) { it.itemId }
-        _state.update { st -> st.copy(items = st.items.filterNot { it.id in ids }) }
-        // 它们从没被模型看见：带着的 `!` 输出放回去，等用户重发时再带走（与 refundHeldMessages 同口径）
-        stashShellContext(stranded.joinToString("\n") { it.shellContext }.trim())
-        emitWithdrawn(mergeDrafts(stranded.map { it.toComposerDraft() }))
-        // 排队的已经取走：hasQueued 恒为假，这里只在「撤回开启本轮的那条」与「打断」之间选，
-        // 而有排队时用户的意思是停这一轮，不是撤回它，所以一律按打断
-        interruptWith(EscapeAction.Interrupt)
-    }
-
-    /** 几条排队消息合成一份草稿：正文空一行隔开，图片按合并后的次序重排名字 */
-    private fun mergeDrafts(drafts: List<ComposerDraft>): ComposerDraft = ComposerDraft(
-        text = drafts.map { it.text }.filter { it.isNotBlank() }.joinToString("\n\n"),
-        images = drafts.flatMap { it.images }.mapIndexed { i, img -> img.copy(name = "图片 ${i + 1}") },
-    )
-
-    private fun interruptWith(action: EscapeAction) {
-        if (action == EscapeAction.Nothing) return
-        if (action == EscapeAction.Withdraw) withdrawInFlight()
-        if (action == EscapeAction.InterruptThenQueued) sendQueue.reclaim()
-        interruptWithdrew = action == EscapeAction.Withdraw
-
-        // 一次读完：两次 get 之间若 result 恰好落地，interruptedTurn 会标到下一轮头上
-        val seq = turnSeq.get()
-        interruptedTurn = seq
-        writeLine(encodeClaudeCodeInterrupt(UUID.randomUUID().toString()))
-        scope.launch {
-            delay(INTERRUPT_TIMEOUT_MS)
-            // 比较和自增必须是一步：这期间正常收尾也可能恰好到了，两边只能有一边算数
-            if (_state.value.busy && turnSeq.compareAndSet(seq, seq + 1)) {
-                Log.w(TAG, "interrupt timed out, force-clearing busy")
-                inFlight = null
-                val queuedNext = hasQueuedWork()
-                val noteId = newId()
-                val now = System.currentTimeMillis()
-                _state.update {
-                    it.copy(
-                        busy = queuedNext,
-                        turnProduced = false,
-                        permissionQueue = emptyList(),
-                        // CLI 没回 result：按用户停止记（撤回的话那条消息已经退回输入框，不该出 ▶）
-                        lastTurnEnd = ClaudeTurnEnd(
-                            if (interruptWithdrew) ClaudeTurnEnd.Kind.Withdrawn else ClaudeTurnEnd.Kind.Interrupted, now,
-                        ),
-                        items = it.items + ChatItem.Note(noteId, "中断超时，已强制解除等待状态", isError = true),
-                    )
-                }
-                // CLI 没应答也不能把排队的消息困死在队列里
-                flushPendingSend()
-            }
-        }
-    }
-
-    /**
-     * 把开启本轮的那条消息撤回输入框：对话流里摘掉它，原文交给 [withdrawnMessages]。
-     *
-     * 附件和折叠的粘贴在 [ComposerDraft] 里本来就是独立字段，但到了这一层只剩
-     * 合成好的正文（见输入坞的 `composeMessage`），所以原样退回正文即可 ——
-     * 退回去的东西和"再按一次发送"会发出去的东西完全一致，这比还原成几个 chip 更重要。
-     */
-    private fun withdrawInFlight() {
-        val pending = inFlight ?: return
-        inFlight = null
-        _state.update { st ->
-            st.copy(items = st.items.filterNot { it.id == pending.itemId })
-        }
-        emitWithdrawn(pending.toComposerDraft())
-    }
-
-    /** 排队消息 → 输入框草稿，和「再按一次发送」会发出去的东西完全一致 */
-    private fun PendingSend.toComposerDraft(): ComposerDraft = ComposerDraft(
-        text = text,
-        images = images.mapIndexed { i, img ->
-            DraftImage(name = "图片 ${i + 1}", mediaType = img.mediaType, base64 = img.base64)
-        },
-    )
-
-    /**
-     * 把退还的草稿交给输入框；**没人收就落盘**，下次打开这个会话时草稿自然恢复。
-     *
-     * 为什么不能只看 `tryEmit` 的返回值：[withdrawnMessages] 是 replay=0 的 SharedFlow，
-     * **没有订阅者时 tryEmit 照样返回 true，值直接蒸发**（会话页未组合 / 切后台就是这样）；
-     * 订阅者太慢、积满 extraBufferCapacity 时才返回 false。而退还路径已经把对话流里的
-     * 条目摘掉了，原文再丢就是真的没了 —— 所以这两种情况都转存 [ComposerDraftStore]。
-     * 合并语义和输入框的 prepend 一致：退回来的接在已有草稿前面。
-     */
-    private fun emitWithdrawn(draft: ComposerDraft) {
-        val received = _withdrawnMessages.subscriptionCount.value > 0 &&
-            _withdrawnMessages.tryEmit(draft)
-        if (received) return
-        persistDraft(draft)
-    }
-
-    /**
-     * 失败路径的兜底退还：进程起不来 / 握手失败时，把还攥在手里（held）的消息
-     * 原样退回输入框，并摘掉对话流里对应的「排队中」条目 —— 不留永远发不出去的幽灵。
-     *
-     * 只碰 held：已交棒（handedOff）的帧字节已经进了 CLI 的 stdin，可能真被模型看见过，
-     * 退回输入框会让用户重发一遍、上下文里出现两遍。
-     *
-     * **必须在 [shutdown] 之前调用**：shutdown 会 `sendQueue.clear()`，之后再捞就只剩空队列。
-     */
-    /**
-     * teardown 清队列之前，把还没被模型看见的消息落进草稿盘。
-     *
-     * [dispose]（通知「停止全部」、关会话）和 [onCliExit]（进程崩溃）都不走 [refundHeldMessages]：
-     * 前者没有输入框可退，后者连 held 都捞不着。直接 [ClaudeCodeSendQueue.clear] 的话，
-     * 这些话连 [emitWithdrawn] 的磁盘兜底都不经过，重开这个会话就没了。
-     * 这里只落盘、不发 [withdrawnMessages]：teardown 时没有订阅者，发了也是蒸发。
-     */
-    private fun persistStrandedQueue() {
-        val stranded = sendQueue.drain()
-        if (stranded.isEmpty()) return
-        stranded.asReversed().forEach { persistDraft(it.toComposerDraft()) }
-        stashShellContext(stranded.joinToString("\n") { it.shellContext }.trim())
-    }
-
-    /** 把一份草稿按 [emitWithdrawn] 的合并规则写进草稿盘，不经过订阅者那一路 */
-    private fun persistDraft(draft: ComposerDraft) {
-        val sessionId = _state.value.sessionId ?: return
-        val existing = drafts.load(sessionId)
-        val mergedText = when {
-            draft.text.isBlank() -> existing.text
-            existing.text.isBlank() -> draft.text
-            else -> draft.text + "\n" + existing.text
-        }
-        drafts.save(sessionId, existing.copy(text = mergedText, images = draft.images + existing.images))
-    }
-
-    private fun refundHeldMessages(note: String) {
-        val stranded = sendQueue.drainHeld()
-        if (stranded.isEmpty()) return
-        val ids = stranded.mapTo(mutableSetOf()) { it.itemId }
-        _state.update { st ->
-            st.copy(
-                items = st.items.filterNot { it.id in ids } +
-                    ChatItem.Note(newId(), note, isError = true),
-            )
-        }
-        // 输入框是「接在已有内容前面」（见 ClaudeCodeInputBar），倒着发才保得住原来的先后
-        stranded.asReversed().forEach { emitWithdrawn(it.toComposerDraft()) }
-        // 它们从没写出去过：带着的 `!` 输出放回去，等用户重发时再带走
-        stashShellContext(stranded.joinToString("\n") { it.shellContext }.trim())
-    }
+    /** 停止键的另一种默认：全停、排队的退回输入框，见 [ClaudeCodeSendCoordinator.interruptReturningQueued] */
+    fun interruptReturningQueued() = sendCoordinator.interruptReturningQueued()
 
     /**
      * 输入框里的 `!` 命令：Min 自己在 rootfs 里跑，不经模型。结果贴成一张 Bash 卡，
@@ -2058,7 +1615,7 @@ class ClaudeCodeManager(
                     command = command,
                 )
             }.getOrElse { e -> UserShellRun(command, exitCode = -1, stdout = "", stderr = e.message ?: e.toString()) }
-            stashShellContext(userShellContext(run))
+            sendCoordinator.stashShellContext(userShellContext(run))
             val failed = run.exitCode != 0 || run.timedOut
             _state.update { state ->
                 state.copy(
@@ -2073,18 +1630,6 @@ class ClaudeCodeManager(
         }
     }
 
-    private fun stashShellContext(block: String) {
-        if (block.isBlank()) return
-        synchronized(shellContext) {
-            if (shellContext.isNotEmpty()) shellContext.append('\n')
-            shellContext.append(block)
-        }
-    }
-
-    private fun takeShellContext(): String = synchronized(shellContext) {
-        shellContext.toString().also { shellContext.setLength(0) }
-    }
-
     fun stopSession() {
         // 立刻亮 busy：shutdown 最坏要等 ~8s，不能让停止键还像可点的静态图标
         _state.update { it.copy(stopping = true, applyingSettings = false) }
@@ -2092,7 +1637,7 @@ class ClaudeCodeManager(
             sessionMutex.withLock {
                 // Starting 期间按停止：shutdown 会连调度台一起清掉，攥着的消息先退回输入框，
                 // 否则对话流里留下永远「排队中」的幽灵条目。dispose() 是刻意不退的（teardown 无接收方）
-                refundHeldMessages("会话已停止，排队的消息已退回输入框")
+                sendCoordinator.refundHeldMessages("会话已停止，排队的消息已退回输入框")
                 shutdown()
                 // lastTurnEnd 清掉：用户有意结束会话，不再给 ▶（否则「已结束」的会话会因为 ▶ 还留在会话页上）。
                 // 之后从抽屉重开会走回放，那时按 transcript 的尾巴重新判
@@ -2138,7 +1683,7 @@ class ClaudeCodeManager(
             else -> {
                 // 进程死在握手中途时是 Error（见 ClaudeCodeControlChannel.failAll），别说成「超时」
                 val why = (outcome as? ControlOutcome.Error)?.let { "CLI 握手失败（${it.message}）" } ?: "CLI 握手超时"
-                refundHeldMessages("$why，启动前排队的消息已退回输入框")
+                sendCoordinator.refundHeldMessages("$why，启动前排队的消息已退回输入框")
                 usageRefresh.release()
                 planRefresh.release()
                 return
@@ -2162,9 +1707,9 @@ class ClaudeCodeManager(
         // 两个口径不一样，所以点亮之后必须看返回值：hasQueuedWork 数的是 held + handedOff，
         // flushPendingSend 只发 held。真出现"只剩 handedOff"时（上个进程死前交棒、字节却没
         // 送到），busy 会被点亮却没有任何一轮开始，输入坞从此永远显示中断键 —— 兜底在这里。
-        if (hasQueuedWork()) {
+        if (sendCoordinator.hasQueuedWork()) {
             _state.update { it.copy(busy = true) }
-            if (!flushPendingSend()) _state.update { it.copy(busy = false) }
+            if (!sendCoordinator.flushPendingSend()) _state.update { it.copy(busy = false) }
         }
     }
 
@@ -2203,8 +1748,7 @@ class ClaudeCodeManager(
                 null
             }
 
-            is ControlOutcome.Error -> "停止失败：${describeControlError(outcome.message, outcome.code)}"
-            ControlOutcome.Timeout -> "停止超时"
+            is ControlOutcome.Failure -> outcome.describe("停止")
         }
     }
 
@@ -2220,23 +1764,25 @@ class ClaudeCodeManager(
         val id = controls.newRequestId()
         return when (val outcome = controls.request(id, encodeClaudeCodeSetCwd(id, target))) {
             is ControlOutcome.Ok -> when (val result = parseClaudeCodeSetCwdResult(outcome.payload)) {
-                is ClaudeCodeSetCwdResult.Ok -> {
-                    // 用 CLI 规范化后的路径回填：用户点的字符串可能经过符号链接
-                    result.cwd.takeIf { it.isNotBlank() }?.let { canonical ->
-                        _state.update {
-                            it.copy(cwd = canonical, options = it.options.copy(cwd = canonical))
-                        }
-                    }
-                    null
-                }
-
+                is ClaudeCodeSetCwdResult.Ok -> adoptCanonicalCwd(result)
                 is ClaudeCodeSetCwdResult.NeedsTrust -> confirmTrustAndSetCwd(target, result)
                 is ClaudeCodeSetCwdResult.Rejected -> claudeCodeSetCwdRejectionText(result)
             }
 
-            is ControlOutcome.Error -> "切换工作目录失败：${outcome.message}"
-            ControlOutcome.Timeout -> "切换工作目录超时"
+            is ControlOutcome.Failure -> outcome.describe("切换工作目录")
         }
+    }
+
+    /**
+     * 用 CLI 规范化后的路径回填：用户点的字符串可能经过符号链接。成功路径统一返回 null（无失败文案）。
+     */
+    private fun adoptCanonicalCwd(result: ClaudeCodeSetCwdResult.Ok): String? {
+        result.cwd.takeIf { it.isNotBlank() }?.let { canonical ->
+            _state.update {
+                it.copy(cwd = canonical, options = it.options.copy(cwd = canonical))
+            }
+        }
+        return null
     }
 
     /** 回答一次 needs_trust 并重发。再要信任就不追了，直接把话说明白。 */
@@ -2253,21 +1799,12 @@ class ClaudeCodeManager(
         )
         return when (val outcome = controls.request(id, frame)) {
             is ControlOutcome.Ok -> when (val result = parseClaudeCodeSetCwdResult(outcome.payload)) {
-                is ClaudeCodeSetCwdResult.Ok -> {
-                    result.cwd.takeIf { it.isNotBlank() }?.let { canonical ->
-                        _state.update {
-                            it.copy(cwd = canonical, options = it.options.copy(cwd = canonical))
-                        }
-                    }
-                    null
-                }
-
+                is ClaudeCodeSetCwdResult.Ok -> adoptCanonicalCwd(result)
                 is ClaudeCodeSetCwdResult.NeedsTrust -> "CLI 反复要求信任这个目录，没能切过去"
                 is ClaudeCodeSetCwdResult.Rejected -> claudeCodeSetCwdRejectionText(result)
             }
 
-            is ControlOutcome.Error -> "切换工作目录失败：${outcome.message}"
-            ControlOutcome.Timeout -> "切换工作目录超时"
+            is ControlOutcome.Failure -> outcome.describe("切换工作目录")
         }
     }
 
@@ -2385,7 +1922,7 @@ class ClaudeCodeManager(
             // URL 拼接与 Bearer→x-api-key 回退在 RelayProbe.fetchRelayModelsPayload，
             // 和探活 / 供应商编辑页的取模型共用：会话里问「你卖哪些模型」、
             // 供应商页问「你还活着吗」本来就是同一个请求
-            parseRelayModels(fetchRelayModelsPayload(baseUrl, token))
+            ClaudeCodeModelList.parseRelayModels(fetchRelayModelsPayload(baseUrl, token))
         }
 
     /**
@@ -2433,12 +1970,11 @@ class ClaudeCodeManager(
                         refreshUsage()
                     }
                 } else {
-                    val why = (outcome as? ControlOutcome.Error)?.let { describeControlError(it.message, it.code) }
-                        ?: if (_state.value.status != SessionStatus.Running) {
-                            "会话未在运行"
-                        } else {
-                            "CLI 未应答（${ClaudeCodeControlChannel.TIMEOUT_MS / 1000} 秒超时）"
-                        }
+                    val why = when {
+                        outcome is ControlOutcome.Error -> outcome.reason()
+                        _state.value.status != SessionStatus.Running -> "会话未在运行"
+                        else -> ControlOutcome.Timeout.reason()
+                    }
                     appendItem(ChatItem.Note(newId(), "切换模型失败：$why", isError = true))
                 }
             } finally {
@@ -2455,7 +1991,7 @@ class ClaudeCodeManager(
      * 每次切换都会误报一句"CLI 实际运行的是 claude-opus-5"。
      */
     private fun warnIfModelNotApplied(model: String?) {
-        if (model == null || model in META_MODEL_ALIASES) return
+        if (model == null || model in ClaudeCodeModelList.META_MODEL_ALIASES) return
         val applied = _state.value.appliedModel ?: return
         val resolved = _state.value.availableModels.firstOrNull { it.value == model }?.resolvedModel
         if (resolved != null && applied.equals(resolved, ignoreCase = true)) return
@@ -2624,7 +2160,7 @@ class ClaudeCodeManager(
                 //    反过来在 shutdown 之前抄快照就漏掉了这段确认窗口：旧进程临死前真吃下去
                 //    的那条也会被原样再发一次，模型眼里就是同一句说了两遍。
                 //    reclaim() 的 addFirst 正好把它们排在 ① 之后新攥住的消息前面，次序不乱。
-                sendQueue.reclaim()
+                sendCoordinator.reclaimHandedOff()
                 val options = if (hasTranscript(sessionId)) {
                     aligned.copy(resumeSessionId = sessionId, newSessionId = null)
                 } else {
@@ -2649,7 +2185,7 @@ class ClaudeCodeManager(
                         // 起不来时调度台上攒着 ①③ 两处的消息（② 这次没清队列）——
                         // 先退回输入框，用户还能在原会话里重发。退的都是 ③ 判定过
                         // "旧进程没看过"的，所以退回不等于让用户白发第二遍
-                        refundHeldMessages("切换失败，排队的消息已退回输入框")
+                        sendCoordinator.refundHeldMessages("切换失败，排队的消息已退回输入框")
                         shutdown()
                         _state.update {
                             it.copy(status = SessionStatus.Failed, errorMessage = e.message ?: e.toString())
@@ -2859,7 +2395,7 @@ class ClaudeCodeManager(
             }
             runCatching { launchCli(options) }.onFailure { e ->
                 // 和 startSession 一样：启动中攥着的消息先退回输入框，再让 shutdown 清队列
-                refundHeldMessages("会话启动失败，消息已退回输入框")
+                sendCoordinator.refundHeldMessages("会话启动失败，消息已退回输入框")
                 shutdown()
                 _state.update {
                     it.copy(status = SessionStatus.Failed, errorMessage = e.message ?: e.toString())
@@ -2894,7 +2430,7 @@ class ClaudeCodeManager(
     suspend fun deleteSession(sessionId: String): Boolean {
         // 快照跟着会话走：不清的话，删过的会话留下的文件副本会一直堆在数据目录里，
         // 而且它们已经没有任何入口可以撤销了
-        workspaceDir()?.let { checkpointStore(it).clear(sessionId) }
+        checkpoints.clear(sessionId)
         sessionPrefs.forget(sessionId)
         val linuxDir = currentLinuxDir ?: resolveLinuxDir() ?: return false
         return sessionStore.deleteSession(linuxDir, sessionId)
@@ -2902,155 +2438,8 @@ class ClaudeCodeManager(
 
     private suspend fun resolveLinuxDir(): File? {
         val workspace = workspaceRepository.getById(CLAUDE_CODE_WORKSPACE_ID.toString()) ?: return null
-        return File(File(File(context.filesDir, "workspaces"), workspace.root), "linux")
+        return linuxDirFor(context, workspace.root)
             .also { currentLinuxDir = it }
-    }
-
-    /**
-     * Manual 等会发 can_use_tool 的模式：后台/长驻 Bash **只**进进程表，
-     * deny CLI 原命令，避免双 proot 抢端口。
-     *
-     * deny **等服务出结论之后**才回（最长 10 秒，见 [awaitHostSettled]）：以前是立刻回「已托管」，
-     * 服务一启动就死了模型也不知道，还会让用户去开预览。现在死了就把退出码和日志尾写进 deny，
-     * 模型自己去修。等的这段时间 CLI 本来就停在这条权限请求上，不会往下跑。
-     *
-     * 等待期间会话可能已经变了，这时迟到的 deny 不能再发：
-     * - 用户按了停止：CLI 会发 control_cancel_request 撤销这条请求、自己把工具判成被拒并收尾，
-     *   不等我们应答（2.1.280 实测，夹具 interrupt_during_permission；之后补来的 deny 它静默丢掉）；
-     * - 没按停止、CLI 也撤回了这条请求（钩子先做了决定等，见 [onCliWithdrew]）：由 [answerCli] 挡掉；
-     * - 换档 / 关会话：进程换了，写队列此刻连着的是新进程，request_id 对不上。
-     * 服务本身照样留在进程表里，对话流里照样如实告诉用户结局。
-     *
-     * @return true 表示已接手，调用方不要再挂权限 sheet
-     */
-    private fun tryHostBashInsteadOfPermission(event: ClaudeCodeEvent.PermissionRequest): Boolean {
-        if (!event.toolName.equals(TOOL_BASH, ignoreCase = true)) return false
-        val plan = hostedBashPlan(event.input) ?: return false
-        val registry = localServices ?: return false
-        val io = cli.sessionScope ?: return false
-        val cwd = _state.value.cwd.ifBlank { DEFAULT_CWD }
-        val label = event.input["description"].asStringOrNull()?.takeIf { it.isNotBlank() }
-            ?: event.description
-        val sessionKey = _state.value.sessionId
-        val turn = turnSeq.get()
-        // 登记要在 CLI 回 tool_result 之前：那条 deny 的结果不能把卡改掉（卡由这里按结局标）
-        event.toolUseId?.takeIf { it.isNotBlank() }?.let(exclusiveHostedToolUses::add)
-        io.launch {
-            val outcome = hostAndSettle(registry, plan, cwd, label, sessionKey)
-            Log.i(TAG, "exclusive host (permission path) -> ${outcome::class.simpleName}: ${plan.command.take(80)}")
-            val sameSession = cli.sessionScope === io && interruptedTurn != turn && turnSeq.get() == turn
-            val told = sameSession && answerCli(
-                event.requestId,
-                encodeClaudeCodePermissionResponse(
-                    requestId = event.requestId,
-                    allow = false,
-                    denyMessage = hostedDenyMessage(outcome, plan.port),
-                ),
-            )
-            if (!told) {
-                Log.i(TAG, "hosted outcome not sent: the turn was stopped, the CLI withdrew the request, or it was relaunched")
-            }
-            showHostOutcome(event.toolUseId, outcome, plan.port, toldModel = told)
-        }
-        return true
-    }
-
-    /** 托管的结局落到对话流和工具卡上；服务真跑起来了才弹预览位 */
-    private fun showHostOutcome(toolUseId: String?, outcome: HostOutcome, port: Int?, toldModel: Boolean) {
-        val told = if (toldModel) "。已把原因告诉模型。" else "。模型还不知道它没起来。"
-        when (outcome) {
-            HostOutcome.Up -> {
-                val portNote = port?.let { " · preview http://127.0.0.1:$it" }.orEmpty()
-                appendItem(
-                    ChatItem.Note(
-                        newId(),
-                        "已托管到进程表（后台/长驻 Bash，不在会话里再跑一遍）" +
-                            (port?.let { " · :$it" } ?: "") +
-                            " · 预览位可开",
-                    ),
-                )
-                toolUseId?.let { toolId ->
-                    _state.update { state ->
-                        state.copy(
-                            items = state.items.mapToolCall(toolId) {
-                                it.copy(
-                                    status = ChatItem.ToolCall.Status.Done,
-                                    result = "hosted by Min process table$portNote",
-                                )
-                            },
-                        )
-                    }
-                }
-                if (port != null) maybeOfferLocalPreview(LocalUrls.loopbackUrl(port))
-            }
-
-            is HostOutcome.Died -> {
-                hostedEarlyExitNote(outcome.service, toldModel)?.let {
-                    appendItem(ChatItem.Note(newId(), it, isError = true))
-                }
-                toolUseId?.let { markHostedCardFailed(it, "hosted service exited early") }
-            }
-
-            HostOutcome.StoppedByUser -> {
-                appendItem(ChatItem.Note(newId(), "托管的服务刚启动就被停掉了$told"))
-                toolUseId?.let { markHostedCardFailed(it, "hosted service stopped by the user") }
-            }
-
-            is HostOutcome.NotStarted -> {
-                appendItem(ChatItem.Note(newId(), "托管到进程表失败：${outcome.reason}$told", isError = true))
-                toolUseId?.let { markHostedCardFailed(it, "exclusive host failed: ${outcome.reason}") }
-            }
-        }
-    }
-
-    /** 托管没成（起不来 / 一启动就死 / 被停掉）的卡标成 Error */
-    private fun markHostedCardFailed(toolUseId: String, result: String) {
-        _state.update { state ->
-            state.copy(
-                items = state.items.mapToolCall(toolUseId) {
-                    it.copy(status = ChatItem.ToolCall.Status.Error, result = result, isError = true)
-                },
-            )
-        }
-    }
-
-    /**
-     * 无 permission 闸门时（bypass / 规则已 allow）：若 shouldHost，尝试进表。
-     * startFromAgent 对同 command+cwd+port 去重；PortBusy 则只绑预览，不装第二套。
-     */
-    private fun maybeHostWhenNoPermissionGate(event: ClaudeCodeEvent.ToolUse) {
-        val registry = localServices ?: return
-        val (cleaned, port) = hostedBashPlan(event.input) ?: return
-        val cwd = _state.value.cwd.ifBlank { DEFAULT_CWD }
-        val label = event.input["description"].asStringOrNull()
-        val sessionKey = _state.value.sessionId
-        cli.sessionScope?.launch {
-            val result = registry.startFromAgent(
-                command = cleaned,
-                cwdGuest = cwd,
-                port = port,
-                label = label,
-                sourceSessionKey = sessionKey,
-            )
-            result.onSuccess { id ->
-                Log.i(TAG, "hosted local service $id (no-gate): ${cleaned.take(80)}")
-                if (port != null) maybeOfferLocalPreview(LocalUrls.loopbackUrl(port))
-            }.onFailure { err ->
-                Log.w(TAG, "host (no-gate) skipped/failed: ${err.message}")
-                // CLI 可能已占端口：至少把预览位填上
-                if (port != null) maybeOfferLocalPreview(LocalUrls.loopbackUrl(port))
-            }
-        }
-    }
-
-    private fun maybeOfferLocalPreview(text: String) {
-        if (LocalUrls.isLoopbackHttp(text)) {
-            _localPreviewUrls.tryEmit(LocalUrls.normalizeLoopback(text))
-            return
-        }
-        for (u in LocalUrls.findLocalPreviewUrls(text)) {
-            _localPreviewUrls.tryEmit(u)
-        }
     }
 
     /**
@@ -3067,8 +2456,7 @@ class ClaudeCodeManager(
         val closing = cli.detach()
         // 排队的消息跟着这个进程一起作废：留到下一个会话去发，等于把一句话
         // 塞进一个它根本不认识的上下文里
-        inFlight = null
-        if (clearQueue) persistStrandedQueue()
+        sendCoordinator.onTeardown(clearQueue)
         // 子 agent 跟着进程一起没了（续会话也不会把它们接回来），没递出去的话要说一声
         subagentHooksArmed = false
         abandonSubagentMail(subagentInbox.drain())
@@ -3113,11 +2501,6 @@ class ClaudeCodeManager(
         /** 工具结果上限，和 Codex 共用一条规则（[withClippedResult]） */
         private const val MAX_RESULT_CHARS = MAX_TOOL_RESULT_CHARS
 
-        private const val INTERRUPT_TIMEOUT_MS = 15_000L
-
-        /** 一轮收尾后，等 CLI 拿走已交棒消息的上限（[watchHandedOff]） */
-        private const val HANDOFF_TIMEOUT_MS = 20_000L
-
         /**
          * `system/status` 里「要发请求了」那一档。CLI 的输入队列就在这一刻排空，
          * 所以这是「追加的消息已经被模型看见」的唯一可观测信号（实测见 [ClaudeCodeSendQueue]）。
@@ -3130,49 +2513,6 @@ class ClaudeCodeManager(
 
         /** 设置里没填 baseUrl 时的兜底 */
         const val DEFAULT_BASE_URL = AppSettings.DEFAULT_BASE_URL
-
-        /**
-         * CLI 接受但**不会主动列在 list_models 里**的模型别名。
-         *
-         * 实测（v2.1.246，全新配置 + 中转站 env）：
-         *   list_models                  → [default, opus[1m], sonnet, sonnet[1m], haiku]  ← 没有 fable
-         *   set_model {"model":"fable"}  → success，applied.model = claude-fable-5
-         *   再 list_models               → [default, opus[1m], fable, sonnet, sonnet[1m], haiku]  ← 出现了
-         *
-         * 即 CLI 只把「当前选中」的模型放进目录。没选中就不列，不列就选不到，
-         * 用户会陷在这个死循环里 —— 所以这里补上入口。
-         * `--model` 的官方帮助明写着接受 'fable' / 'opus' / 'sonnet' 这类别名。
-         *
-         * v2.1.261 补充：Fable 在 `/model` 面板里是否可见还有一道门槛（`_se()`：直连要账号
-         * 有 usage credits，gateway 下要探测通过），而 `ANTHROPIC_DEFAULT_FABLE_MODEL` 一设就
-         * 无条件可见 —— 启动 env 里已经注入。别名 `fable` 在 gateway 下解析成 claude-fable-5
-         * （不是 5.1），所以第一项用固定 id。
-         *
-         * 切换后若中转站不供应该模型，[setModel] 会比对 applied.model 并给出提示。
-         */
-        val HIDDEN_MODEL_ALIASES = listOf(
-            // 固定 id 而不是别名：v2.1.261 的表里 `fable` 走 gateway 解析成 claude-fable-5，
-            // 直连才是 5.1（见 ClaudeCodeModelCatalog.FABLE_MODEL_ID）。Min 自己的入口不赌别名。
-            ModelOption(
-                ClaudeCodeModelCatalog.FABLE_MODEL_ID, "Fable 5.1",
-                "最强，最难、最长的任务 · 每百万 token \$10 / \$50 · 1M 上下文（原生）· 思考常开",
-                resolvedModel = ClaudeCodeModelCatalog.FABLE_MODEL_ID,
-                hiddenAlias = true,
-            ),
-            ModelOption("fable", "Fable（别名）", "由 CLI 解析：直连是 Fable 5.1，经 gateway 可能是 Fable 5", hiddenAlias = true),
-            ModelOption("fable[1m]", "Fable（别名，[1m]）", "同上；Fable 原生就是 1M，加不加 [1m] 一样", hiddenAlias = true),
-            ModelOption("best", "Best", "自动选当前最强的模型（现在是 Fable）", hiddenAlias = true),
-            ModelOption("opusplan", "Opus Plan", "计划阶段用 Opus，执行阶段用 Sonnet", hiddenAlias = true),
-            ModelOption("opus", "Opus", "由 CLI 解析：2.1.280 起是 Opus 5.5，更旧的是 Opus 5 · 直连 API 上原生 1M", hiddenAlias = true),
-            ModelOption("sonnet", "Sonnet", "Sonnet 5 · 直连 API 上原生 1M", hiddenAlias = true),
-            ModelOption("haiku", "Haiku", "Haiku 4.5 · 最快 · 200k · 不支持思考强度", hiddenAlias = true),
-        )
-
-        /**
-         * 「推荐」区：CLI 目录里没有时补在最前面的那几项。Fable 是最强模型却被 CLI 藏起来
-         * （只有选中过才列，或要 usage credits），用户在群里问的第一句就是"为啥没有 fable"。
-         */
-        val PROMOTED_MODEL_IDS = listOf(ClaudeCodeModelCatalog.FABLE_MODEL_ID)
 
         /**
          * CLI `--effort` 的合法阶梯，取自二进制里的 `R=["low","medium","high","xhigh","max"]`。
@@ -3199,12 +2539,6 @@ class ClaudeCodeManager(
          */
         const val EFFORT_ULTRACODE = "ultracode"
 
-        /** CLI 在 Rootfs 里的默认工作目录（filesDir 被 bind-mount 到这里） */
-        const val DEFAULT_CWD = "/workspace"
-
-        /** 检查点目录（工作区目录下）。点号开头，免得在文件浏览器里碍眼。 */
-        private const val CHECKPOINT_DIR = ".min-checkpoints"
-
         /**
          * `CLAUDE_CODE_PROMPT_CACHE_TTL` 的合法取值。CLI 里是
          * `m(["5m","1h"]).optional().catch(void 0)` —— 非法值被静默吞掉，
@@ -3217,97 +2551,6 @@ class ClaudeCodeManager(
          * 自动默认是 5 分钟，手机上断续使用几乎必然错过缓存窗口。
          */
         const val DEFAULT_PROMPT_CACHE_TTL = "1h"
-
-        /**
-         * **路由别名**：不对应任何固定模型 id，所以不能拿它们和 `get_settings` 回读的
-         * `applied.model` 做字符串比对。`default` 由中转站决定、`best` 由 CLI 选当前最强的、
-         * `opusplan` 在计划/执行两个阶段用不同模型 —— 比对必然失败，会误报"实际运行的是 …"。
-         */
-        val META_MODEL_ALIASES = setOf("default", "best", "opusplan")
-
-        /**
-         * 解析 `GET /v1/models` 的响应。Anthropic 原版和 OpenAI 风格的中转站都是
-         * `{"data":[{"id":…}]}`，只是 `display_name` 有没有的区别。
-         *
-         * 只留 id 里带 "claude" 的：中转站往往把 gpt / gemini 一起列出来，Claude Code 走的是
-         * Anthropic 协议，选了也跑不起来。一个都不带 "claude" 时（有的站给模型改名）退回全量，
-         * 宁可多列也不能列空。
-         */
-        internal fun parseRelayModels(json: String): List<RelayModel> {
-            val data = runCatching {
-                kotlinx.serialization.json.Json.parseToJsonElement(json)
-                    .asJsonObjectOrNull()?.get("data").asJsonArrayOrNull()
-            }.getOrNull() ?: error("响应不是模型列表")
-            val all = data.mapNotNull { el ->
-                val obj = el.asJsonObjectOrNull() ?: return@mapNotNull null
-                val id = obj["id"].asStringOrNull()?.trim()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                // 有的中转站把 display_name 填成和 id 一样的东西，那就等于没有
-                val display = obj["display_name"].asStringOrNull()?.trim()?.takeIf { it.isNotBlank() && it != id }
-                RelayModel(id = id, displayName = display)
-            }.distinctBy { it.id }
-            val claude = all.filter { it.id.contains("claude", ignoreCase = true) }
-            return (claude.ifEmpty { all }).sortedWith(RELAY_MODEL_ORDER)
-        }
-
-        /**
-         * 目录的排序：先按系列（fable > opus > sonnet > haiku > 其他），同系列新版本在前。
-         * 按字典序排的话 `claude-sonnet-5` 会压在所有 opus 上面，而用户最常找的是最新最强的那个。
-         */
-        private val RELAY_MODEL_ORDER: Comparator<RelayModel> = compareBy<RelayModel> { familyRank(it.id) }
-            .thenByDescending { versionKey(it.id) }
-            .thenBy { it.id }
-
-        private fun familyRank(id: String): Int {
-            val lower = id.lowercase()
-            return when {
-                "fable" in lower -> 0
-                "opus" in lower -> 1
-                "sonnet" in lower -> 2
-                "haiku" in lower -> 3
-                else -> 4
-            }
-        }
-
-        /** `claude-opus-4-5-20251101` → 4.5 + 日期；`claude-opus-5` → 5.0。数字段越多越具体，比不出来时看日期 */
-        private fun versionKey(id: String): Long {
-            val parts = Regex("[0-9]+").findAll(id).map { it.value }.toList()
-            val version = parts.filter { it.length <= 2 }.map { it.toInt() }
-            val major = version.getOrNull(0) ?: 0
-            val minor = version.getOrNull(1) ?: 0
-            val date = parts.firstOrNull { it.length == 8 }?.toLongOrNull() ?: 0L
-            return major * 1_000_000_000_000L + minor * 10_000_000_000L + date
-        }
-
-        /**
-         * 按停止键（= 电脑上的 Esc）该做什么。三档的判定抽出来，是因为"哪一档"
-         * 完全由这三个布尔决定，而三档的后果差别很大（撤回一条消息 vs 打断一轮任务）。
-         */
-        internal fun escapeAction(
-            busy: Boolean,
-            hasQueued: Boolean,
-            turnProduced: Boolean,
-        ): EscapeAction = when {
-            !busy -> EscapeAction.Nothing
-            // 排队的消息等着 —— 打断当前轮，让它紧接着开跑
-            hasQueued -> EscapeAction.InterruptThenQueued
-            // 请求刚发出、一个字都还没吐：用户的意思是"这条我不发了"
-            !turnProduced -> EscapeAction.Withdraw
-            else -> EscapeAction.Interrupt
-        }
-
-        internal enum class EscapeAction {
-            /** 没在跑，按了也不该有事发生 */
-            Nothing,
-
-            /** 打断当前轮，并把开启它的那条消息撤回输入框 */
-            Withdraw,
-
-            /** 打断当前轮，排队的那条接着跑 */
-            InterruptThenQueued,
-
-            /** 就是打断 */
-            Interrupt,
-        }
 
         /**
          * stderr 行是否值得当**错误**（红字）显示给用户。注意这不再决定它可不可见 ——
@@ -3423,9 +2666,6 @@ internal fun guestToHostFile(workspaceDir: File, guestPath: String): File? {
 
 /** Bash editDiff 比 stdout 大得多（整份 unified diff），单独放宽一点。本文件顶层与类内共用 */
 private const val MAX_EDIT_DIFF_CHARS = 64 * 1024
-
-/** CLI 侧的 Bash 工具名；托管与本地预览的判定都靠它认命令 */
-private const val TOOL_BASH = "Bash"
 
 /**
  * 出错收尾的那一轮在对话流里留什么。
@@ -3573,39 +2813,3 @@ internal fun List<ChatItem>.keepTurnEndStamps(): List<ChatItem> {
         if (item is ChatItem.AssistantText && item.finishedAt != null && i !in keep) item.copy(finishedAt = null) else item
     }
 }
-
-// --- control_response 载荷解析辅助 ---------------------------------------
-// 下面的字段名都是拿真 CLI 对拍出来的，不是照直觉写的：
-// list_models 的模型 id 在 `value`（不是 id/name），get_context_usage 是 camelCase。
-//
-// 取值一律走 ClaudeCodeProtocol.kt 里那组 `as?` 安全访问器：这些代码跑在 scope.launch 里，
-// 真抛出来会由 scope 的 CoroutineExceptionHandler 接住、记日志并落进崩溃记录（见 scope 定义处）——
-// App 不会因此崩掉，但那一帧的更新会被静默吞掉，所以能安全访问就别抛。
-
-/**
- * 实测形状：`{value, resolvedModel, displayName, description, supportedEffortLevels, ...}`。
- * 老式的裸字符串条目也兼容一下，免得旧版 CLI 直接不可用。
- */
-internal fun kotlinx.serialization.json.JsonElement.toModelOption(): ClaudeCodeManager.ModelOption? =
-    when (this) {
-        is kotlinx.serialization.json.JsonPrimitive ->
-            contentOrNull?.takeIf { it.isNotBlank() }
-                ?.let { ClaudeCodeManager.ModelOption(value = it, displayName = it) }
-
-        is JsonObject -> {
-            val value = this["value"].asStringOrNull() ?: this["id"].asStringOrNull()
-            value?.takeIf { it.isNotBlank() }?.let {
-                ClaudeCodeManager.ModelOption(
-                    value = it,
-                    displayName = this["displayName"].asStringOrNull() ?: it,
-                    description = this["description"].asStringOrNull(),
-                    supportedEffortLevels = this["supportedEffortLevels"].asJsonArrayOrNull()
-                        ?.mapNotNull { lvl -> lvl.asStringOrNull() }
-                        .orEmpty(),
-                    resolvedModel = this["resolvedModel"].asStringOrNull(),
-                )
-            }
-        }
-
-        else -> null
-    }

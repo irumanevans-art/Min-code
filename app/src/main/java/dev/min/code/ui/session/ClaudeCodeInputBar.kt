@@ -40,7 +40,6 @@ import dev.min.code.R
 import dev.min.code.core.claudecode.ClaudeCodeManager
 import dev.min.code.core.claudecode.ClaudeCodeModelCatalog
 import dev.min.code.core.claudecode.ComposerDraft
-import dev.min.code.core.claudecode.userShellCommand
 import dev.min.code.core.claudecode.DraftAttachment
 import dev.min.code.core.claudecode.DraftImage
 import dev.min.code.core.claudecode.formatUsd
@@ -90,17 +89,8 @@ internal fun ClaudeCodeInputBar(
     onInterrupt: () -> Unit,
     /** `!` 开头的一行：Min 自己在 rootfs 里跑，不经模型（见 UserShell.kt） */
     onRunShell: (String) -> Unit,
-    /** (模型, 是否同时存成新会话默认)。`/model <名字>` 与 CLI 一致按「存成默认」处理 */
-    onSetModel: (String?, Boolean) -> Unit,
-    /** Min 的设置面板选模型：(模型 id, 供应商档 id)，只此一处用 */
-    onSetModelOf: (String, String?) -> Unit,
-    onSetPermissionMode: (String) -> Unit,
-    onApplyEffort: (String?, Boolean) -> Unit,
-    onSetPromptCacheTtl: (String) -> Unit,
-    /** 引擎专有的设置项（Codex 的思考摘要）：(键, 值)，值为空串 = 跟随默认 */
-    onSetEngineOption: (String, String) -> Unit = { _, _ -> },
-    /** Codex 的连接方式面板（设置里的入口）；别的引擎不用 */
-    onOpenConnection: () -> Unit = {},
+    /** 设置面板（Claude / Codex 两张）要用的全部「改设置」回调；`/model <名字>` 也走其中的 onSetModel，与 CLI 一致按「存成默认」处理 */
+    settingsActions: SessionSettingsActions,
     /** Codex 连接配置里的默认模型，设置里的模型栏要列出来 */
     codexProfileModel: String? = null,
     /** `/new`：另起一条会话（Codex 的本地命令） */
@@ -110,13 +100,7 @@ internal fun ClaudeCodeInputBar(
     dailyCostUsd: Double = 0.0,
     /** 命令 / 模型说明用中文对照还是 CLI 给的英文原文 */
     chineseDescriptions: Boolean = true,
-    onSetChineseDescriptions: (Boolean) -> Unit = {},
     onRefreshUsage: () -> Unit = {},
-    onSetCwd: (String) -> Unit = {},
-    /** 设置里「添加附加目录」（Min 的 /add-dir）：选好的 guest 路径 */
-    onAddDirectory: (String) -> Unit = {},
-    onListCwd: suspend (String) -> Result<List<me.rerere.workspace.WorkspaceFileEntry>> = EmptyCwdList,
-    onCreateCwd: (String, String, (Result<String>) -> Unit) -> Unit = NoopCwdCreate,
     /** 移除附件时把文件从工作区删掉，否则"删掉输入框里那行路径"并不会真的取消上传 */
     onDeleteWorkspaceFile: (path: String) -> Unit = {},
     /** 把系统选中的文件导入沙箱，回调返回沙箱内路径（失败为 null） */
@@ -333,43 +317,36 @@ internal fun ClaudeCodeInputBar(
     }
 
     fun submit() {
-        // 终端里 Claude Code 的 bash 模式。附件和图片留着，下一条消息接着发
-        // `!` 是 CC 才有的终端命令；别的引擎里它就是一个普通字符，照常发给模型
-        userShellCommand(input)?.takeIf { EngineUi.userShell(capabilities) }?.let { command ->
-            onRunShell(command)
-            input = ""
-            return
+        // 去向由 routeSubmit 判（顺序即语义，见它的注释）；这里只管按结果动手
+        when (val route = routeSubmit(input, capabilities, session.slashCommands, session.settings.relayModels.map { ClaudeCodeManager.RelayModel(it.id) })) {
+            // 终端里 Claude Code 的 bash 模式。附件和图片留着，下一条消息接着发
+            is SubmitRoute.Shell -> {
+                onRunShell(route.command)
+                input = ""
+            }
+            is SubmitRoute.SetModel -> {
+                settingsActions.onSetModel(route.model, true)
+                input = ""
+            }
+            is SubmitRoute.Local -> {
+                handleLocal(route.target)
+                input = ""
+                // 附件留着，用户设置完接着发
+            }
+            SubmitRoute.SendMessage -> {
+                onSend(composeMessage(), images.map { it.block })
+                input = ""
+                attachments = emptyList()
+                images = emptyList()
+                pastes = emptyMap()
+                pasteSeq = 0
+                onDraftChange(ComposerDraft.Empty)
+            }
         }
-        // 带参数的模型命令也必须走控制协议。直接发给无头 CLI 只会得到一条
-        // "Set model..." 文本，App 自己的 options/appliedModel 仍然是旧值。
-        // CLI 里 `/model <名字>` 等于面板按 Enter（"saved as your default for new sessions"），
-        // 所以这里 asDefault = true。
-        modelSlashArgument(input)?.let { requested ->
-            onSetModel(
-                resolveSlashModel(
-                    requested,
-                    session.settings.relayModels.map { ClaudeCodeManager.RelayModel(it.id) },
-                ).takeUnless { it.equals("default", ignoreCase = true) },
-                true,
-            )
-            input = ""
-            return
-        }
-        // 配置面板类命令（/mcp /agents …）是按 CC 的文件布局做的，引擎不支持就不接管，照普通消息发
-        val local = localSlashTarget(input, capabilities, session.slashCommands)
-            ?.takeIf { it == LocalSlash.NEW || it.toSection(capabilities) != null || it.toCodexSection() != null || EngineUi.configCommands(capabilities) }
-        if (local != null) {
-            handleLocal(local)
-            input = ""
-            return // 附件留着，用户设置完接着发
-        }
-        onSend(composeMessage(), images.map { it.block })
-        input = ""
-        attachments = emptyList()
-        images = emptyList()
-        pastes = emptyMap()
-        pasteSeq = 0
-        onDraftChange(ComposerDraft.Empty)
+    }
+
+    val closingSettingsActions = remember(settingsActions) {
+        settingsActions.closingAfterApply { settingsOpen = false }
     }
 
     // 候选列表收起的那几百毫秒里还要画得出内容，所以记住最后一份非空的
@@ -526,14 +503,14 @@ internal fun ClaudeCodeInputBar(
             initialSection = codexSection,
             onDismiss = { settingsOpen = false },
             // 点了就算数：值存在 manager 里、下一轮 turn/start 带上，不重启进程，所以不用像别的引擎那样点完就收起
-            onSetModel = { onSetModel(it, false) },
-            onSetPermission = onSetPermissionMode,
-            onSetEffort = { onApplyEffort(it, false) },
-            onSetSummary = { onSetEngineOption(CodexStateMapper.OPTION_SUMMARY, it.orEmpty()) },
-            onSetCwd = onSetCwd,
-            onListCwd = onListCwd,
-            onCreateCwd = onCreateCwd,
-            onOpenConnection = { settingsOpen = false; onOpenConnection() },
+            onSetModel = { settingsActions.onSetModel(it, false) },
+            onSetPermission = settingsActions.onSetPermissionMode,
+            onSetEffort = { settingsActions.onApplyEffort(it, false) },
+            onSetSummary = { settingsActions.onSetEngineOption(CodexStateMapper.OPTION_SUMMARY, it.orEmpty()) },
+            onSetCwd = settingsActions.onSetCwd,
+            onListCwd = settingsActions.onListCwd,
+            onCreateCwd = settingsActions.onCreateCwd,
+            onOpenConnection = { settingsOpen = false; settingsActions.onOpenConnection() },
         )
     } else if (settingsOpen) {
         ClaudeCodeSettingsSheet(
@@ -541,17 +518,9 @@ internal fun ClaudeCodeInputBar(
             capabilities = capabilities,
             initialSection = settingsSection,
             chineseDescriptions = chineseDescriptions,
-            onSetChineseDescriptions = onSetChineseDescriptions,
             onDismiss = { settingsOpen = false },
-            onSetModel = { model, asDefault -> onSetModel(model, asDefault); settingsOpen = false },
-            onSetModelOf = { model, profile -> onSetModelOf(model, profile); settingsOpen = false },
-            onSetPermissionMode = { onSetPermissionMode(it); settingsOpen = false },
-            onApplyEffort = { effort, ultra -> onApplyEffort(effort, ultra); settingsOpen = false },
-            onSetPromptCacheTtl = { onSetPromptCacheTtl(it); settingsOpen = false },
-            onSetCwd = { onSetCwd(it); settingsOpen = false },
-            onAddDirectory = { onAddDirectory(it); settingsOpen = false },
-            onListCwd = onListCwd,
-            onCreateCwd = onCreateCwd,
+            // 选定即收起面板；换语言、列目录这类不算「选定」，原样透传（见 closingAfterApply）
+            actions = closingSettingsActions,
             onPickCommand = { input = "/$it "; settingsOpen = false },
             extras = extras,
         )
@@ -653,240 +622,6 @@ private fun SlashCommandList(
         commands.forEach { cmd ->
             SlashSuggestionRow(command = "/${cmd.name}", description = cmd.description, onClick = { onPick(cmd) })
         }
-    }
-}
-
-/**
- * 需要在本地处理、不能转发给 CLI 的斜杠命令。
- *
- * `-p --output-format stream-json` 是**无头模式**，没有 TUI —— `/model`、`/mcp` 这类
- * 交互式命令在真终端里会弹选择器或编辑器，在这里 CLI 只能回一段纯文本摘要，
- * 既点不了也改不了。所以在发送前拦下来，改开 App 自己的面板：
- *
- * - 会话类（[LocalSlash.MODEL] / [LocalSlash.EFFORT] / [LocalSlash.PERMISSION] / [LocalSlash.CWD]）
- *   背后走 `list_models` / `set_model` / `--effort` 这些控制请求；
- * - 配置类（[LocalSlash.MCP] / [LocalSlash.AGENTS] / [LocalSlash.MEMORY] / [LocalSlash.CONFIG] /
- *   [LocalSlash.HOOKS]）背后就是 Rootfs 里那几个文件 —— TUI 的那些编辑器本质上也只是
- *   在改它们，所以原生表单能做到完全等价，而且在手机上更好用。
- */
-internal enum class LocalSlash {
-    MODEL, EFFORT, PERMISSION, CWD,
-    MCP, AGENTS, MEMORY, CONFIG, HOOKS,
-
-    /** 另起一条会话（Codex 的 `/new`；只有引擎的斜杠命令表里真有 `new` 才拦，见 [localSlashTarget]） */
-    NEW,
-}
-
-internal val LOCAL_SLASH_HANDLERS = mapOf(
-    "model" to LocalSlash.MODEL,
-    "models" to LocalSlash.MODEL,
-    "effort" to LocalSlash.EFFORT,
-    "thinking" to LocalSlash.EFFORT,
-    "permission-mode" to LocalSlash.PERMISSION,
-    "cwd" to LocalSlash.CWD,
-    "add-dir" to LocalSlash.CWD,
-    "mcp" to LocalSlash.MCP,
-    "agents" to LocalSlash.AGENTS,
-    "memory" to LocalSlash.MEMORY,
-    "config" to LocalSlash.CONFIG,
-    "statusline" to LocalSlash.CONFIG,
-    "output-style" to LocalSlash.CONFIG,
-    "hooks" to LocalSlash.HOOKS,
-    "permissions" to LocalSlash.HOOKS,
-    // Codex 终端里的老叫法（`/approvals`、`/cd`）：习惯了它的人会下意识打，拦下来开对应设置栏，免得白花一轮的钱
-    "approvals" to LocalSlash.PERMISSION,
-    "cd" to LocalSlash.CWD,
-    "new" to LocalSlash.NEW,
-)
-
-/** 输入框内容是不是一条该本地接管的斜杠命令；带参数的（`/model opus`）不拦，原样发下去 */
-internal fun localSlashTarget(input: String): LocalSlash? {
-    val trimmed = input.trim()
-    if (!trimmed.startsWith("/") || trimmed.length < 2) return null
-    if (trimmed.any { it.isWhitespace() }) return null
-    return LOCAL_SLASH_HANDLERS[trimmed.drop(1).lowercase()]
-}
-
-/**
- * 按引擎认的 [localSlashTarget]。差别只有两处，都是只对「没有 CC 配置面板」的引擎（Codex）才生效，CC / Min 的行为不变：
- * - `/permissions`：CC 里它是 hooks / 权限规则的配置面板；Codex 里它就是权限档，开权限那一栏；
- * - `/new`、`/approvals`、`/cd`：只有引擎自己的斜杠命令表里列着才拦（[commands]），别的引擎里它们是普通文字。
- */
-internal fun localSlashTarget(
-    input: String,
-    capabilities: dev.min.code.core.engine.EngineCapabilities,
-    commands: List<dev.min.code.core.engine.SlashCommandView>,
-): LocalSlash? {
-    val base = localSlashTarget(input) ?: return null
-    val name = input.trim().drop(1).lowercase()
-    val listed = commands.any { it.name.equals(name, ignoreCase = true) }
-    return when {
-        name == "permissions" && capabilities.claudeConfigFiles == dev.min.code.core.engine.ConfigFiles.None -> LocalSlash.PERMISSION
-        (name == "new" || name == "approvals" || name == "cd") && !listed -> null
-        else -> base
-    }
-}
-
-/** `/model fable` 的参数；空参数仍由 [localSlashTarget] 打开模型面板。 */
-internal fun modelSlashArgument(input: String): String? {
-    val trimmed = input.trim()
-    val command = trimmed.substringBefore(' ').lowercase()
-    if (command != "/model" && command != "/models") return null
-    val argument = trimmed.substringAfter(' ', "").trim()
-    return argument.takeIf { it.isNotBlank() && !it.any(Char::isWhitespace) }
-}
-
-/**
- * 将 `/model fable5.1` 这类便捷写法解析成中转站返回的真实 id。
- * CLI 的 `fable` 是别名，但 `fable5.1` 通常不是合法别名；只有真实 id 才能固定版本。
- * `[1m]` 后缀保留给 Claude Code 的长上下文选择。
- */
-internal fun resolveSlashModel(
-    requested: String,
-    relayModels: List<ClaudeCodeManager.RelayModel>,
-): String {
-    val longContext = requested.endsWith("[1m]", ignoreCase = true)
-    val base = requested.removeSuffix("[1m]")
-    val normalized = base.lowercase().filter(Char::isLetterOrDigit)
-    // 无版本号时保留 CLI 别名（如 `fable` / `opus`），不要被中转站列表里的
-    // 某个具体版本抢先匹配。
-    if (normalized.isBlank() || normalized.none(Char::isDigit)) return requested
-    val matched = relayModels.firstOrNull { relay ->
-        val relayNormalized = relay.id.lowercase().filter(Char::isLetterOrDigit)
-        relayNormalized == normalized ||
-            relayNormalized.removePrefix("claude") == normalized ||
-            relayNormalized.endsWith(normalized)
-    }?.id ?: run {
-        // 没打开过模型面板时列表可能还没拉取；Fable 的公开 canonical id 有稳定格式，
-        // 先给 CLI 一个可用的固定版本入口。
-        Regex("(?i)^fable[- ]?(\\d+)(?:[.]?(\\d+))?$").matchEntire(base)?.let { match ->
-            "claude-fable-${match.groupValues[1]}" +
-                match.groupValues[2].takeIf { it.isNotBlank() }?.let { "-$it" }.orEmpty()
-        }
-    } ?: return requested
-    return if (longContext) "$matched[1m]" else matched
-}
-
-/**
- * 取出正在输入的 `@` 提及词；不在提及状态返回 null。
- *
- * 规则：最后一个 `@` 必须在开头或前面是空白（否则 `foo@bar.com` 这种邮箱会误触发），
- * 且它后面不能再有空白（有空白说明这个提及已经打完了）。
- * 返回空串是合法的 —— 刚敲下 `@` 还没输入字符时应该把整个目录列出来。
- */
-internal fun mentionTokenOf(input: String): String? {
-    val at = input.lastIndexOf('@')
-    if (at < 0) return null
-    if (at > 0 && !input[at - 1].isWhitespace()) return null
-    val token = input.substring(at + 1)
-    if (token.any { it.isWhitespace() }) return null
-    return token
-}
-
-/** 把正在输入的 `@xxx` 替换成选中的路径，并补一个空格好接着打字 */
-internal fun replaceMentionToken(input: String, path: String): String {
-    val at = input.lastIndexOf('@')
-    if (at < 0) return input
-    return input.substring(0, at) + "@$path "
-}
-
-// ---------------------------------------------------------------------------
-// 长段粘贴折叠（被 ClaudeCodePasteTest 覆盖）
-//
-// 手机上贴一份报错日志、一段配置、半个文件是常事，而输入框只有 5 行高：原样留在里面
-// 等于把「我现在要说什么」这件事整个淹掉，而且滑到底去按发送键都要好几下。
-// 做法和 Claude Code 自己的终端一致 —— 框里只留一行占位符，正文存在旁边，
-// 发送前再还原。占位符是普通文本，用户可以整段删掉（那就等于取消这次粘贴），
-// 也可以在它前后接着写字。
-// ---------------------------------------------------------------------------
-
-/** 超过这个字数就折叠。低于它的粘贴（一个 URL、一行命令）留在框里更直观 */
-internal const val PASTE_COLLAPSE_CHARS = 600
-
-/** 或者超过这个行数。短但很多行的东西（一份 diff、一段栈）同样会撑爆输入框 */
-internal const val PASTE_COLLAPSE_LINES = 10
-
-/** 折叠的结果：[text] 是替换后的输入框内容，[pasted] 是被收起来的原文 */
-internal data class CollapsedPaste(val text: String, val pasted: String)
-
-/**
- * 判断这次 `onValueChange` 是不是「一次贴进来一大段」，是就换成占位符。
- *
- * 只认**纯插入**：新文本 = 旧文本在某处插进一段。有删改的编辑一律不碰 ——
- * 那多半是用户自己在改字，误折叠会把他刚写的东西藏起来。
- *
- * 返回 null 表示不该折叠，调用方原样接受 [next]。
- */
-internal fun collapsePaste(previous: String, next: String, id: Int): CollapsedPaste? {
-    if (next.length <= previous.length) return null
-    var prefix = 0
-    while (prefix < previous.length && previous[prefix] == next[prefix]) prefix++
-    var suffix = 0
-    while (
-        suffix < previous.length - prefix &&
-        previous[previous.length - 1 - suffix] == next[next.length - 1 - suffix]
-    ) suffix++
-    // 前后缀没有把旧文本完全盖住 = 不是纯插入
-    if (prefix + suffix != previous.length) return null
-
-    val end = next.length - suffix
-    val inserted = next.substring(prefix, end)
-    if (!shouldCollapsePaste(inserted)) return null
-    return CollapsedPaste(
-        text = next.substring(0, prefix) + pastePlaceholder(id, inserted) + next.substring(end),
-        pasted = inserted,
-    )
-}
-
-internal fun shouldCollapsePaste(text: String): Boolean =
-    text.length >= PASTE_COLLAPSE_CHARS || text.count { it == '\n' } + 1 >= PASTE_COLLAPSE_LINES
-
-/**
- * 占位符长这样：`[paste #1 · 87 lines · 3.4k chars]`。
- *
- * 带上行数和字数是为了能**核对贴对了没有** —— 只写一句"粘贴文本"的话，贴错剪贴板
- * 要等模型答非所问才发现。
- *
- * ## 为什么这一行**不**走 string 资源
- *
- * 这是整个文件里唯一一处故意保留硬编码英文的地方，理由有三条：
- *
- * 1. **它必须跨语言稳定。** 占位符由这里生成、由 [PASTE_PLACEHOLDER] 认回去。
- *    文案跟着语言走的话，用户在中文界面粘贴、随后把 App 切成英文再发送，
- *    正则就认不出这一段了 —— 发出去的是一行谁也看不懂的占位符，原文彻底丢失。
- *    界面语言是随时可改的，而输入框里的草稿会活过这次改动。
- * 2. **它是内部协议，不是内容。** 发送前 [expandPastes] 一定会把它换回原文，
- *    模型永远看不到这一行；用户也只在输入框里短暂见到它。
- * 3. **保持纯函数才留得住单测。** 取资源要 Context，而这个函数是在
- *    `onValueChange` 里调的，不在 Composable 作用域；硬塞 Resources 进来
- *    会把 ClaudeCodePasteTest 从纯 JVM 拖进 Robolectric，为一行占位符不值当。
- *
- * 真正要紧的是那几个**数字**，它们本来就不随语言变。
- */
-internal fun pastePlaceholder(id: Int, text: String): String {
-    val lines = text.count { it == '\n' } + 1
-    val size = if (text.length >= 1000) {
-        String.format(java.util.Locale.US, "%.1fk chars", text.length / 1000.0)
-    } else {
-        "${text.length} chars"
-    }
-    return "[$PASTE_TAG #$id · $lines lines · $size]"
-}
-
-/** 占位符的锚点。和界面语言无关，见 [pastePlaceholder] 的第 1 条 */
-private const val PASTE_TAG = "paste"
-
-/**
- * 占位符匹配。**只按 id 认领**，中间那段摘要允许对不上 —— 用户可能在占位符里
- * 误删了几个字，那时也该还原成原文，而不是把一行乱码发出去。
- */
-private val PASTE_PLACEHOLDER = Regex("""\[$PASTE_TAG #(\d+)[^\]]*]""")
-
-/** 发送前把占位符换回原文。被删掉的占位符自然就不还原，等于取消那次粘贴。 */
-internal fun expandPastes(input: String, pastes: Map<Int, String>): String {
-    if (pastes.isEmpty()) return input
-    return PASTE_PLACEHOLDER.replace(input) { match ->
-        pastes[match.groupValues[1].toIntOrNull()] ?: match.value
     }
 }
 

@@ -16,5 +16,7 @@
     <string name="network_allow_once">允许一次</string>
     <string name="network_allow_always">总是允许</string>
     <string name="network_deny">拒绝</string>
+    <string name="network_isolation_title">Min 命令的隔离层</string>
+    <string name="network_isolation_note">命令仍以 Min 的 Android 身份运行。此处适用于 Min 引擎；终端与外部 CLI 的环境声明不代表这些限制。</string>
     <string name="network_decision_notice">网络 %1$s:%2$d · %3$s · %4$s</string>
 </resources>

@@ -55,7 +55,7 @@ sealed interface SessionImportScan {
  *
  * 所以放进哪个项目目录、行里的 `cwd` 写的是什么，都不决定能不能续上；改写是为了让
  * 导入后的会话在元数据上属于当前工作目录（跨设备时默认的 `/workspace` 本来就一致——
- * 它是 files/ 的固定挂载点，见 [ClaudeCodeManager.DEFAULT_CWD]；不一致的是用户选的子目录，
+ * 它是 files/ 的固定挂载点，见 [dev.min.code.core.rootfs.DEFAULT_CWD]；不一致的是用户选的子目录，
  * 以及从电脑上的 Claude Code 拿来的 `C:\...`、`/Users/...`）。
  *
  * ## 为什么是「只替换那个值」而不是解析后整行重新序列化

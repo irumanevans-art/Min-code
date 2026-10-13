@@ -81,50 +81,6 @@ class ApiProfileTest {
         assertFalse(AppSettings().insecureBaseUrl)
     }
 
-    @Test
-    fun plaintext_http_over_the_network_is_insecure() {
-        // 公网 IP —— 这正是「token 在公网裸奔」的那种地址
-        assertTrue(isInsecureBaseUrl("http://1.2.3.4:8080"))
-        assertTrue(isInsecureBaseUrl("http://relay.example.com/v1"))
-        // 局域网也算：同一个 Wi-Fi 下的任何人都在路上
-        assertTrue(isInsecureBaseUrl("http://192.168.1.10:3000"))
-        assertTrue(isInsecureBaseUrl("http://10.0.0.8"))
-        // 大小写、前后空格不该成为绕过判定的办法
-        assertTrue(isInsecureBaseUrl("  HTTP://1.2.3.4  "))
-        // 127 只在第一段才算回环：128.x / 1.127.x 都是普通公网地址
-        assertTrue(isInsecureBaseUrl("http://128.0.0.1"))
-        assertTrue(isInsecureBaseUrl("http://1.127.0.1"))
-        assertTrue(isInsecureBaseUrl("http://127.0.0.1.example.com"))
-        // 用户名混淆：真正的主机是 @ 后面那个
-        assertTrue(isInsecureBaseUrl("http://127.0.0.1@evil.example.com/v1"))
-    }
-
-    @Test
-    fun loopback_over_http_is_not_insecure() {
-        // 回环走 http 全程不出这台设备，报警只是噪音
-        assertTrue(listOf(
-            "http://localhost:8080",
-            "http://LocalHost/v1",
-            "http://api.localhost:1234",
-            "http://127.0.0.1:4000",
-            "http://127.1.2.3",
-            "http://[::1]:8080/v1",
-            "http://0:0:0:0:0:0:0:1",
-            // 模拟器映射到宿主机的回环别名
-            "http://10.0.2.2:3000",
-        ).none { isInsecureBaseUrl(it) })
-    }
-
-    @Test
-    fun https_and_non_http_are_never_insecure() {
-        assertFalse(isInsecureBaseUrl("https://api.anthropic.com"))
-        assertFalse(isInsecureBaseUrl("https://1.2.3.4:8443"))
-        // 没有 scheme 的串根本发不出去，别拿警告去吓人
-        assertFalse(isInsecureBaseUrl("1.2.3.4:8080"))
-        assertFalse(isInsecureBaseUrl(""))
-        assertFalse(isInsecureBaseUrl("http://"))
-    }
-
     // -----------------------------------------------------------------------
     // 明文风险的一次确认
     // -----------------------------------------------------------------------
@@ -289,74 +245,6 @@ class ApiProfileTest {
     }
 
     // -----------------------------------------------------------------------
-    // 地址规整
-    // -----------------------------------------------------------------------
-
-    @Test
-    fun base_url_is_normalized() {
-        assertEquals("https://api.x.com", normalizeBaseUrl("  https://api.x.com/  "))
-        assertEquals("https://api.x.com", normalizeBaseUrl("https://api.x.com"))
-        // 空着就用官方地址，不能存一个空串进去
-        assertEquals(AppSettings.DEFAULT_BASE_URL, normalizeBaseUrl("   "))
-    }
-
-    /**
-     * 用户从 OpenAI 兼容中转抄地址时经常带着 `/v1`。Claude / ANTHROPIC_BASE_URL
-     * 的约定是不带版本段——不剥就会在探活、取模型、机内路由上拼出 `/v1/v1/…`，
-     * 表现完全像「这家中转坏了」，而同一家在 cc-switch 里好好的。
-     */
-    @Test
-    fun claude_base_url_strips_trailing_v1() {
-        assertEquals("https://one.oxapi.bond", normalizeBaseUrl("https://one.oxapi.bond/v1"))
-        assertEquals("https://one.oxapi.bond", normalizeBaseUrl("https://one.oxapi.bond/v1/"))
-        assertEquals("https://one.oxapi.bond", normalizeBaseUrl("  https://one.oxapi.bond/V1  "))
-        // 中间的 /v1 是路径的一部分，不能动
-        assertEquals("https://host.example/v1/gateway", normalizeBaseUrl("https://host.example/v1/gateway"))
-        assertEquals("https://host.example/v1/gateway", normalizeBaseUrl("https://host.example/v1/gateway/v1"))
-    }
-
-    /** Codex / OpenAI 正好相反：官方地址本身以 /v1 结尾，剥掉就对不上了 */
-    @Test
-    fun codex_base_url_keeps_trailing_v1() {
-        assertEquals("https://api.openai.com/v1", normalizeCodexBaseUrl("https://api.openai.com/v1"))
-        assertEquals("https://api.openai.com/v1", normalizeCodexBaseUrl("https://api.openai.com/v1/"))
-        assertEquals("https://aierxin.cc/v1", normalizeCodexBaseUrl("  https://aierxin.cc/v1/  "))
-        assertEquals("https://api.openai.com/v1", normalizeCodexBaseUrl("   "))
-    }
-
-    @Test
-    fun join_claude_api_never_doubles_v1() {
-        assertEquals(
-            "https://one.oxapi.bond/v1/models",
-            joinClaudeApi("https://one.oxapi.bond/v1", "/v1/models"),
-        )
-        assertEquals(
-            "https://one.oxapi.bond/v1/models",
-            joinClaudeApi("https://one.oxapi.bond", "/v1/models"),
-        )
-        assertEquals(
-            "https://one.oxapi.bond/v1/chat/completions",
-            joinClaudeApi("https://one.oxapi.bond/v1/", "v1/chat/completions"),
-        )
-    }
-
-    @Test
-    fun join_openai_api_accepts_base_with_or_without_v1() {
-        assertEquals(
-            "https://aierxin.cc/v1/chat/completions",
-            joinOpenAiApi("https://aierxin.cc/v1", "/chat/completions"),
-        )
-        assertEquals(
-            "https://aierxin.cc/v1/chat/completions",
-            joinOpenAiApi("https://aierxin.cc", "/chat/completions"),
-        )
-        assertEquals(
-            "https://api.openai.com/v1/responses",
-            joinOpenAiApi("https://api.openai.com/v1/", "responses"),
-        )
-    }
-
-    // -----------------------------------------------------------------------
     // 「密文打不开」和「没配过」是两回事
     //
     // 分不开的代价很实在：读成空表 → 界面显示「还没配过」→ 用户随手加一条 →
@@ -389,5 +277,57 @@ class ApiProfileTest {
     @Test
     fun `legacy plaintext is not unreadable`() {
         assertFalse(isUnreadableCipher("[{\"id\":\"a\"}]") { null })
+    }
+
+    // -----------------------------------------------------------------------
+    // 解开了但读不懂：同样不能让写入把它整表覆盖
+    // -----------------------------------------------------------------------
+
+    /** 读侧把它当空表，可写侧照空表覆盖 —— 原来那串就没了。这里要和「解不开」一样挡住 */
+    @Test
+    fun `ciphertext that decrypts but does not parse is unreadable`() {
+        assertTrue(isUnreadableCipher("v1:aXY=:Ym9keQ==", parses = { false }) { "{broken" })
+    }
+
+    @Test
+    fun `ciphertext that decrypts and parses is readable`() {
+        assertFalse(isUnreadableCipher("v1:aXY=:Ym9keQ==", parses = { true }) { "[]" })
+    }
+
+    /** 解出来是空串不是坏数据，别拿它去喂解析器 */
+    @Test
+    fun `blank plaintext is not unreadable even if the parser would reject it`() {
+        assertFalse(isUnreadableCipher("v1:aXY=:Ym9keQ==", parses = { false }) { "" })
+    }
+
+    /** 明文（1.1.9 之前、没有 v1: 前缀）读不懂也一样：decrypt 对它原样返回，不是 null */
+    @Test
+    fun `legacy plaintext that does not parse is unreadable`() {
+        assertTrue(isUnreadableCipher("{broken", parses = { false }) { it })
+    }
+
+    /** 三张表各自的解析器：用真实形状钉死，别在改 schema 时静默放行或误挡 */
+    @Test
+    fun `every cipher table accepts a well formed list and rejects garbage`() {
+        for (table in CIPHER_TABLES.values) {
+            assertTrue(table.parses("[]"))
+            assertTrue(table.parses("""[{"id":"a"}]"""))
+            assertFalse(table.parses("{broken"))
+            assertFalse(table.parses("""{"id":"a"}"""))
+        }
+    }
+
+    /** 新版本写进来一个旧版不认识的枚举值，降级后读到的就是这种数据 */
+    @Test
+    fun `a downgrade that meets an unknown enum value is unreadable not empty`() {
+        val codex = CIPHER_TABLES.values.count { !it.parses("""[{"id":"a","authMode":"FROM_THE_FUTURE"}]""") }
+        assertTrue("至少 Codex 表（authMode）该把未知枚举判成读不懂", codex >= 1)
+    }
+
+    @Test
+    fun `claude table accepts a profile written by this version`() {
+        val json = encodeProfilesJson(listOf(profile("a"), profile("b")))
+        assertTrue(CIPHER_TABLES.values.any { it.parses(json) })
+        assertEquals(2, decodeProfilesJson(json).size)
     }
 }

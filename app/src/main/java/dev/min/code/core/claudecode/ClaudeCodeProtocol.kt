@@ -1,5 +1,11 @@
 package dev.min.code.core.claudecode
 
+import dev.min.code.core.json.arr
+import dev.min.code.core.json.bool
+import dev.min.code.core.json.int
+import dev.min.code.core.json.long
+import dev.min.code.core.json.obj
+import dev.min.code.core.json.str
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -1442,10 +1448,7 @@ private val LOCAL_COMMAND_ENVELOPES = listOf(
  * "This session is being continued from a previous conversation."
  * 它不是人说的话，回放成用户气泡就会变成截图里那一大段占位摘要。
  */
-private val COMPACT_SUMMARY_PREFIXES = listOf(
-    "This session is being continued from a previous conversation.",
-    "This session is being continued from a previous conversation",
-)
+private const val COMPACT_SUMMARY_PREFIX = "This session is being continued from a previous conversation"
 
 private sealed interface TranscriptUser {
     data class Human(val text: String) : TranscriptUser
@@ -1464,7 +1467,7 @@ private fun transcriptUserPayload(obj: JsonObject): TranscriptUser? {
     }.let(::stripUserShellContext).trim()
     if (text.isBlank()) return null
     if (LOCAL_COMMAND_ENVELOPES.any { text.startsWith(it) }) return null
-    if (COMPACT_SUMMARY_PREFIXES.any { text.startsWith(it) }) {
+    if (text.startsWith(COMPACT_SUMMARY_PREFIX)) {
         return TranscriptUser.Compact(compactSummaryNote(text))
     }
     return TranscriptUser.Human(text)
@@ -1483,29 +1486,6 @@ internal fun compactSummaryNote(text: String): String {
     }
 }
 
-/**
- * CLI 会源源不断地发 system 帧，其中绝大多数是内部计量，**不该出现在聊天流里**。
- * 实测里刷屏最凶的就是 `thinking_tokens` 和 `status`，一轮能刷几十条。
- *
- * 但反过来也踩过坑：**用户真正需要看到的那几条，字段名并不叫 `text` 或 `message`**，
- * 于是被一起丢掉了。对照 v2.1.246 二进制里的 zod schema：
- *
- *   local_command_output → `{content}`     "Displayed as assistant-style text in the transcript"
- *   informational        → `{content, level}`
- *   api_error            → `{error:{message, status?, formatted, ...}}`   ← formatted 才是给人看的
- *   model_fallback       → `{trigger, original_model, fallback_model, content}`
- *   worker_shutting_down → `{reason}`
- *   task_notification    → `{task_id, status, summary, skip_transcript?, ...}`
- *
- * 只看 `text`/`message` 的话，中转站报错、模型被静默换掉、CLI 即将退出、斜杠命令的输出
- * 全都无声无息。这里按 subtype 显式取值。
- *
- * 规则：
- * 1. 明确的噪声直接丢；
- * 2. 已知的用户可见帧按各自的字段取文案；
- * 3. 其余未知 subtype 仍然只认 `text`/`message`，认不出就丢 ——
- *    宁可漏显示，也不要把内部计量刷给用户。
- */
 /**
  * 纯内部计量，永远不进聊天流也不进状态条。
  *
@@ -1530,6 +1510,29 @@ private val NOISE_SYSTEM_SUBTYPES = setOf(
     "per_turn_effort_changed", "session_metadata", "peer_message_hold", "turn_preempted",
 )
 
+/**
+ * CLI 会源源不断地发 system 帧，其中绝大多数是内部计量，**不该出现在聊天流里**。
+ * 实测里刷屏最凶的就是 `thinking_tokens` 和 `status`，一轮能刷几十条。
+ *
+ * 但反过来也踩过坑：**用户真正需要看到的那几条，字段名并不叫 `text` 或 `message`**，
+ * 于是被一起丢掉了。对照 v2.1.246 二进制里的 zod schema：
+ *
+ *   local_command_output → `{content}`     "Displayed as assistant-style text in the transcript"
+ *   informational        → `{content, level}`
+ *   api_error            → `{error:{message, status?, formatted, ...}}`   ← formatted 才是给人看的
+ *   model_fallback       → `{trigger, original_model, fallback_model, content}`
+ *   worker_shutting_down → `{reason}`
+ *   task_notification    → `{task_id, status, summary, skip_transcript?, ...}`
+ *
+ * 只看 `text`/`message` 的话，中转站报错、模型被静默换掉、CLI 即将退出、斜杠命令的输出
+ * 全都无声无息。这里按 subtype 显式取值。
+ *
+ * 规则：
+ * 1. 明确的噪声直接丢；
+ * 2. 已知的用户可见帧按各自的字段取文案；
+ * 3. 其余未知 subtype 仍然只认 `text`/`message`，认不出就丢 ——
+ *    宁可漏显示，也不要把内部计量刷给用户。
+ */
 private fun systemNote(subtype: String?, obj: JsonObject): List<ClaudeCodeEvent> {
     if (subtype == null || subtype in NOISE_SYSTEM_SUBTYPES) return emptyList()
     return when (subtype) {
@@ -1768,26 +1771,14 @@ internal fun formatApiFailure(formatted: String?, message: String?, status: Int?
     return if (status != null && !alreadyHasStatus) "$body（HTTP $status）" else body
 }
 
-/** 取字符串字段；缺失、类型不符或 JSON null 一律返回 null */
-private fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
-
 // --- 安全访问器 ---------------------------------------------------------------
-// 这一组存在的唯一理由：kotlinx 的 `.jsonObject` / `.jsonArray` / `.jsonPrimitive` 是**硬转换**，
-// 类型不符就抛 IllegalArgumentException。在 NDJSON 解析路径上抛异常 = 读取循环整个死掉 =
+// str / obj / arr / bool / int / long 在 core/json/SafeJson.kt（和 Codex 共用），缺失、类型不符或
+// JSON null 一律返回 null。存在的唯一理由：kotlinx 的 `.jsonObject` / `.jsonArray` / `.jsonPrimitive`
+// 是**硬转换**，类型不符就抛 IllegalArgumentException。在 NDJSON 解析路径上抛异常 = 读取循环整个死掉 =
 // "会话中断"。CLI 的 schema 会随版本漂移（本文件对照 v2.1.246 校对，用户实际跑 2.1.247），
-// 所以这里一律用 `as?` 降级到 null，宁可少解析一个字段也不要炸掉整条流。
-
-private fun JsonObject.obj(key: String): JsonObject? = this[key] as? JsonObject
-
-private fun JsonObject.arr(key: String): JsonArray? = this[key] as? JsonArray
+// 所以一律用 `as?` 降级到 null，宁可少解析一个字段也不要炸掉整条流。下面只剩本文件自己用的 prim / double。
 
 private fun JsonObject.prim(key: String): JsonPrimitive? = this[key] as? JsonPrimitive
-
-private fun JsonObject.bool(key: String): Boolean? = prim(key)?.booleanOrNull
-
-private fun JsonObject.int(key: String): Int? = prim(key)?.intOrNull
-
-private fun JsonObject.long(key: String): Long? = prim(key)?.longOrNull
 
 private fun JsonObject.double(key: String): Double? = prim(key)?.doubleOrNull
 

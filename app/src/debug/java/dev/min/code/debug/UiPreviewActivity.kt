@@ -82,6 +82,7 @@ import dev.min.code.ui.session.boundedDiffOf
 import dev.min.code.ui.session.rememberChangedFilesLabels
 import dev.min.code.ui.session.BlankPage
 import dev.min.code.ui.session.ClaudeCodeInputBar
+import dev.min.code.ui.session.SessionSettingsActions
 import dev.min.code.ui.session.ClaudeCodeSettingsSheet
 import dev.min.code.ui.session.StartPanel
 import dev.min.code.ui.session.AgentSwitcher
@@ -266,14 +267,16 @@ private fun Preview(
                 capabilities = dev.min.code.core.engine.EngineCapabilities.ClaudeCode,
                 initialSection = null,
                 chineseDescriptions = chineseDescriptions,
-                onSetChineseDescriptions = { chineseDescriptions = it },
                 onDismiss = { settingsOpen = false },
-                onSetModel = { model, _ -> session = session.copy(model = model, options = session.options.copy(model = model)) },
-                onSetModelOf = { _, _ -> },
-                onSetPermissionMode = { session = session.copy(permissionMode = ClaudeCodePermissionMode.fromWire(it) ?: session.permissionMode) },
-                onApplyEffort = { effort, ultra -> session = session.copy(options = session.options.copy(effort = effort, ultracode = ultra)) },
-                onSetPromptCacheTtl = { session = session.copy(options = session.options.copy(promptCacheTtl = it)) },
-                onSetCwd = { session = session.copy(cwd = it) },
+                actions = SessionSettingsActions(
+                    onSetModel = { model, _ -> session = session.copy(model = model, options = session.options.copy(model = model)) },
+                    onSetModelOf = { _, _ -> },
+                    onSetPermissionMode = { session = session.copy(permissionMode = ClaudeCodePermissionMode.fromWire(it) ?: session.permissionMode) },
+                    onApplyEffort = { effort, ultra -> session = session.copy(options = session.options.copy(effort = effort, ultracode = ultra)) },
+                    onSetPromptCacheTtl = { session = session.copy(options = session.options.copy(promptCacheTtl = it)) },
+                    onSetChineseDescriptions = { chineseDescriptions = it },
+                    onSetCwd = { session = session.copy(cwd = it) },
+                ),
                 onPickCommand = { settingsOpen = false },
             )
             LaunchedEffect(scene, dark, skin, runId) {
@@ -549,13 +552,15 @@ private fun ConversationPreview(
                         },
                         onInterrupt = {},
                         onRunShell = { command -> messages = messages + "!$command" },
-                        onSetModel = { model, _ -> onSession(session.copy(model = model, options = session.options.copy(model = model))) },
-                        onSetModelOf = { _, _ -> },
-                        onSetPermissionMode = { onSession(session.copy(permissionMode = ClaudeCodePermissionMode.fromWire(it) ?: session.permissionMode)) },
-                        onApplyEffort = { effort, ultra -> onSession(session.copy(options = session.options.copy(effort = effort, ultracode = ultra))) },
-                        onSetPromptCacheTtl = { onSession(session.copy(options = session.options.copy(promptCacheTtl = it))) },
+                        settingsActions = SessionSettingsActions(
+                            onSetModel = { model, _ -> onSession(session.copy(model = model, options = session.options.copy(model = model))) },
+                            onSetModelOf = { _, _ -> },
+                            onSetPermissionMode = { onSession(session.copy(permissionMode = ClaudeCodePermissionMode.fromWire(it) ?: session.permissionMode)) },
+                            onApplyEffort = { effort, ultra -> onSession(session.copy(options = session.options.copy(effort = effort, ultracode = ultra))) },
+                            onSetPromptCacheTtl = { onSession(session.copy(options = session.options.copy(promptCacheTtl = it))) },
+                            onSetCwd = { onSession(session.copy(cwd = it)) },
+                        ),
                         onRequestModels = {},
-                        onSetCwd = { onSession(session.copy(cwd = it)) },
                         onOpenLocalCommand = { onOpenSettings() },
                         // 比 costText 里那笔大，底栏才会走到「今日 … · 本次 …」那一支
                         dailyCostUsd = 1.34,

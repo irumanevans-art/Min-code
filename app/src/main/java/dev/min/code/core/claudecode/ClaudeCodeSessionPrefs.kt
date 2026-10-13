@@ -2,6 +2,7 @@ package dev.min.code.core.claudecode
 
 import android.content.Context
 import androidx.core.content.edit
+import dev.min.code.core.rootfs.DEFAULT_CWD
 
 /**
  * 记住每个会话用的模型 / 思考强度 / 权限模式。
@@ -130,7 +131,7 @@ internal fun encodeSessionOptions(options: ClaudeCodeManager.SessionOptions): Ma
         put(KEY_CACHE_TTL, options.promptCacheTtl)
         put(KEY_PERMISSION_MODE, options.permissionMode.wire)
         val cwd = CwdPath.normalize(options.cwd)
-        if (cwd != ClaudeCodeManager.DEFAULT_CWD) put(KEY_CWD, cwd)
+        if (cwd != DEFAULT_CWD) put(KEY_CWD, cwd)
     }
 
 /**

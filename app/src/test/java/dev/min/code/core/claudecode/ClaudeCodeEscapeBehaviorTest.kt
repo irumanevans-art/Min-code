@@ -1,7 +1,5 @@
 package dev.min.code.core.claudecode
 
-import dev.min.code.core.claudecode.ClaudeCodeManager.Companion.EscapeAction
-import dev.min.code.core.claudecode.ClaudeCodeManager.Companion.escapeAction
 import dev.min.code.core.session.ChatItem
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async

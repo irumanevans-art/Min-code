@@ -12,6 +12,9 @@ import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.currentBindMounts
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.relay.RelayController
+import dev.min.code.core.rootfs.filesDirFor
+import dev.min.code.core.rootfs.linuxDirFor
+import dev.min.code.core.rootfs.tmpDirFor
 import dev.min.code.core.settings.SettingsStore
 import dev.min.code.core.settings.currentShellCredentialEnv
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -255,10 +258,9 @@ class LocalServiceRegistry(
         val workspaceId = CLAUDE_CODE_WORKSPACE_ID.toString()
         val workspace = workspaceRepository.getById(workspaceId)
             ?: return@withContext Result.failure(IllegalStateException("workspace missing"))
-        val workspaceDir = File(File(context.filesDir, "workspaces"), workspace.root)
-        val linuxDir = File(workspaceDir, "linux")
-        val filesDir = File(workspaceDir, "files").apply { mkdirs() }
-        val tempDir = File(workspaceDir, "tmp").apply { mkdirs() }
+        val linuxDir = linuxDirFor(context, workspace.root)
+        val filesDir = filesDirFor(context, workspace.root).apply { mkdirs() }
+        val tempDir = tmpDirFor(context, workspace.root).apply { mkdirs() }
         if (!File(linuxDir, "bin/sh").isFile) {
             return@withContext Result.failure(IllegalStateException("rootfs not installed"))
         }

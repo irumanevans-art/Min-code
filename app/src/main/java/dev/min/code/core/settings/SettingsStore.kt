@@ -1,9 +1,6 @@
 package dev.min.code.core.settings
 
 import android.content.Context
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
-import android.util.Base64
 import dev.min.code.BuildConfig
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -25,23 +22,12 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import java.nio.charset.StandardCharsets
-import java.security.KeyStore
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
-/** 1.1.9 及更早的单 token 格式，只在迁移与兜底读取时用到 */
-private val KEY_TOKEN = stringPreferencesKey("token")
-private val KEY_BASE_URL = stringPreferencesKey("base_url")
-private val KEY_PROFILES = stringPreferencesKey("api_profiles")
-private val KEY_ACTIVE_PROFILE = stringPreferencesKey("active_api_profile")
+internal val KEY_PROFILES = stringPreferencesKey("api_profiles")
+internal val KEY_ACTIVE_PROFILE = stringPreferencesKey("active_api_profile")
 private val KEY_CLAUDE_AUTH = stringPreferencesKey("claude_auth")
-/** 「明文风险这一关已经对既有配置放行过了」的一次性标记，见 [SettingsStore.migrateInsecureAck] */
-private val KEY_INSECURE_ACK_MIGRATED = booleanPreferencesKey("insecure_ack_migrated")
 private val KEY_NPM_MIRROR = booleanPreferencesKey("npm_mirror")
 private val KEY_THEME = stringPreferencesKey("theme")
 private val KEY_LANGUAGE = stringPreferencesKey("app_language")
@@ -158,7 +144,7 @@ data class ApiProfile(
      * 用户是否已经就「这个地址会明文发 token」确认过一次。
      *
      * **只管弹不弹那一次对话框，不管能不能用**——明文地址任何时候都照常发请求。
-     * 升级上来的既有配置在 [SettingsStore.migrateInsecureAck] 里一律置为 true：
+     * 升级上来的既有配置在 [SettingsMigrations.migrateInsecureAck] 里一律置为 true：
      * 人家本来就在用的地址，不能因为装了个新版本就被拦一道。
      */
     val insecureAck: Boolean = false,
@@ -527,12 +513,25 @@ enum class CodexAuthMode { CLI, OPENAI_API_KEY, RELAY }
  * 整块加密后存进 App 私有目录 —— 加密的粒度是整张表而不是每个 token，省得给每条记
  * 一个 IV。1.1.9 及更早的单 token 格式（`token` / `base_url` 两个键，token 可能还是明文）
  * 在第一次 [current] 时就地迁移成一条配置，迁完删掉老键。
- */
-/**
+ *
  * [scope] 给了就在里面长期收集一次 [settings]，让 [snapshot] 一直是新的 —— 这是这个类自己的不变量，
  * 不该靠 App 在别处记得起一个空收集。测试等不关心 snapshot 的场合可以不给。
  */
-class SettingsStore(private val context: Context, scope: CoroutineScope? = null) {
+class SettingsStore internal constructor(
+    private val store: DataStore<Preferences>,
+    private val cipher: CredentialCipher,
+    scope: CoroutineScope?,
+) {
+    /**
+     * 生产入口：App 的 DataStore 文件 + Keystore 加密。
+     *
+     * 存储与加密两个依赖由上面的内部构造器注入，是为了让 JVM 单测能用临时文件 + 假加密器
+     * 把写入护栏（解不开 / 读不懂就拒写）真跑一遍；外部调用方不必知道这件事。
+     */
+    constructor(context: Context, scope: CoroutineScope? = null) : this(context.dataStore, TokenCipher, scope)
+
+    private val migrations = SettingsMigrations(store, cipher)
+
     /**
      * 最近一次读到的设置。
      *
@@ -547,23 +546,21 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
     var snapshot: AppSettings? = null
         private set
 
-    val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
-        val profiles = readProfiles(p)
+    val settings: Flow<AppSettings> = store.data.map { p ->
+        val profiles = readProfiles(cipher, p)
         AppSettings(
             profiles = profiles,
             activeProfileId = p[KEY_ACTIVE_PROFILE].orEmpty(),
-            claudeAuth = p[KEY_CLAUDE_AUTH]?.let { runCatching { ClaudeAuthMode.valueOf(it) }.getOrNull() }
-                ?: ClaudeAuthMode.PROVIDER,
+            claudeAuth = p.enumOf(KEY_CLAUDE_AUTH, ClaudeAuthMode.PROVIDER),
             useNpmMirror = p[KEY_NPM_MIRROR] ?: false,
-            themeMode = p[KEY_THEME]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.SYSTEM,
-            appLanguage = p[KEY_LANGUAGE]?.let { runCatching { AppLanguage.valueOf(it) }.getOrNull() }
-                ?: AppLanguage.SYSTEM,
+            themeMode = p.enumOf(KEY_THEME, ThemeMode.SYSTEM),
+            appLanguage = p.enumOf(KEY_LANGUAGE, AppLanguage.SYSTEM),
             chineseDescriptions = p[KEY_ZH_DESCRIPTIONS] ?: true,
             openWithDefaults = parseOpenWithDefaults(p[KEY_OPEN_WITH].orEmpty()),
-            codexProfiles = decodeCodexProfiles(p[KEY_CODEX_PROFILES]),
+            codexProfiles = decodeCodexProfiles(cipher, p[KEY_CODEX_PROFILES]),
             activeCodexProfileId = p[KEY_CODEX_ACTIVE].orEmpty(),
-            unifiedProfiles = decodeUnifiedProfiles(p[KEY_UNIFIED_PROFILES]),
-            skin = p[KEY_SKIN]?.let { runCatching { SkinStyle.valueOf(it) }.getOrNull() } ?: SkinStyle.SEA,
+            unifiedProfiles = decodeUnifiedProfiles(cipher, p[KEY_UNIFIED_PROFILES]),
+            skin = p.enumOf(KEY_SKIN, SkinStyle.SEA),
             manageGuestConfig = p[KEY_MANAGE_GUEST_CONFIG] ?: false,
             guestConfigIncludesSecrets = p[KEY_GUEST_CONFIG_SECRETS] ?: false,
             injectCredentialsIntoShells = p[KEY_INJECT_SHELL_CREDENTIALS] ?: true,
@@ -573,8 +570,8 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
             cronMaxBudgetUsd = p[KEY_CRON_MAX_BUDGET_USD]?.takeIf { it.isFinite() && it > 0 },
             cronEnabled = p[KEY_CRON_ENABLED] ?: true,
             workflowsEnabled = p[KEY_WORKFLOWS_ENABLED] ?: true,
-            webSearch = decodeWebSearch(p[KEY_WEB_SEARCH]),
-            proxy = decodeProxy(p[KEY_PROXY]),
+            webSearch = decodeWebSearch(cipher, p[KEY_WEB_SEARCH]),
+            proxy = decodeProxy(cipher, p[KEY_PROXY]),
             telemetry = dev.min.code.core.telemetry.TelemetrySettings(
                 enabled = p[KEY_TELEMETRY_ENABLED] ?: false,
                 endpoint = p[KEY_TELEMETRY_ENDPOINT].orEmpty(),
@@ -587,7 +584,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
             a11yPromptVersion = p[KEY_A11Y_PROMPT_VERSION] ?: 0,
             terminalAutoKeyboard = p[KEY_TERMINAL_AUTO_KEYBOARD] ?: true,
             managedEnvKeys = p[KEY_MANAGED_ENV_KEYS].orEmpty(),
-            credentialsUnreadable = credentialsUnreadable(p),
+            credentialsUnreadable = credentialsUnreadable(cipher, p),
         )
     }.onEach { snapshot = it }
 
@@ -597,74 +594,30 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
     }
 
     suspend fun current(): AppSettings {
-        migrateLegacyToken()
-        migrateInsecureAck()
+        migrations.run()
         return settings.first()
     }
 
     /**
-     * 单 token → 连接配置表。老键里的 token 可能是明文（更早的版本），也可能已经是密文。
-     * 迁完把 `token` / `base_url` 删掉：留着的话，用户把配置全删光之后老 token 会诈尸。
+     * 整表覆盖写，两张供应商表共用的出口。界面上的增 / 删 / 改都收敛到这里，
+     * 免得各写各的漏掉 active 的维护。
      */
-    private suspend fun migrateLegacyToken() {
-        // 先读一次再决定要不要写：`current()` 每开一次会话都会被调到，
-        // 而 DataStore 的 edit 不管内容变没变都会把整个文件重写一遍
-        val snapshot = context.dataStore.data.first()
-        if (snapshot[KEY_PROFILES] != null || snapshot[KEY_TOKEN] == null) return
-        context.dataStore.edit { p ->
-            if (p[KEY_PROFILES] != null) return@edit
-            // 解不开的老 token 当空处理，下面的 isBlank 分支会原样留着老键不删 ——
-            // 密钥回来之后这条还能迁移，删掉就没了
-            val legacyToken = TokenCipher.decrypt(p[KEY_TOKEN].orEmpty()).orEmpty()
-            val legacyBaseUrl = p[KEY_BASE_URL]?.takeIf { it.isNotBlank() } ?: AppSettings.DEFAULT_BASE_URL
-            if (legacyToken.isBlank()) return@edit
-            // 老版本存下来的地址属于「既有配置」，明文风险直接记成已确认
-            val profile = ApiProfile(
-                id = newProfileId(),
-                token = legacyToken,
-                baseUrl = legacyBaseUrl,
-                insecureAck = true,
-            )
-            p[KEY_PROFILES] = encodeProfiles(listOf(profile))
-            p[KEY_ACTIVE_PROFILE] = profile.id
-            p.remove(KEY_TOKEN)
-            p.remove(KEY_BASE_URL)
-        }
+    private suspend fun <T> editTable(
+        table: ProfileTable<T>,
+        block: (List<T>, String) -> Pair<List<T>, String>,
+    ) = store.edit { p ->
+        // 打不开的密文绝不整表覆盖：它读出来是空表，照着空表写回去就等于把原配置抹了。
+        // 密钥也许还能回来（换回原设备、恢复 Keystore），所以这里什么都不做，
+        // 等用户在设置页明确选择 discardUnreadableCredentials()。
+        if (isTableUnreadable(cipher, p, table.key)) return@edit
+        val (next, activeId) = block(table.decode(cipher, p[table.key]), p[table.activeKey].orEmpty())
+        table.commit(p, cipher, next, activeId)
     }
 
-    /**
-     * 明文风险确认的一次性迁移：把**这次升级之前就存在**的配置全部标成「已确认」。
-     *
-     * 标记记在一个单独的键上而不是靠字段默认值——字段默认值分不清「老配置没有这个字段」
-     * 和「新配置还没确认」。跑过一次之后新增的配置就按界面给的值走。
-     * 表是空的（全新安装）也要落这个标记，否则第一条新配置会被当成老配置放行。
-     */
-    private suspend fun migrateInsecureAck() {
-        // 和 migrateLegacyToken 一样先读后写：DataStore 的 edit 不管内容变没变都会重写整个文件
-        if (context.dataStore.data.first()[KEY_INSECURE_ACK_MIGRATED] == true) return
-        context.dataStore.edit { p ->
-            if (p[KEY_INSECURE_ACK_MIGRATED] == true) return@edit
-            val stored = decodeProfiles(p[KEY_PROFILES])
-            if (stored.isNotEmpty()) p[KEY_PROFILES] = encodeProfiles(ackExistingProfiles(stored))
-            p[KEY_INSECURE_ACK_MIGRATED] = true
-        }
-    }
-
-    /** 整表覆盖写。界面上的增 / 删 / 改都收敛到这一个出口，免得各写各的漏掉 active 的维护 */
+    /** Claude 侧的整表覆盖写，见 [editTable]。动表之前先把老数据迁完，免得在没迁完的格式上读—改—写 */
     private suspend fun editProfiles(block: (List<ApiProfile>, String) -> Pair<List<ApiProfile>, String>) {
-        migrateLegacyToken()
-        migrateInsecureAck()
-        context.dataStore.edit { p ->
-            // 打不开的密文绝不整表覆盖：它读出来是空表，照着空表写回去就等于把原配置抹了。
-            // 密钥也许还能回来（换回原设备、恢复 Keystore），所以这里什么都不做，
-            // 等用户在设置页明确选择 discardUnreadableCredentials()。
-            if (isUnreadableCipher(p[KEY_PROFILES], TokenCipher::decrypt)) return@edit
-            val (next, activeId) = block(decodeProfiles(p[KEY_PROFILES]), p[KEY_ACTIVE_PROFILE].orEmpty())
-            if (next.isEmpty()) p.remove(KEY_PROFILES) else p[KEY_PROFILES] = encodeProfiles(next)
-            // active 必须落在表里，否则 activeProfile 每次都要退回第一条，用户看到的「选中」会漂
-            val resolved = resolveActiveId(next, activeId)
-            if (resolved.isBlank()) p.remove(KEY_ACTIVE_PROFILE) else p[KEY_ACTIVE_PROFILE] = resolved
-        }
+        migrations.run()
+        editTable(CLAUDE_PROFILES, block)
     }
 
     /**
@@ -703,14 +656,12 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
      * 列表最后一行，用户排好的顺序每编辑一次乱一次。
      */
     suspend fun replaceProfile(profile: ApiProfile) = editProfiles { list, active ->
-        list.map {
-            if (it.id != profile.id) it else profile.copy(baseUrl = normalizeBaseUrl(profile.baseUrl))
-        } to active
+        CLAUDE_PROFILES.replace(list, profile.copy(baseUrl = normalizeBaseUrl(profile.baseUrl))) to active
     }
 
     /** 在表里挪一格。[delta] 为 -1 上移 / +1 下移；越界、找不到都原样返回 */
     suspend fun moveProfile(id: String, delta: Int) = editProfiles { list, active ->
-        moveInList(list, delta) { it.id == id } to active
+        CLAUDE_PROFILES.move(list, id, delta) to active
     }
 
     /**
@@ -721,8 +672,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
      * 排序是排序，不是删除。
      */
     suspend fun reorderProfiles(order: List<String>) = editProfiles { list, active ->
-        val rank = order.withIndex().associate { (i, id) -> id to i }
-        list.sortedBy { rank[it.id] ?: Int.MAX_VALUE } to active
+        CLAUDE_PROFILES.reorder(list, order) to active
     }
 
     suspend fun updateProfile(
@@ -746,7 +696,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
 
     /** 删掉当前生效的那条时，active 交给 [editProfiles] 落到剩下的第一条 */
     suspend fun deleteProfile(id: String) = editProfiles { list, active ->
-        list.filterNot { it.id == id } to active
+        CLAUDE_PROFILES.remove(list, id) to active
     }
 
     /**
@@ -759,16 +709,9 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
     suspend fun duplicateProfile(id: String): String? {
         var copied: String? = null
         editProfiles { list, active ->
-            val index = list.indexOfFirst { it.id == id }
-            if (index < 0) return@editProfiles list to active
-            val source = list[index]
-            val copy = source.copy(
-                id = newProfileId(),
-                label = duplicateLabel(source.displayName(), list.map { it.displayName() }.toSet()),
-                unifiedId = "",
-            )
-            copied = copy.id
-            list.toMutableList().apply { add(index + 1, copy) } to active
+            val (next, copyId) = CLAUDE_PROFILES.duplicate(list, id, newProfileId())
+            copied = copyId
+            next to active
         }
         return copied
     }
@@ -776,16 +719,9 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
     suspend fun duplicateCodexProfile(id: String): String? {
         var copied: String? = null
         editCodexProfiles { list, active ->
-            val index = list.indexOfFirst { it.id == id }
-            if (index < 0) return@editCodexProfiles list to active
-            val source = list[index]
-            val copy = source.copy(
-                id = newProfileId(),
-                label = duplicateLabel(source.displayName(), list.map { it.displayName() }.toSet()),
-                unifiedId = "",
-            )
-            copied = copy.id
-            list.toMutableList().apply { add(index + 1, copy) } to active
+            val (next, copyId) = CODEX_PROFILES.duplicate(list, id, newProfileId())
+            copied = copyId
+            next to active
         }
         return copied
     }
@@ -804,28 +740,21 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
         block: (List<UnifiedProfile>, List<ApiProfile>, List<CodexProfile>) ->
         Triple<List<UnifiedProfile>, List<ApiProfile>, List<CodexProfile>>,
     ) {
-        migrateLegacyToken()
-        migrateInsecureAck()
-        context.dataStore.edit { p ->
+        migrations.run()
+        store.edit { p ->
             // 三张表任何一张打不开都不写：理由同 editProfiles —— 读出来的空表不是真相
-            if (unreadableTables(p).isNotEmpty()) return@edit
+            if (unreadableTables(cipher, p).isNotEmpty()) return@edit
             val (unified, claude, codex) = block(
-                decodeUnifiedProfiles(p[KEY_UNIFIED_PROFILES]),
-                decodeProfiles(p[KEY_PROFILES]),
-                decodeCodexProfiles(p[KEY_CODEX_PROFILES]),
+                decodeUnifiedProfiles(cipher, p[KEY_UNIFIED_PROFILES]),
+                CLAUDE_PROFILES.decode(cipher, p[CLAUDE_PROFILES.key]),
+                CODEX_PROFILES.decode(cipher, p[CODEX_PROFILES.key]),
             )
             val (nextClaude, nextCodex) = projectUnified(unified, claude, codex) { newProfileId() }
 
             if (unified.isEmpty()) p.remove(KEY_UNIFIED_PROFILES)
-            else p[KEY_UNIFIED_PROFILES] = encodeUnifiedProfiles(unified)
-            if (nextClaude.isEmpty()) p.remove(KEY_PROFILES) else p[KEY_PROFILES] = encodeProfiles(nextClaude)
-            if (nextCodex.isEmpty()) p.remove(KEY_CODEX_PROFILES)
-            else p[KEY_CODEX_PROFILES] = encodeCodexProfiles(nextCodex)
-
-            val claudeActive = resolveActiveId(nextClaude, p[KEY_ACTIVE_PROFILE].orEmpty())
-            if (claudeActive.isBlank()) p.remove(KEY_ACTIVE_PROFILE) else p[KEY_ACTIVE_PROFILE] = claudeActive
-            val codexActive = resolveActiveIdBy(nextCodex, p[KEY_CODEX_ACTIVE].orEmpty()) { it.id }
-            if (codexActive.isBlank()) p.remove(KEY_CODEX_ACTIVE) else p[KEY_CODEX_ACTIVE] = codexActive
+            else p[KEY_UNIFIED_PROFILES] = encodeUnifiedProfiles(cipher, unified)
+            CLAUDE_PROFILES.commit(p, cipher, nextClaude, p[CLAUDE_PROFILES.activeKey].orEmpty())
+            CODEX_PROFILES.commit(p, cipher, nextCodex, p[CODEX_PROFILES.activeKey].orEmpty())
         }
     }
 
@@ -865,38 +794,33 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
 
     /** [acknowledgeInsecure] = 用户刚在明文风险确认框上放行了这一条，顺手记下来，别再问第二遍 */
     suspend fun setActiveProfile(id: String, acknowledgeInsecure: Boolean = false) = editProfiles { list, _ ->
-        val next = if (acknowledgeInsecure) {
-            list.map { if (it.id == id) it.copy(insecureAck = true) else it }
-        } else {
-            list
-        }
-        next to id
+        CLAUDE_PROFILES.acknowledge(list, id, acknowledgeInsecure) to id
     }
 
     /** 只记「走哪条路」。两条路各自的配置都不碰，见 [ClaudeAuthMode] */
-    suspend fun setClaudeAuth(mode: ClaudeAuthMode) = context.dataStore.edit { it[KEY_CLAUDE_AUTH] = mode.name }
+    suspend fun setClaudeAuth(mode: ClaudeAuthMode) = store.edit { it[KEY_CLAUDE_AUTH] = mode.name }
 
-    suspend fun setUseNpmMirror(enabled: Boolean) = context.dataStore.edit { it[KEY_NPM_MIRROR] = enabled }
-    suspend fun setThemeMode(mode: ThemeMode) = context.dataStore.edit { it[KEY_THEME] = mode.name }
-    suspend fun setSkin(style: SkinStyle) = context.dataStore.edit { it[KEY_SKIN] = style.name }
+    suspend fun setUseNpmMirror(enabled: Boolean) = store.edit { it[KEY_NPM_MIRROR] = enabled }
+    suspend fun setThemeMode(mode: ThemeMode) = store.edit { it[KEY_THEME] = mode.name }
+    suspend fun setSkin(style: SkinStyle) = store.edit { it[KEY_SKIN] = style.name }
 
     suspend fun setManageGuestConfig(enabled: Boolean) =
-        context.dataStore.edit { it[KEY_MANAGE_GUEST_CONFIG] = enabled }
+        store.edit { it[KEY_MANAGE_GUEST_CONFIG] = enabled }
 
     suspend fun setGuestConfigIncludesSecrets(enabled: Boolean) =
-        context.dataStore.edit { it[KEY_GUEST_CONFIG_SECRETS] = enabled }
+        store.edit { it[KEY_GUEST_CONFIG_SECRETS] = enabled }
 
     suspend fun setInjectCredentialsIntoShells(enabled: Boolean) =
-        context.dataStore.edit { it[KEY_INJECT_SHELL_CREDENTIALS] = enabled }
+        store.edit { it[KEY_INJECT_SHELL_CREDENTIALS] = enabled }
 
     suspend fun setTerminalAutoKeyboard(enabled: Boolean) =
-        context.dataStore.edit { it[KEY_TERMINAL_AUTO_KEYBOARD] = enabled }
+        store.edit { it[KEY_TERMINAL_AUTO_KEYBOARD] = enabled }
 
     suspend fun setShareDeviceStorage(enabled: Boolean) =
-        context.dataStore.edit { it[KEY_SHARE_DEVICE_STORAGE] = enabled }
+        store.edit { it[KEY_SHARE_DEVICE_STORAGE] = enabled }
 
     suspend fun setControlDevice(enabled: Boolean) =
-        context.dataStore.edit { it[KEY_CONTROL_DEVICE] = enabled }
+        store.edit { it[KEY_CONTROL_DEVICE] = enabled }
 
     /**
      * 改团队并发上限。先过 [dev.min.agent.kernel.TeamLimits.resolve]：超过硬上限 8 的值按 8 写入（返回的 [Accepted.note] 给用户看），
@@ -905,7 +829,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
     suspend fun setTeamMaxConcurrent(value: Int): dev.min.agent.kernel.TeamLimits.Setting {
         val setting = dev.min.agent.kernel.TeamLimits.resolve(value)
         if (setting is dev.min.agent.kernel.TeamLimits.Setting.Accepted) {
-            context.dataStore.edit { it[KEY_TEAM_MAX_CONCURRENT] = setting.value }
+            store.edit { it[KEY_TEAM_MAX_CONCURRENT] = setting.value }
         }
         return setting
     }
@@ -916,85 +840,85 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
      */
     suspend fun setCronMaxBudgetUsd(value: Double?): Boolean {
         if (value != null && (!value.isFinite() || value <= 0)) return false
-        context.dataStore.edit { if (value == null) it.remove(KEY_CRON_MAX_BUDGET_USD) else it[KEY_CRON_MAX_BUDGET_USD] = value }
+        store.edit { if (value == null) it.remove(KEY_CRON_MAX_BUDGET_USD) else it[KEY_CRON_MAX_BUDGET_USD] = value }
         return true
     }
 
-    suspend fun setWorkflowsEnabled(enabled: Boolean) = context.dataStore.edit { it[KEY_WORKFLOWS_ENABLED] = enabled }
+    suspend fun setWorkflowsEnabled(enabled: Boolean) = store.edit { it[KEY_WORKFLOWS_ENABLED] = enabled }
 
     /**
      * 改 WebSearch 配置：在 DataStore 的一次 edit 里读—改—写，界面只改自己动的那几项（比如只换后端、不碰已填的 key）。
      * 全部回到默认就删键，不留一块空的密文。密文打不开（换机恢复备份之类）当没配过：这里存的只是一个搜索 key，重填即可
      */
     suspend fun updateWebSearch(transform: (WebSearchConfig) -> WebSearchConfig) {
-        context.dataStore.edit { p ->
-            val next = transform(decodeWebSearch(p[KEY_WEB_SEARCH]))
-            if (next == WebSearchConfig()) p.remove(KEY_WEB_SEARCH) else p[KEY_WEB_SEARCH] = TokenCipher.encrypt(encodeWebSearchJson(next))
+        store.edit { p ->
+            val next = transform(decodeWebSearch(cipher, p[KEY_WEB_SEARCH]))
+            if (next == WebSearchConfig()) p.remove(KEY_WEB_SEARCH) else p[KEY_WEB_SEARCH] = cipher.encrypt(encodeWebSearchJson(next))
         }
     }
 
     /** 改应用内代理：同 [updateWebSearch]，一次 edit 里读—改—写，界面拿不到的已填密码由这里合并 */
     suspend fun updateProxy(transform: (ProxyConfig) -> ProxyConfig) {
-        context.dataStore.edit { p ->
-            val next = transform(decodeProxy(p[KEY_PROXY]))
-            if (next == ProxyConfig()) p.remove(KEY_PROXY) else p[KEY_PROXY] = TokenCipher.encrypt(encodeProxyJson(next))
+        store.edit { p ->
+            val next = transform(decodeProxy(cipher, p[KEY_PROXY]))
+            if (next == ProxyConfig()) p.remove(KEY_PROXY) else p[KEY_PROXY] = cipher.encrypt(encodeProxyJson(next))
         }
     }
 
     suspend fun setCronEnabled(enabled: Boolean) =
-        context.dataStore.edit { it[KEY_CRON_ENABLED] = enabled }
+        store.edit { it[KEY_CRON_ENABLED] = enabled }
 
     suspend fun setTelemetryEnabled(enabled: Boolean) =
-        context.dataStore.edit { it[KEY_TELEMETRY_ENABLED] = enabled }
+        store.edit { it[KEY_TELEMETRY_ENABLED] = enabled }
 
     suspend fun setTelemetryEndpoint(endpoint: String) =
-        context.dataStore.edit { it[KEY_TELEMETRY_ENDPOINT] = endpoint.trim() }
+        store.edit { it[KEY_TELEMETRY_ENDPOINT] = endpoint.trim() }
 
     /**
      * 遥测头部（`k=v,k2=v2`，含令牌）：整串经 [TokenCipher] 加密；空串 = 清除。界面拿不到明文，只显示「已设置」。
      * 为什么不明文进 DataStore：头部里常是 Bearer 令牌，和别的凭证一样走 Keystore。
      */
-    suspend fun setTelemetryHeaders(raw: String) = context.dataStore.edit { p ->
+    suspend fun setTelemetryHeaders(raw: String) = store.edit { p ->
         val trimmed = raw.trim()
-        if (trimmed.isEmpty()) p.remove(KEY_TELEMETRY_HEADERS) else p[KEY_TELEMETRY_HEADERS] = TokenCipher.encrypt(trimmed)
+        if (trimmed.isEmpty()) p.remove(KEY_TELEMETRY_HEADERS) else p[KEY_TELEMETRY_HEADERS] = cipher.encrypt(trimmed)
     }
 
     /** 解密后的头部，只给导出用。Keystore 解不开（换机、改过锁屏）返回空串，不抛——遥测不许拦住设置页 */
     suspend fun telemetryHeaders(): String =
-        TokenCipher.decrypt(context.dataStore.data.first()[KEY_TELEMETRY_HEADERS].orEmpty()).orEmpty()
+        cipher.decrypt(store.data.first()[KEY_TELEMETRY_HEADERS].orEmpty()).orEmpty()
 
     /** 每个源的认证只存密文；设置页没有读取明文的入口，插件下载时才解密。 */
-    suspend fun setPluginHeaders(origin: String, headers: String) = context.dataStore.edit { prefs ->
+    suspend fun setPluginHeaders(origin: String, headers: String) = store.edit { prefs ->
         val stored = prefs[KEY_PLUGIN_HEADERS]?.let { kotlinx.serialization.json.Json.parseToJsonElement(it).jsonObject }.orEmpty().toMutableMap()
-        if (headers.isBlank()) stored.remove(origin) else stored[origin] = kotlinx.serialization.json.JsonPrimitive(TokenCipher.encrypt(headers))
+        if (headers.isBlank()) stored.remove(origin) else stored[origin] = kotlinx.serialization.json.JsonPrimitive(cipher.encrypt(headers))
         prefs[KEY_PLUGIN_HEADERS] = kotlinx.serialization.json.JsonObject(stored).toString()
     }
     suspend fun pluginHeaders(origin: String): String {
-        val stored = context.dataStore.data.first()[KEY_PLUGIN_HEADERS] ?: return ""
+        val stored = store.data.first()[KEY_PLUGIN_HEADERS] ?: return ""
         val value = kotlinx.serialization.json.Json.parseToJsonElement(stored).jsonObject[origin]?.jsonPrimitive?.content ?: return ""
-        return TokenCipher.decrypt(value) ?: error("插件认证密文无法解密")
+        return cipher.decrypt(value) ?: error("插件认证密文无法解密")
     }
 
     suspend fun setMinAgentEnabled(enabled: Boolean) =
-        context.dataStore.edit { it[KEY_MIN_AGENT_ENABLED] = enabled }
+        store.edit { it[KEY_MIN_AGENT_ENABLED] = enabled }
 
     suspend fun setLastStartEngine(engine: String) =
-        context.dataStore.edit { it[KEY_LAST_START_ENGINE] = engine }
+        store.edit { it[KEY_LAST_START_ENGINE] = engine }
 
     /** 记下一个工作目录的信任决定；[trusted] 为 null = 忘掉（下次会再问）。读改写在 DataStore 的同一个事务里 */
-    suspend fun setWorkspaceTrust(cwd: String, trusted: Boolean?) = context.dataStore.edit { prefs ->
+    suspend fun setWorkspaceTrust(cwd: String, trusted: Boolean?) = store.edit { prefs ->
         val next = WorkspaceTrust.with(prefs[KEY_WORKSPACE_TRUST].orEmpty(), cwd, trusted)
         if (next.isEmpty()) prefs.remove(KEY_WORKSPACE_TRUST) else prefs[KEY_WORKSPACE_TRUST] = next
     }
 
     suspend fun setDeviceWriteAllowlist(packages: Set<String>) =
-        context.dataStore.edit {
+        store.edit {
             if (packages.isEmpty()) it.remove(KEY_DEVICE_WRITE_ALLOWLIST)
             else it[KEY_DEVICE_WRITE_ALLOWLIST] = packages
         }
 
     suspend fun setA11yPromptVersion(versionCode: Int) =
-        context.dataStore.edit { it[KEY_A11Y_PROMPT_VERSION] = versionCode }
+        store.edit { it[KEY_A11Y_PROMPT_VERSION] = versionCode }
 
     /**
      * 记下这一次真正写进 settings.json 的托管键。**只给 `ProviderSync` 调。**
@@ -1002,21 +926,21 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
      * 写文件失败时绝不能更新它：那次什么都没写进去，把账记成新的，下一次就不知道
      * 该去删哪些旧键了。
      */
-    internal suspend fun setManagedEnvKeys(keys: Set<String>) = context.dataStore.edit {
+    internal suspend fun setManagedEnvKeys(keys: Set<String>) = store.edit {
         if (keys.isEmpty()) it.remove(KEY_MANAGED_ENV_KEYS) else it[KEY_MANAGED_ENV_KEYS] = keys
     }
 
     suspend fun setAppLanguage(language: AppLanguage) =
-        context.dataStore.edit { it[KEY_LANGUAGE] = language.name }
+        store.edit { it[KEY_LANGUAGE] = language.name }
 
     suspend fun setChineseDescriptions(enabled: Boolean) =
-        context.dataStore.edit { it[KEY_ZH_DESCRIPTIONS] = enabled }
+        store.edit { it[KEY_ZH_DESCRIPTIONS] = enabled }
 
     /** [mode] 为 null 就是「以后不要再记这个扩展名」 */
     suspend fun setOpenWithDefault(extension: String, mode: WorkspaceOpenMode?) {
         val ext = extension.trim().removePrefix(".").lowercase()
         if (ext.isBlank()) return
-        context.dataStore.edit { prefs ->
+        store.edit { prefs ->
             val current = parseOpenWithDefaults(prefs[KEY_OPEN_WITH].orEmpty()).toMutableMap()
             if (mode == null) current.remove(ext) else current[ext] = mode
             val encoded = formatOpenWithDefaults(current)
@@ -1024,24 +948,18 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
         }
     }
 
-    suspend fun clearOpenWithDefaults() = context.dataStore.edit { it.remove(KEY_OPEN_WITH) }
+    suspend fun clearOpenWithDefaults() = store.edit { it.remove(KEY_OPEN_WITH) }
 
     /**
-     * Codex 侧的整表覆盖写。和 [editProfiles] 是同一套规矩，一条不少：
-     * 打不开的密文绝不覆盖，active 必须落在表里。
+     * Codex 侧的整表覆盖写，和 [editProfiles] 走同一个 [editTable]：打不开的密文绝不覆盖，
+     * active 必须落在表里。
      *
      * 以前 Codex 这边没有这一层，各个写入口自己拼 —— 于是 active 没人维护、
      * 删除压根没有、编辑还会把条目挪到末尾。界面上只有一条配置时这些都看不出来。
      */
     private suspend fun editCodexProfiles(
         block: (List<CodexProfile>, String) -> Pair<List<CodexProfile>, String>,
-    ) = context.dataStore.edit { p ->
-        if (isUnreadableCipher(p[KEY_CODEX_PROFILES], TokenCipher::decrypt)) return@edit
-        val (next, activeId) = block(decodeCodexProfiles(p[KEY_CODEX_PROFILES]), p[KEY_CODEX_ACTIVE].orEmpty())
-        if (next.isEmpty()) p.remove(KEY_CODEX_PROFILES) else p[KEY_CODEX_PROFILES] = encodeCodexProfiles(next)
-        val resolved = resolveActiveIdBy(next, activeId) { it.id }
-        if (resolved.isBlank()) p.remove(KEY_CODEX_ACTIVE) else p[KEY_CODEX_ACTIVE] = resolved
-    }
+    ) = editTable(CODEX_PROFILES, block)
 
     suspend fun addCodexProfile(profile: CodexProfile, activate: Boolean = true): String {
         val entry = profile.copy(id = newProfileId(), baseUrl = normalizeCodexBaseUrl(profile.baseUrl))
@@ -1056,23 +974,20 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
      * 挪到列表末尾。只有一条配置时谁也看不见，多配置一上来就是「改个备注名，它跳到最后一行」。
      */
     suspend fun updateCodexProfile(profile: CodexProfile) = editCodexProfiles { list, active ->
-        list.map {
-            if (it.id != profile.id) it else profile.copy(baseUrl = normalizeCodexBaseUrl(profile.baseUrl))
-        } to active
+        CODEX_PROFILES.replace(list, profile.copy(baseUrl = normalizeCodexBaseUrl(profile.baseUrl))) to active
     }
 
     suspend fun deleteCodexProfile(id: String) = editCodexProfiles { list, active ->
-        list.filterNot { it.id == id } to active
+        CODEX_PROFILES.remove(list, id) to active
     }
 
     suspend fun moveCodexProfile(id: String, delta: Int) = editCodexProfiles { list, active ->
-        moveInList(list, delta) { it.id == id } to active
+        CODEX_PROFILES.move(list, id, delta) to active
     }
 
     /** 同 [reorderProfiles]：没提到的留在末尾 */
     suspend fun reorderCodexProfiles(order: List<String>) = editCodexProfiles { list, active ->
-        val rank = order.withIndex().associate { (i, id) -> id to i }
-        list.sortedBy { rank[it.id] ?: Int.MAX_VALUE } to active
+        CODEX_PROFILES.reorder(list, order) to active
     }
 
     /**
@@ -1081,23 +996,13 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
      */
     suspend fun setCodexProfile(profile: CodexProfile) = editCodexProfiles { list, _ ->
         val entry = profile.copy(baseUrl = normalizeCodexBaseUrl(profile.baseUrl))
-        val next = if (list.any { it.id == entry.id }) {
-            list.map { if (it.id == entry.id) entry else it }
-        } else {
-            list + entry
-        }
-        next to entry.id
+        CODEX_PROFILES.upsert(list, entry) to entry.id
     }
 
     /** [acknowledgeInsecure] 同 [setActiveProfile]：刚在明文风险框上放过行，别再问第二遍 */
     suspend fun setActiveCodexProfile(id: String, acknowledgeInsecure: Boolean = false) =
         editCodexProfiles { list, _ ->
-            val next = if (acknowledgeInsecure) {
-                list.map { if (it.id == id) it.copy(insecureAck = true) else it }
-            } else {
-                list
-            }
-            next to id
+            CODEX_PROFILES.acknowledge(list, id, acknowledgeInsecure) to id
         }
 
     /**
@@ -1128,123 +1033,46 @@ class SettingsStore(private val context: Context, scope: CoroutineScope? = null)
      * 只有用户在设置页上点过「清除并重新配置」才会走到这里 —— 在那之前 App 一直挡着
      * 写入，保着那串也许还能救的密文。清掉之后 [editProfiles] 自然恢复正常。
      */
-    suspend fun discardUnreadableCredentials() = context.dataStore.edit { p ->
-        for (table in unreadableTables(p)) {
+    suspend fun discardUnreadableCredentials() = store.edit { p ->
+        for (table in unreadableTables(cipher, p)) {
             p.remove(table)
-            CIPHER_TABLES[table]?.let { p.remove(it) }
+            CIPHER_TABLES.getValue(table).active?.let { p.remove(it) }
         }
     }
 }
 
 private val profilesJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-private fun newProfileId(): String = java.util.UUID.randomUUID().toString()
-
 /**
- * Claude 侧的 `ANTHROPIC_BASE_URL` 规整。
- *
- * 只做两件事：掐头去尾的空白与末尾 `/`，以及**剥掉末尾的 `/v1`**。
- * Anthropic / Claude Code 的约定是 base 不带版本段，CLI 自己去拼 `/v1/messages`；
- * 探活、取模型、机内路由也是往后拼 `/v1/…`。用户从 OpenAI 兼容中转抄地址时经常
- * 带着 `/v1` 进来（`https://one.oxapi.bond/v1`），不剥就会变成 `/v1/v1/models`——
- * 实测 404，而同一家在 cc-switch 里好好的，差的就是这一截。
- *
- * Codex / OpenAI 的 `base_url` **不要**走这里，见 [normalizeCodexBaseUrl]：那边的约定
- * 正好相反，官方就是 `https://api.openai.com/v1`。
+ * 按枚举名读一个设置。没存过、或存了现在的枚举里没有的名字，一律给 [default]：
+ * 降级后读到新版本写的值、手改坏了的值都是这样，不能让整条设置流炸在一个外观选项上。
  */
-internal fun normalizeBaseUrl(url: String): String {
-    val trimmed = url.trim().trimEnd('/')
-    val stripped = if (trimmed.endsWith("/v1", ignoreCase = true)) {
-        trimmed.dropLast(3).trimEnd('/')
-    } else {
-        trimmed
-    }
-    return stripped.ifBlank { AppSettings.DEFAULT_BASE_URL }
-}
+private inline fun <reified E : Enum<E>> Preferences.enumOf(key: Preferences.Key<String>, default: E): E =
+    this[key]?.let { runCatching { enumValueOf<E>(it) }.getOrNull() } ?: default
 
-/**
- * Codex / OpenAI 侧的 `base_url` 规整：只掐空白和末尾 `/`，**保留** `/v1`。
- *
- * 和 [normalizeBaseUrl] 对称——OpenAI 官方地址本身以 `/v1` 结尾，Codex 的
- * `config.toml` 也按这个约定写；剥掉反而会让官方与多数中转对不上。
- */
-internal fun normalizeCodexBaseUrl(url: String): String =
-    url.trim().trimEnd('/').ifBlank { "https://api.openai.com/v1" }
+private val CLAUDE_PROFILES = ProfileTable<ApiProfile>(
+    key = KEY_PROFILES,
+    activeKey = KEY_ACTIVE_PROFILE,
+    id = { it.id },
+    displayName = { it.displayName() },
+    duplicateOf = { source, newId, label -> source.copy(id = newId, label = label, unifiedId = "") },
+    acknowledged = { it.copy(insecureAck = true) },
+    decode = ::decodeProfiles,
+    encode = ::encodeProfiles,
+)
 
-/**
- * 在 Claude 风格的 base 后面拼一段以 `/` 开头的路径（通常是 `/v1/models` 之类）。
- *
- * 入库已经走 [normalizeBaseUrl] 剥过 `/v1`，这里再剥一次是给**还没重存过的旧数据**
- * 和「绕过入库直接拿字符串来拼」的调用点用的——同一处拼错一次，测活 / 取模型 /
- * 会话目录三条路会一起挂，而且表现完全像「这家中转坏了」。
- */
-internal fun joinClaudeApi(baseUrl: String, path: String): String {
-    val root = normalizeBaseUrl(baseUrl)
-    val p = if (path.startsWith("/")) path else "/$path"
-    return root + p
-}
+private val CODEX_PROFILES = ProfileTable<CodexProfile>(
+    key = KEY_CODEX_PROFILES,
+    activeKey = KEY_CODEX_ACTIVE,
+    id = { it.id },
+    displayName = { it.displayName() },
+    duplicateOf = { source, newId, label -> source.copy(id = newId, label = label, unifiedId = "") },
+    acknowledged = { it.copy(insecureAck = true) },
+    decode = ::decodeCodexProfiles,
+    encode = ::encodeCodexProfiles,
+)
 
-/**
- * 在 OpenAI / Codex 风格的 base 后面拼资源路径。
- *
- * [resource] 是 `/v1` **之后**那一段，比如 `/chat/completions`、`/models`、`/responses`。
- * base 已经以 `/v1` 结尾时直接拼；否则先补 `/v1` 再拼——两边的中转写法都认，
- * 不会再拼出 `/v1/v1/chat/completions`。
- */
-internal fun joinOpenAiApi(baseUrl: String, resource: String): String {
-    val root = normalizeCodexBaseUrl(baseUrl)
-    val r = if (resource.startsWith("/")) resource else "/$resource"
-    return if (root.endsWith("/v1", ignoreCase = true)) root + r else root + "/v1" + r
-}
-
-/**
- * 「这个地址会把凭据明文送上网吗」——整个 App 里这件事只有这一处判定。
- *
- * 成立要两个条件同时满足：
- * 1. 协议是 `http://`（https 一律算安全，没有 scheme 的串发不出去，也不报警）；
- * 2. 主机**不是回环**。`localhost` / `127.x.x.x` / `::1` 走 http 全程不出这台设备；
- *    `10.0.2.2` 是模拟器映射到宿主机的回环别名，同样不出这台机器。对这些报警是纯噪音。
- *
- * 局域网地址（`192.168.x.x` 之类）**算不安全**：同一个 Wi-Fi 下的任何人都在路上。
- *
- * 这个判定只用来**警告**，绝不用来阻断——有人的中转站就是明文 http 的公网 IP，
- * 拦下来等于让 App 不能用。发送逻辑（`ClaudeCodeManager.fetchRelayModels`）不看它。
- */
-internal fun isInsecureBaseUrl(url: String): Boolean {
-    val trimmed = url.trim()
-    if (!trimmed.startsWith(HTTP_SCHEME, ignoreCase = true)) return false
-    return !isLoopbackHost(baseUrlHost(trimmed))
-}
-
-private const val HTTP_SCHEME = "http://"
-
-/** 从 `http://user:pw@host:port/path?q#f` 里抠出 host：小写，IPv6 去掉方括号 */
-private fun baseUrlHost(url: String): String {
-    var rest = url.substring(HTTP_SCHEME.length)
-        .substringBefore('/')
-        .substringBefore('?')
-        .substringBefore('#')
-        .substringAfterLast('@') // userinfo
-    rest = when {
-        rest.startsWith("[") -> rest.substringAfter('[').substringBefore(']') // IPv6：端口在 ] 之后
-        // 不带方括号的 IPv6（严格说不合法，但人会这么填）：冒号超过一个就整串都是主机，别当端口切掉
-        rest.count { it == ':' } > 1 -> rest
-        else -> rest.substringBefore(':') // 端口
-    }
-    return rest.lowercase()
-}
-
-private val LOOPBACK_V4 = Regex("""127(\.\d{1,3}){3}""")
-
-private fun isLoopbackHost(host: String): Boolean = when {
-    // 连主机名都没有的地址根本发不出去，没必要吓人
-    host.isBlank() -> true
-    host == "localhost" || host.endsWith(".localhost") -> true
-    host == "::1" || host == "0:0:0:0:0:0:0:1" -> true
-    // 模拟器里宿主机的回环别名
-    host == "10.0.2.2" -> true
-    else -> LOOPBACK_V4.matches(host)
-}
+internal fun newProfileId(): String = java.util.UUID.randomUUID().toString()
 
 /**
  * 升级上来的既有配置一律视为「已确认明文风险」。
@@ -1294,36 +1122,36 @@ internal fun decodeProfilesJson(json: String): List<ApiProfile> {
     return runCatching { profilesJson.decodeFromString<List<ApiProfile>>(json) }.getOrDefault(emptyList())
 }
 
-private fun encodeProfiles(profiles: List<ApiProfile>): String =
-    TokenCipher.encrypt(encodeProfilesJson(profiles))
+internal fun encodeProfiles(cipher: CredentialCipher, profiles: List<ApiProfile>): String =
+    cipher.encrypt(encodeProfilesJson(profiles))
 
-private fun encodeCodexProfiles(profiles: List<CodexProfile>): String =
-    TokenCipher.encrypt(profilesJson.encodeToString(profiles))
+private fun encodeCodexProfiles(cipher: CredentialCipher, profiles: List<CodexProfile>): String =
+    cipher.encrypt(profilesJson.encodeToString(profiles))
 
-private fun decodeCodexProfiles(raw: String?): List<CodexProfile> {
-    val plain = TokenCipher.decrypt(raw.orEmpty()) ?: return emptyList()
+private fun decodeCodexProfiles(cipher: CredentialCipher, raw: String?): List<CodexProfile> {
+    val plain = cipher.decrypt(raw.orEmpty()) ?: return emptyList()
     return runCatching { profilesJson.decodeFromString<List<CodexProfile>>(plain) }
         .getOrDefault(emptyList())
         // 读的时候也规整一遍：旧数据 / 深链 / 手改过的密文都可能带着多余的斜杠
         .map { it.copy(baseUrl = normalizeCodexBaseUrl(it.baseUrl)) }
 }
 
-private fun decodeWebSearch(raw: String?): WebSearchConfig =
-    decodeWebSearchJson(TokenCipher.decrypt(raw.orEmpty()).orEmpty())
+private fun decodeWebSearch(cipher: CredentialCipher, raw: String?): WebSearchConfig =
+    decodeWebSearchJson(cipher.decrypt(raw.orEmpty()).orEmpty())
 
-private fun decodeProxy(raw: String?): ProxyConfig =
-    decodeProxyJson(TokenCipher.decrypt(raw.orEmpty()).orEmpty())
+private fun decodeProxy(cipher: CredentialCipher, raw: String?): ProxyConfig =
+    decodeProxyJson(cipher.decrypt(raw.orEmpty()).orEmpty())
 
-private fun decodeProfiles(raw: String?): List<ApiProfile> =
-    decodeProfilesJson(TokenCipher.decrypt(raw.orEmpty()).orEmpty())
+internal fun decodeProfiles(cipher: CredentialCipher, raw: String?): List<ApiProfile> =
+    decodeProfilesJson(cipher.decrypt(raw.orEmpty()).orEmpty())
         // 读的时候剥掉末尾 /v1：升级前存进去的「OpenAI 抄来的地址」不必等用户重存一次才好用
         .map { it.copy(baseUrl = normalizeBaseUrl(it.baseUrl)) }
 
-private fun encodeUnifiedProfiles(profiles: List<UnifiedProfile>): String =
-    TokenCipher.encrypt(profilesJson.encodeToString(profiles))
+private fun encodeUnifiedProfiles(cipher: CredentialCipher, profiles: List<UnifiedProfile>): String =
+    cipher.encrypt(profilesJson.encodeToString(profiles))
 
-private fun decodeUnifiedProfiles(raw: String?): List<UnifiedProfile> {
-    val plain = TokenCipher.decrypt(raw.orEmpty()) ?: return emptyList()
+private fun decodeUnifiedProfiles(cipher: CredentialCipher, raw: String?): List<UnifiedProfile> {
+    val plain = cipher.decrypt(raw.orEmpty()) ?: return emptyList()
     return runCatching { profilesJson.decodeFromString<List<UnifiedProfile>>(plain) }
         .getOrDefault(emptyList())
         .map {
@@ -1339,12 +1167,19 @@ private fun decodeUnifiedProfiles(raw: String?): List<UnifiedProfile> {
  *
  * 判定抽成纯函数是为了能在单测里钉死 —— 真正的解密要走 Android Keystore，
  * JVM 单测里没有那东西。[decrypt] 解不开时给 null。
+ *
+ * 解开了但 [parses] 说读不懂（schema 改过、降级回旧版、手改过明文）同样算打不开：
+ * 读侧把它当空表是为了设置页不炸，可写侧照着空表整表覆盖，原来那串就没了。
  */
-internal fun isUnreadableCipher(raw: String?, decrypt: (String) -> String?): Boolean =
-    !raw.isNullOrBlank() && raw.startsWith(CIPHER_PREFIX) && decrypt(raw) == null
-
-/** 密文前缀，[TokenCipher] 写出来的格式是 `v1:<iv>:<密文>` */
-internal const val CIPHER_PREFIX = "v1:"
+internal fun isUnreadableCipher(
+    raw: String?,
+    parses: (String) -> Boolean = { true },
+    decrypt: (String) -> String?,
+): Boolean {
+    if (raw.isNullOrBlank()) return false
+    val plain = decrypt(raw) ?: return raw.startsWith(CIPHER_PREFIX)
+    return plain.isNotBlank() && !parses(plain)
+}
 
 /**
  * 三张加密表，以及各自的「当前选中」键（统一表没有自己的 active，选中记在两张派生表上）。
@@ -1353,28 +1188,37 @@ internal const val CIPHER_PREFIX = "v1:"
  * 三张表是同一把 Keystore 密钥，要坏一起坏 —— 用户点完「清除并重新配置」，两张旧表清了，
  * 统一表还是打不开，[SettingsStore.editUnified] 从此静默拒写，而提示条已经不见了。
  */
-private val CIPHER_TABLES: Map<Preferences.Key<String>, Preferences.Key<String>?> = mapOf(
-    KEY_PROFILES to KEY_ACTIVE_PROFILE,
-    KEY_CODEX_PROFILES to KEY_CODEX_ACTIVE,
-    KEY_UNIFIED_PROFILES to null,
+internal class CipherTable(val active: Preferences.Key<String>?, val parses: (String) -> Boolean)
+
+private inline fun <reified T> decodesAs(json: String): Boolean =
+    runCatching { profilesJson.decodeFromString<T>(json) }.isSuccess
+
+internal val CIPHER_TABLES: Map<Preferences.Key<String>, CipherTable> = mapOf(
+    KEY_PROFILES to CipherTable(KEY_ACTIVE_PROFILE) { decodesAs<List<ApiProfile>>(it) },
+    KEY_CODEX_PROFILES to CipherTable(KEY_CODEX_ACTIVE) { decodesAs<List<CodexProfile>>(it) },
+    KEY_UNIFIED_PROFILES to CipherTable(null) { decodesAs<List<UnifiedProfile>>(it) },
 )
 
-private fun unreadableTables(p: Preferences): List<Preferences.Key<String>> =
-    CIPHER_TABLES.keys.filter { isUnreadableCipher(p[it], TokenCipher::decrypt) }
+private fun isTableUnreadable(cipher: CredentialCipher, p: Preferences, table: Preferences.Key<String>): Boolean =
+    isUnreadableCipher(p[table], CIPHER_TABLES.getValue(table).parses, cipher::decrypt)
 
-private fun credentialsUnreadable(p: Preferences): Boolean = unreadableTables(p).isNotEmpty()
+private fun unreadableTables(cipher: CredentialCipher, p: Preferences): List<Preferences.Key<String>> =
+    CIPHER_TABLES.keys.filter { isTableUnreadable(cipher, p, it) }
+
+private fun credentialsUnreadable(cipher: CredentialCipher, p: Preferences): Boolean =
+    unreadableTables(cipher, p).isNotEmpty()
 
 /**
  * 读设置流时用。迁移是在 [SettingsStore.current] 里写的，而 UI 可能先一步订阅到流 ——
  * 那一瞬还只有老键，这里就地按老格式兜一条出来，免得刚升级的人看到一张空表。
  */
-private fun readProfiles(p: Preferences): List<ApiProfile> {
+private fun readProfiles(cipher: CredentialCipher, p: Preferences): List<ApiProfile> {
     // 明文风险的迁移同理：写是在 current() / editProfiles() 里做的，流可能先读到。
     // 标记还没落盘就说明表里全是「升级之前就有的」配置，一律当已确认，不给人弹确认框
     val ackMigrated = p[KEY_INSECURE_ACK_MIGRATED] == true
-    val stored = decodeProfiles(p[KEY_PROFILES])
+    val stored = decodeProfiles(cipher, p[KEY_PROFILES])
     if (stored.isNotEmpty()) return if (ackMigrated) stored else ackExistingProfiles(stored)
-    val legacy = TokenCipher.decrypt(p[KEY_TOKEN].orEmpty()).orEmpty()
+    val legacy = cipher.decrypt(p[KEY_TOKEN].orEmpty()).orEmpty()
     if (legacy.isBlank()) return emptyList()
     return listOf(
         ApiProfile(
@@ -1384,65 +1228,6 @@ private fun readProfiles(p: Preferences): List<ApiProfile> {
             insecureAck = true,
         ),
     )
-}
-
-/** Keystore-backed token storage. The format is `v1:<iv>:<ciphertext>` in DataStore. */
-private object TokenCipher {
-    private const val KEY_ALIAS = "min.anthropic.auth-token"
-    private const val PREFIX = CIPHER_PREFIX
-    private const val TRANSFORMATION = "AES/GCM/NoPadding"
-
-    fun isEncrypted(value: String): Boolean = value.startsWith(PREFIX)
-
-    fun encrypt(value: String): String {
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, key())
-        val iv = Base64.encodeToString(cipher.iv, Base64.NO_WRAP)
-        val body = Base64.encodeToString(cipher.doFinal(value.toByteArray(StandardCharsets.UTF_8)), Base64.NO_WRAP)
-        return "$PREFIX$iv:$body"
-    }
-
-    /**
-     * 解不开时返回 **null**，不是空串。
-     *
-     * 这两件事必须分得开：空串是「没存过」，null 是「密文在这儿但 Keystore 打不开」。
-     * 早先一律给空串，于是密钥失效（用户改了锁屏、换机恢复了备份）之后整张配置表
-     * 读成空，界面显示「还没配过」，而用户随手新增一条就会把原密文覆盖掉 —— 那时候
-     * 才是真的找不回来了。
-     */
-    fun decrypt(value: String): String? {
-        if (value.isBlank()) return ""
-        if (!isEncrypted(value)) return value
-        return runCatching {
-            val parts = value.split(':', limit = 3)
-            require(parts.size == 3)
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(
-                Cipher.DECRYPT_MODE,
-                key(),
-                GCMParameterSpec(128, Base64.decode(parts[1], Base64.DEFAULT)),
-            )
-            String(cipher.doFinal(Base64.decode(parts[2], Base64.DEFAULT)), StandardCharsets.UTF_8)
-        }.getOrNull()
-    }
-
-    @Synchronized
-    private fun key(): SecretKey {
-        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (store.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-        generator.init(
-            KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-            )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setRandomizedEncryptionRequired(true)
-                .build(),
-        )
-        return generator.generateKey()
-    }
 }
 
 /** [AppSettings.minAgentEnabled] 的取值：存过就用存的，没存过按构建类型（debug 开、release 关） */

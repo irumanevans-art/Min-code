@@ -470,4 +470,27 @@ class CodexAppServerProtocolTest {
         val event = parseCodexEvent("""{"method":"warning","params":{"count":3}}""")
         assertTrue(event is CodexEvent.Unknown)
     }
+
+    @Test
+    fun `a handler failure drops only that event and the loop keeps reading`() {
+        val handled = mutableListOf<String>()
+        val failed = mutableListOf<Pair<String?, String?>>()
+        dispatchCodexLines(
+            sequenceOf(
+                """{"method":"item/agentMessage/delta","params":{"itemId":"m1","delta":"a"}}""",
+                "not json at all",
+                """{"method":"item/agentMessage/delta","params":{"itemId":"m1","delta":"boom"}}""",
+                """{"method":"item/agentMessage/delta","params":{"itemId":"m1","delta":"c"}}""",
+            ),
+            handle = { event ->
+                val delta = (event as CodexEvent.AgentMessageDelta).delta
+                if (delta == "boom") error("handler blew up")
+                handled += delta
+            },
+            onFailure = { event, e -> failed += event::class.simpleName to e.message },
+        )
+        // 炸的那条之后的事件照样处理；不是 JSON 的行静默跳过
+        assertEquals(listOf("a", "c"), handled)
+        assertEquals(listOf<Pair<String?, String?>>("AgentMessageDelta" to "handler blew up"), failed)
+    }
 }

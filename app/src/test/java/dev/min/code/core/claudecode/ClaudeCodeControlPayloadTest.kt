@@ -137,11 +137,11 @@ class ClaudeCodeControlPayloadTest {
      */
     @Test
     fun `hidden aliases cover the models the cli omits until selected`() {
-        val values = ClaudeCodeManager.HIDDEN_MODEL_ALIASES.map { it.value }
+        val values = ClaudeCodeModelList.HIDDEN_MODEL_ALIASES.map { it.value }
         assertTrue("fable" in values)
-        assertTrue(ClaudeCodeManager.HIDDEN_MODEL_ALIASES.all { it.hiddenAlias })
+        assertTrue(ClaudeCodeModelList.HIDDEN_MODEL_ALIASES.all { it.hiddenAlias })
         // 别名必须是 --model 认的值，displayName 只用于展示，不能拿去当 id
-        assertTrue(ClaudeCodeManager.HIDDEN_MODEL_ALIASES.none { it.value.contains(' ') })
+        assertTrue(ClaudeCodeModelList.HIDDEN_MODEL_ALIASES.none { it.value.contains(' ') })
     }
 
     /** 目录里已有的项不该被别名重复列出（去重逻辑在 UI 侧按 value 比对） */
@@ -149,7 +149,7 @@ class ClaudeCodeControlPayloadTest {
     fun `hidden aliases do not collide with catalog values`() {
         val listed = json.parseToJsonElement(listModelsPayload).jsonObject["models"]!!
             .asJsonArrayOrNull()!!.mapNotNull { it.toModelOption() }.map { it.value }.toSet()
-        val extras = ClaudeCodeManager.HIDDEN_MODEL_ALIASES.filter { it.value !in listed }
+        val extras = ClaudeCodeModelList.HIDDEN_MODEL_ALIASES.filter { it.value !in listed }
 
         // 夹具里已有 fable，去重后就不该再出现（否则面板上会是两条 Fable）
         assertTrue("fable 已在目录里，不该重复补", extras.none { it.value == "fable" })
@@ -169,7 +169,7 @@ class ClaudeCodeControlPayloadTest {
      */
     @Test
     fun `hidden aliases cover what slash model advertises`() {
-        val values = ClaudeCodeManager.HIDDEN_MODEL_ALIASES.map { it.value }.toSet()
+        val values = ClaudeCodeModelList.HIDDEN_MODEL_ALIASES.map { it.value }.toSet()
         listOf("fable", "fable[1m]", "best", "opusplan", "opus", "sonnet", "haiku").forEach {
             assertTrue("/model 报了 $it，但别名清单里没有", it in values)
         }
@@ -193,60 +193,5 @@ class ClaudeCodeControlPayloadTest {
         val models = payload["models"]!!.asJsonArrayOrNull()!!.mapNotNull { it.toModelOption() }
         assertTrue(models.isNotEmpty())
         assertEquals("default", models[0].value)
-    }
-
-    // --- 中转站 GET /v1/models ---
-
-    /** Anthropic 原版形状：带 type / display_name / created_at */
-    @Test
-    fun `relay models keep claude entries and drop the rest`() {
-        val body = """
-            {"data":[
-              {"type":"model","id":"claude-fable-5-1","display_name":"Claude Fable 5.1","created_at":"2026-08-01T00:00:00Z"},
-              {"type":"model","id":"claude-opus-5","display_name":"Claude Opus 5","created_at":"2026-05-01T00:00:00Z"},
-              {"id":"gpt-5","object":"model"},
-              {"id":"claude-opus-5"}
-            ],"has_more":false}
-        """.trimIndent()
-        val models = ClaudeCodeManager.parseRelayModels(body)
-        // gpt 被过滤，重复的 opus 只留一个，Fable 5.1 在
-        assertEquals(listOf("claude-fable-5-1", "claude-opus-5"), models.map { it.id }.sorted())
-        assertEquals("Claude Fable 5.1", models.first { it.id == "claude-fable-5-1" }.displayName)
-    }
-
-    /** OpenAI 风格的中转站：没有 display_name，且全是改过名的 id → 退回全量而不是列空 */
-    @Test
-    fun `relay models fall back to everything when nothing says claude`() {
-        val body = """{"object":"list","data":[{"id":"fable-5.1","object":"model"},{"id":"opus-5","object":"model"}]}"""
-        val models = ClaudeCodeManager.parseRelayModels(body)
-        assertEquals(2, models.size)
-        assertNull(models[0].displayName)
-    }
-
-    /** 真实中转站的目录：display_name 等于 id 时视为没有；顺序 fable > opus > sonnet > haiku，同系列新的在前 */
-    @Test
-    fun `relay models are ordered by family then version`() {
-        val ids = listOf(
-            "claude-3-5-haiku-20241022", "claude-sonnet-4-5-20250929", "claude-opus-4-1-20250805",
-            "claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "claude-opus-4-8",
-        )
-        val body = """{"data":[${ids.joinToString(",") { "{\"id\":\"$it\",\"display_name\":\"$it\"}" }}]}"""
-        val models = ClaudeCodeManager.parseRelayModels(body)
-        assertEquals(
-            listOf(
-                "claude-fable-5-1", "claude-fable-5",
-                "claude-opus-5", "claude-opus-4-8", "claude-opus-4-1-20250805",
-                "claude-sonnet-5", "claude-sonnet-4-5-20250929",
-                "claude-3-5-haiku-20241022",
-            ),
-            models.map { it.id },
-        )
-        assertTrue(models.all { it.displayName == null })
-    }
-
-    @Test(expected = IllegalStateException::class)
-    fun `relay models reject a non list body`() {
-        // 中转站把 /v1/models 当成未知路径返回一段 HTML/错误 JSON 时，必须报错而不是当成空列表
-        ClaudeCodeManager.parseRelayModels("""{"error":{"message":"not found"}}""")
     }
 }

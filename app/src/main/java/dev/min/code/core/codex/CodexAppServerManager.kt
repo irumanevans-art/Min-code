@@ -1,6 +1,10 @@
 package dev.min.code.core.codex
 
 import android.util.Log
+import dev.min.code.core.json.int
+import dev.min.code.core.json.obj
+import dev.min.code.core.json.str
+import dev.min.code.core.rootfs.DEFAULT_CWD
 import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.ClippedOutput
 import dev.min.code.core.session.SessionStatus
@@ -153,9 +157,9 @@ class CodexAppServerManager(
     /**
      * stdin 的写入队列：**入队顺序就是字节顺序**，单消费者在 IO 上串行写。
      *
-     * 以前是持着 [lock] 直接写管道。app-server 读得慢、管道写满时 write 会阻塞 ——
+     * 持着 [lock] 直接写管道的话：app-server 读得慢、管道写满时 write 会阻塞 ——
      * 锁跟着一起被攥住，读循环全卡在门口，界面上点「停止」的主线程也卡在同一把锁上，就是 ANR。
-     * Claude 侧早就改成了写队列（ClaudeCodeManager.writeQueue），这里对齐。
+     * Claude 侧也是同一个队列做法（`ClaudeCodeCliPipe` 的写队列）。
      *
      * 每一行带着入队那一刻的 writer：旧进程没写完的行不会串进新进程，
      * 已经摘下的管道写失败也不会去误伤新会话。
@@ -524,7 +528,9 @@ class CodexAppServerManager(
     private fun readStdout(activeProcess: Process): Job = scope.launch {
         runCatching {
             BufferedReader(InputStreamReader(activeProcess.inputStream, Charsets.UTF_8)).useLines { lines ->
-                lines.forEach { line -> parseCodexEvent(line)?.let(::handleEvent) }
+                dispatchCodexLines(lines, { handleEvent(it) }) { event, e ->
+                    Log.e(TAG, "codex 事件处理失败，已跳过：${event::class.simpleName}", e)
+                }
             }
         }.onFailure { Log.w(TAG, "codex stdout 读取结束", it) }
     }
@@ -965,9 +971,6 @@ class CodexAppServerManager(
 
     companion object {
         private const val TAG = "CodexAppServer"
-
-        /** proot 的挂载点，和 Claude 那边同一个工作区 */
-        const val DEFAULT_CWD = "/workspace"
 
         /**
          * 从拉起进程到 thread/start|resume 应答的上限。这一段是整个 Starting：

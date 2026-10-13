@@ -1,6 +1,7 @@
 package dev.min.code.core.engine.claude
 
 import dev.min.code.core.claudecode.ClaudeCodeManager
+import dev.min.code.core.claudecode.ClaudeCodeModelList
 import dev.min.code.core.claudecode.ClaudeCodePermissionMode
 import dev.min.code.core.claudecode.ClaudeStateSnapshot
 import dev.min.code.core.engine.AgentSessionState
@@ -213,7 +214,7 @@ internal object AgentStateSnapshotRender {
         val selected = unq(base["options.model"])
         val displayOf = models.toMap()
         // 隐藏别名表（HIDDEN_MODEL_ALIASES）也参与芯片名查找：与页面一致
-        val hidden = ClaudeCodeManager.HIDDEN_MODEL_ALIASES.associate { it.value to it.displayName }
+        val hidden = ClaudeCodeModelList.HIDDEN_MODEL_ALIASES.associate { it.value to it.displayName }
         val modelChip = if (selected != null) (avail(base)[selected] ?: hidden[selected] ?: selected)
         else unq(base["appliedModel"]) ?: unq(base["model"]) ?: ""
         out["derived.modelChip"] = q(modelChip)

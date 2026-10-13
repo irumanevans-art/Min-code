@@ -50,4 +50,18 @@ class ClaudeCodeControlErrorsTest {
         assertEquals("boom", describeControlError("boom", "check_failed"))
         assertEquals("boom", describeControlError("boom", null))
     }
+
+    /** 同一个动作在各个入口（停任务、切目录……）给用户的必须是同一句话，这里把三种形状钉死 */
+    @Test
+    fun `failure texts share one shape per action`() {
+        val error = ControlOutcome.Error("boom", "check_failed")
+        assertEquals("停止失败：boom", error.describe("停止"))
+        assertEquals("boom", error.reason())
+
+        val known = ControlOutcome.Error(opus1m, "unavailable_for_account")
+        assertEquals("切换模型失败：${known.reason()}", known.describe("切换模型"))
+
+        assertEquals("停止超时", ControlOutcome.Timeout.describe("停止"))
+        assertEquals("CLI 未应答（${ClaudeCodeControlChannel.TIMEOUT_MS / 1000} 秒超时）", ControlOutcome.Timeout.reason())
+    }
 }

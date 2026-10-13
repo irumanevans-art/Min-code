@@ -2,6 +2,7 @@ package dev.min.code.core.claudecode
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -13,6 +14,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import dev.min.code.core.rootfs.DeviceArch
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.rootfs.filesDirFor
+import dev.min.code.core.rootfs.linuxDirFor
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
@@ -153,6 +156,9 @@ class ClaudeCodeInstaller(
             // 版本号要落到 UI，不能只写日志：@latest 装的版本会随时间漂移，
             // 出问题时不知道装的是哪一版就没法定位
             onState(InstallState.Done(probeCliVersion(workspaceId, linuxDir)))
+        } catch (e: CancellationException) {
+            // 用户取消不是失败：别发 Failed，否则 UI 会把「点了取消」显示成一条报错
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "install failed", e)
             onState(InstallState.Failed(e.message ?: e.toString()))
@@ -207,6 +213,8 @@ class ClaudeCodeInstaller(
         } catch (e: Exception) {
             // 任一步失败都可能留下「wrapper 新 / native 旧但完整」的半截状态，置脏让下次强制重装 native
             markNativePairDirty(workspaceId)
+            // 取消同样可能停在半截（置脏照做），但它不是失败：不发 Failed
+            if (e is CancellationException) throw e
             Log.e(TAG, "updateCli failed", e)
             onState(InstallState.Failed(e.message ?: e.toString()))
             throw e
@@ -304,7 +312,7 @@ class ClaudeCodeInstaller(
         try {
             val integrity = fetchNativeIntegrity(pkg, version)
 
-            val filesDir = File(workspaceDir(root), "files").apply { mkdirs() }
+            val filesDir = filesDirFor(context, root).apply { mkdirs() }
             requireFreeSpace(filesDir, NATIVE_REQUIRED_BYTES, "Claude Code 原生二进制")
             val tarball = File(filesDir, NATIVE_ARCHIVE_NAME)
             fetchVerified(
@@ -537,6 +545,8 @@ class ClaudeCodeInstaller(
             Log.i(TAG, "apt upgrade done: $summary")
             onState(InstallState.Done(null))
             summary
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "upgradeApt failed", e)
             onState(InstallState.Failed(e.message ?: e.toString()))
@@ -650,7 +660,7 @@ class ClaudeCodeInstaller(
         onState: suspend (InstallState) -> Unit,
     ) {
         val arch = nodeArch()
-        val filesDir = File(workspaceDir(root), "files").apply { mkdirs() }
+        val filesDir = filesDirFor(context, root).apply { mkdirs() }
         val tarball = File(filesDir, NODE_ARCHIVE_NAME)
         val expectedSha = NODE_SHA256[arch]
             ?: error("缺少 $arch 的官方 SHA-256 常量，拒绝在未校验的情况下安装")
@@ -700,7 +710,7 @@ class ClaudeCodeInstaller(
      *   原生二进制取自官方 registry），镜像就只剩"加速"这一个作用 —— 内容对不上就当没下过，
      *   删档重来。这样既拿到速度，又没有放松可信度。
      */
-    private suspend fun fetchVerified(
+    internal suspend fun fetchVerified(
         sources: List<String>,
         dest: File,
         expected: Digest,
@@ -738,6 +748,9 @@ class ClaudeCodeInstaller(
                     Log.w(TAG, "${expected.algorithm} mismatch from $url: $actual != ${expected.hex}")
                     dest.delete()
                     lastError = IllegalStateException("$label 下载的${what}校验不通过")
+                } catch (e: CancellationException) {
+                    // 取消要一路抛出去：吞掉的话会继续试下一个镜像，用户点了取消还在下
+                    throw e
                 } catch (e: Exception) {
                     Log.w(TAG, "download attempt failed: $url", e)
                     lastError = e
@@ -808,10 +821,7 @@ class ClaudeCodeInstaller(
         return digest.digest().toHex()
     }
 
-    private fun workspaceDir(root: String): File =
-        File(File(context.filesDir, "workspaces"), root)
-
-    private fun linuxDir(root: String): File = File(workspaceDir(root), "linux")
+    private fun linuxDir(root: String): File = linuxDirFor(context, root)
 
     companion object {
         private const val TAG = "ClaudeCodeInstaller"

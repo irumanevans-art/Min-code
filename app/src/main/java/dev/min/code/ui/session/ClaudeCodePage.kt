@@ -376,6 +376,11 @@ fun ClaudeCodePage(
     // 导出用的字头在这里取好：toTranscriptText 在 onClick 里跑，那儿拿不到资源
     val transcriptLabels = rememberTranscriptLabels()
     val sessionTransfer = rememberSessionTransfer(listVm, sessions)
+    // 会话内容页下命令的出口，按 ViewModel 建一份记住（见 SessionActions）。
+    // Codex 连接方式面板住在本函数顶层，设置里的入口经它回来开
+    val sessionActions = remember(vm, toolsVm) {
+        SessionActions.from(vm, toolsVm, onOpenCodexConnection = { showCodexConnection = true })
+    }
 
     val drawer: @Composable (paneWidth: Dp?) -> Unit = { paneWidth ->
         ClaudeCodeSessionDrawer(
@@ -463,6 +468,7 @@ fun ClaudeCodePage(
                 vm = vm,
                 toolsVm = toolsVm,
                 configVm = configVm,
+                actions = sessionActions,
                 dailyCostUsd = dailyCostUsd,
                 chineseDescriptions = chineseDescriptions,
                 // 宽屏也始终给汉堡：展开=收起，收起=展开（对齐 Kimi / DeepSeek）
@@ -470,7 +476,6 @@ fun ClaudeCodePage(
                 onOpenDrawer = if (wide) toggleSessionList else openSessionList,
                 onOpenPlan = { showPlan = true },
                 onComposerFocusChange = { composerFocused = it },
-                onOpenCodexConnection = { showCodexConnection = true },
                 codexProfileModel = codexProfile.model.trim().takeIf { it.isNotBlank() },
             )
         } else {
@@ -920,139 +925,6 @@ private fun AgentSessionState.subtitle(): String = when {
     else -> "Claude Code"
 }
 
-/**
- * 整条会话导出成 markdown。
- *
- * 会话流里每条都包了 `SelectionContainer`，但**跨条选择是做不到的** —— LazyColumn 会把
- * 滚出屏幕的条目回收掉，选区跟着断，所以每条只能各管各的。想把一整轮工作贴到别处时，
- * 逐条选逐条复制不现实，这里一次性给全。
- *
- * 工具调用只导出摘要不导出完整结果：一次 Read 的结果动辄上千行，全塞进去会把真正想要的
- * 对话内容淹掉。要完整结果的话展开那条工具卡单独选中复制。
- */
-internal fun List<ChatItem>.toTranscriptText(labels: TranscriptLabels): String = buildString {
-    this@toTranscriptText.forEach { item ->
-        when (item) {
-            is ChatItem.UserText -> append("## ${labels.user}\n\n${item.text}\n\n")
-            // 说话人是产品名，不翻
-            // 导出是会话记录的口径：MessageDisplay 只改屏显，导出取原文
-            is ChatItem.AssistantText -> append("## Claude\n\n${item.transcriptText}\n\n")
-            is ChatItem.Thinking -> append("### ${labels.thinking}\n\n${item.text}\n\n")
-            is ChatItem.Note -> append("> ${item.text}\n\n")
-            // 回退掉的对话不导出（导出的是「现在这条对话」），折叠行本身留一句
-            is ChatItem.Folded -> append("> ${item.title}\n\n")
-            // 子 agent 的报告：标题行（类型 · 描述 · 状态）加正文，导出时不折叠
-            // 发给用户的文件：导出文件名，文件本身不在导出里
-            is ChatItem.SentFiles -> append("> ${(listOfNotNull(item.caption) + item.names).joinToString(" · ")}\n\n")
-            is ChatItem.AgentReport -> append("> ${item.agentType}${item.description?.let { " · $it" }.orEmpty()} · ${item.status}\n\n${item.body}\n\n")
-            // 进程输出导成代码块：贴到别处去查的时候，等宽和原样换行都要保住
-            is ChatItem.ProcessOutput ->
-                append("```\n${item.lines.joinToString("\n")}\n```\n\n")
-            is ChatItem.ToolCall -> {
-                val status = when (item.status) {
-                    ChatItem.ToolCall.Status.Running -> labels.toolRunning
-                    ChatItem.ToolCall.Status.Done -> labels.toolDone
-                    ChatItem.ToolCall.Status.Error -> labels.toolError
-                }
-                append("- `${item.name}` ${toolSummary(item.name, item.input, labels)} — $status\n\n")
-            }
-        }
-    }
-}.trim()
-
-/**
- * 会话流表层用到的全部字头。[toTranscriptText]、[ToolEntry]、[ToolCallDetail]、
- * [ToolInputPreview] 和会话搜索都不是 @Composable（或不该逐条取资源），取不到
- * `stringResource`，由调用侧在组合时取好一次性传下去。
- *
- * 带 `%1$d` 的是格式模板，消费方用 `String.format` 现场填数。
- */
-internal data class TranscriptLabels(
-    val user: String,
-    val thinking: String,
-    val toolRunning: String,
-    val toolDone: String,
-    val toolError: String,
-    /** 折叠行右侧：这次调用卡在等人批准 */
-    val toolAwaiting: String,
-    /** Read 折叠行：「101–200 行」 */
-    val readRange: String,
-    /** Read 折叠行：「从 101 行」 */
-    val readFrom: String,
-    /** Read 折叠行：「前 50 行」 */
-    val readFirst: String,
-    /** Edit 折叠行：replace_all 时的「全部替换」 */
-    val replaceAll: String,
-    /** 行数（Write 的行数、结果行数共用）：「N 行」 */
-    val nLines: String,
-    /** MultiEdit 的编辑处数：「N 处」 */
-    val nEdits: String,
-    /** TodoWrite 的进度：「1/3 已完成」 */
-    val todoDone: String,
-    /** AskUserQuestion 摘不出去内容时的兜底 */
-    val askUser: String,
-    /** 计划模式工具没有 plan 正文时的兜底 */
-    val planMode: String,
-    /** 子任务角标：「N 步」（复用工作块的步数文案） */
-    val nSteps: String,
-    /** diff 公共前缀省略的头，`@@` 前缀是 DiffView 着色的依据，两种语言都得保留 */
-    val diffElidedAbove: String,
-    /** diff 公共后缀省略的头，同上 */
-    val diffElidedBelow: String,
-    /** diff 源字段超长截断的尾巴 */
-    val diffTruncated: String,
-    // 设备操控那六把工具的折叠行摘要。它们经 MCP 挂进来，入参是 index / direction
-    // 这种裸值，走不到按文件名 / 按命令那套摘要上去
-    val deviceTap: String,
-    val deviceInput: String,
-    val deviceSwipe: String,
-    val deviceOpenApp: String,
-    val deviceBack: String,
-    val deviceUiTree: String,
-)
-
-@Composable
-internal fun rememberTranscriptLabels(): TranscriptLabels = TranscriptLabels(
-    user = stringResource(R.string.session_export_user),
-    thinking = stringResource(R.string.session_export_thinking),
-    toolRunning = stringResource(R.string.session_tool_status_running),
-    toolDone = stringResource(R.string.session_tool_status_done),
-    toolError = stringResource(R.string.session_tool_status_error),
-    toolAwaiting = stringResource(R.string.session_tool_status_awaiting),
-    readRange = stringResource(R.string.tool_summary_range),
-    readFrom = stringResource(R.string.tool_summary_from_line),
-    readFirst = stringResource(R.string.tool_summary_first_lines),
-    replaceAll = stringResource(R.string.tool_summary_replace_all),
-    nLines = stringResource(R.string.tool_summary_n_lines),
-    nEdits = stringResource(R.string.tool_summary_n_edits),
-    todoDone = stringResource(R.string.tool_summary_todo_done),
-    askUser = stringResource(R.string.tool_summary_ask_user),
-    planMode = stringResource(R.string.tool_summary_plan),
-    nSteps = stringResource(R.string.transcript_work_steps),
-    diffElidedAbove = stringResource(R.string.tool_diff_elided_above),
-    diffElidedBelow = stringResource(R.string.tool_diff_elided_below),
-    diffTruncated = stringResource(R.string.tool_diff_truncated),
-    deviceTap = stringResource(R.string.device_tool_tap),
-    deviceInput = stringResource(R.string.device_tool_input),
-    deviceSwipe = stringResource(R.string.device_tool_swipe),
-    deviceOpenApp = stringResource(R.string.device_tool_open_app),
-    deviceBack = stringResource(R.string.device_tool_back),
-    deviceUiTree = stringResource(R.string.device_tool_ui_tree),
-)
-
-/**
- * 记住最后一个非空值。给"退场动画"用：AnimatedVisibility 在收起的那几百毫秒里还要能
- * 画出刚才的内容，而状态本身这时已经空了。不是 State——它只在同一次重组里被读，
- * 不需要自己触发重组。
- */
-internal class LastNonNull<T : Any>(initial: T?) {
-    var value: T? = initial
-    fun update(next: T?): T? {
-        if (next != null) value = next
-        return value
-    }
-}
-
 // ---------------------------------------------------------------------------
 // 会话内容
 // ---------------------------------------------------------------------------
@@ -1068,6 +940,8 @@ private fun SessionContent(
     vm: SessionVM,
     toolsVm: WorkspaceToolsVM,
     configVm: ClaudeConfigVM,
+    /** 下命令的出口；读状态（Flow）仍直接读 [vm]，见 [SessionActions] */
+    actions: SessionActions,
     dailyCostUsd: Double,
     chineseDescriptions: Boolean,
     onOpenPlan: () -> Unit,
@@ -1075,8 +949,6 @@ private fun SessionContent(
     onOpenDrawer: () -> Unit = {},
     /** 输入框的焦点变化，一路报到页面顶层的"键盘收起就清焦点"那条效应里 */
     onComposerFocusChange: (Boolean) -> Unit = {},
-    /** Codex 的连接方式面板住在页面顶层（开始面板与设置面板都要开它） */
-    onOpenCodexConnection: () -> Unit = {},
     codexProfileModel: String? = null,
 ) {
     val listState = rememberLazyListState()
@@ -1090,8 +962,8 @@ private fun SessionContent(
     val transcriptLabels = rememberTranscriptLabels()
     val composerDraft by vm.composerDraft.collectAsStateWithLifecycle()
     // 设置里「添加附加目录」被内核拒绝（已在工作目录里、不存在……）：把原因告诉用户
-    val addDirContext = LocalContext.current
-    LaunchedEffect(vm) { vm.addDirectoryRejections.collect { android.widget.Toast.makeText(addDirContext, it, android.widget.Toast.LENGTH_LONG).show() } }
+    val toaster = LocalToaster.current
+    LaunchedEffect(vm) { vm.addDirectoryRejections.collect { toaster.show(it, ToastType.Error) } }
     val capabilities by vm.capabilities.collectAsStateWithLifecycle()
     val pendingResume by vm.pendingResume.collectAsStateWithLifecycle()
     val activeKey by vm.activeSessionKey.collectAsStateWithLifecycle()
@@ -1122,7 +994,7 @@ private fun SessionContent(
     // CC 里子 agent 的编辑不走快照（见 [undoCandidates]），面板上只能看、能跳转，不能撤；Min 的编辑记录覆盖整棵树，它们也能撤
     val candidateIds = remember(session.items, capabilities.rewind) { undoCandidates(session.items, includeSubagents = capabilities.rewind) }
     var snapshotted by remember(activeKey) { mutableStateOf(emptySet<String>()) }
-    LaunchedEffect(candidateIds) { snapshotted = vm.checkpointed(candidateIds) }
+    LaunchedEffect(candidateIds) { snapshotted = actions.checkpointed(candidateIds) }
     val changed = remember(session.items, snapshotted, transcriptLabels) {
         changedFiles(
             session.items,
@@ -1132,6 +1004,8 @@ private fun SessionContent(
         )
     }
     val changedLabels = rememberChangedFilesLabels()
+    // onUndo 不在组合里跑，文件名兜底在这里取好
+    val fallbackFileName = stringResource(R.string.changed_files_fallback_name)
     // 撤销过的 toolUseId（面板和工具卡共用同一种 id）：撤销只动文件、不动对话历史，所以这件事只在本页面会话内记得
     // —— 重开会话就忘了，那时文件本来也已经被改回去了（快照可以重复 restore，状态是幂等的）。
     // **还原成功之后才记**，失败的不记
@@ -1218,7 +1092,7 @@ private fun SessionContent(
         LocalFreshEntries provides freshEntries,
         LocalOpenSubagent provides { toolUseId: String -> selectedAgent = toolUseId },
         LocalRewindActions provides (if (capabilities.rewind) vm.extras.rewindActions else null),
-        LocalWithdrawQueued provides (if (EngineUi.tapToWithdraw(capabilities, session.ref.engine)) vm::withdrawQueued else null),
+        LocalWithdrawQueued provides (if (EngineUi.tapToWithdraw(capabilities, session.ref.engine)) actions.withdrawQueued else null),
     ) {
     Box(Modifier.fillMaxSize().imePadding()) {
         // 会话流铺满，顶栏 / 输入框浮在上面。铬件高度量完再垫进列表，字不会被挡住。
@@ -1265,7 +1139,7 @@ private fun SessionContent(
                             live = session.busy && index == lastIndex,
                             manualExpanded = manualExpanded,
                             labels = transcriptLabels,
-                            onRevert = { id -> vm.revertToolCall(id) { undoneIds = undoneIds + id } },
+                            onRevert = { id -> actions.revertToolCall(id) { undoneIds = undoneIds + id } },
                             canRevert = { it in snapshotted },
                         )
                     }
@@ -1378,7 +1252,7 @@ private fun SessionContent(
                             onClick = {
                                 if (!previewArmed) return@InkIconButton
                                 focusManager.clearFocus()
-                                toolsVm.togglePreview()
+                                actions.togglePreview()
                             },
                             enabled = previewArmed,
                             tint = if (preview.expanded && previewArmed) {
@@ -1416,7 +1290,7 @@ private fun SessionContent(
                         InkIconButton(
                             icon = HugeIcons.Stop,
                             contentDescription = stringResource(R.string.session_stop),
-                            onClick = { vm.stop() },
+                            onClick = { actions.stop() },
                             tint = MaterialTheme.sea.vermilion,
                             busy = session.stopping,
                             enabled = !session.stopping,
@@ -1460,7 +1334,7 @@ private fun SessionContent(
                     },
                     onUndo = { ids: List<String> ->
                         val file = changed.firstOrNull { f -> f.changes.any { it.toolUseId in ids } }
-                        vm.revertFile(file?.name ?: "文件", ids) { restored -> undoneIds = undoneIds + restored }
+                        actions.revertFile(file?.name ?: fallbackFileName, ids) { restored -> undoneIds = undoneIds + restored }
                     },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
@@ -1521,48 +1395,36 @@ private fun SessionContent(
                         capabilities = capabilities,
                         viewingThread = viewedAgent,
                         pendingResume = pendingResume,
-                        onResume = vm::resume,
+                        onResume = actions.resume,
                         // 发送不主动滚到底：在底时新消息按贴底跟随自然跟上，在上面翻着就保持原位
-                        onRunShell = { command -> vm.runShell(command) },
+                        onRunShell = actions.runShell,
                         // 子 agent 视图里：话说给它（收件箱 / 经主会话转交），停止键只停它
                         onSend = { text, images ->
                             val target = viewedAgent
-                            if (target != null) vm.sendToSubagent(target.threadId, text, images) else vm.send(text, images)
+                            if (target != null) actions.sendToSubagent(target.threadId, text, images) else actions.send(text, images)
                         },
                         onInterrupt = {
                             val target = viewedAgent
-                            if (target != null) vm.stopSubagent(target.threadId) else vm.interrupt()
+                            if (target != null) actions.stopSubagent(target.threadId) else actions.interrupt()
                         },
                         hintOverride = viewedAgent?.let { stringResource(R.string.agent_composer_hint, subagentTypeLabel(it.agentType)) },
-                        onSetModel = { model, asDefault -> vm.setModel(model, asDefault) },
-                        // 面板里选模型只改这个会话，不写「新会话默认」：Min 新会话默认用最近一次的档与模型
-                        onSetModelOf = { model, profile -> vm.setModel(model, asDefault = false, profileId = profile) },
-                        onSetPermissionMode = vm::setPermissionMode,
-                        onApplyEffort = { effort, ultracode -> vm.applyEffort(effort, ultracode) },
-                        onSetPromptCacheTtl = vm::setPromptCacheTtl,
-                        onSetEngineOption = vm::setEngineOption,
-                        onOpenConnection = onOpenCodexConnection,
+                        settingsActions = actions.settings,
                         codexProfileModel = codexProfileModel,
-                        onNewSession = vm::newSession,
-                        onRequestModels = vm::refreshModels,
+                        onNewSession = actions.newSession,
+                        onRequestModels = actions.refreshModels,
                         dailyCostUsd = dailyCostUsd,
                         chineseDescriptions = chineseDescriptions,
-                        onSetChineseDescriptions = vm::setChineseDescriptions,
-                        onRefreshUsage = vm::refreshUsage,
-                        onImportFile = toolsVm::importFile,
-                        onSetCwd = vm::setCwd,
-                        onAddDirectory = vm::addDirectory,
-                        onListCwd = vm::listCwdFolders,
-                        onCreateCwd = vm::createCwdFolder,
-                        onDeleteWorkspaceFile = toolsVm::deleteWorkspaceFile,
-                        onSearchFiles = vm::searchFiles,
-                        onLoadImage = toolsVm::loadImage,
+                        onRefreshUsage = actions.refreshUsage,
+                        onImportFile = actions.importFile,
+                        onDeleteWorkspaceFile = actions.deleteWorkspaceFile,
+                        onSearchFiles = actions.searchFiles,
+                        onLoadImage = actions.loadImage,
                         onOpenLocalCommand = { configCommand = it },
                         extras = vm.extras,
                         onComposerFocusChange = onComposerFocusChange,
                         restoredDraft = composerDraft,
-                        onDraftChange = { vm.saveComposerDraft(boundId, it) },
-                        onDraftSnapshot = { vm.snapshotComposerOnStop(boundId, it) },
+                        onDraftChange = { actions.saveComposerDraft(boundId, it) },
+                        onDraftSnapshot = { actions.snapshotComposerOnStop(boundId, it) },
                         withdrawnMessages = vm.withdrawnMessages,
                     )
                 }
@@ -1575,7 +1437,7 @@ private fun SessionContent(
         ClaudeCodeConfigSheet(
             command = command,
             vm = configVm,
-            onRunInit = vm::runInit,
+            onRunInit = actions.runInit,
             onDismiss = { configCommand = null },
         )
     }
@@ -1584,13 +1446,13 @@ private fun SessionContent(
         BackgroundShellSheet(
             shells = shells,
             onDismiss = { showShells = false },
-            readOutput = { vm.readTaskOutput(it.id) },
-            onStop = { vm.stopTask(it.id) },
+            readOutput = { actions.readTaskOutput(it.id) },
+            onStop = { actions.stopTask(it.id) },
         )
     }
 
     session.goal?.takeIf { showGoal }?.let { goal ->
-        GoalSheet(goal = goal, onClear = { vm.send("/goal clear") }, onDismiss = { showGoal = false })
+        GoalSheet(goal = goal, onClear = { actions.send("/goal clear", emptyList()) }, onDismiss = { showGoal = false })
     }
 
     session.team?.takeIf { showTeam }?.let { team ->
@@ -1797,25 +1659,6 @@ private fun TurnMeter(session: AgentSessionState) {
         maxLines = 1,
     )
 }
-
-/**
- * 时长。秒级以内给整秒，超过一分钟给 `1m32s` —— 手机上这一栏只有几十 dp 宽，
- * 写成 `92 秒` 反而要在脑子里再换算一次。
- */
-internal fun formatDuration(millis: Long): String {
-    val totalSeconds = (millis / 1000).coerceAtLeast(0)
-    if (totalSeconds < 60) return "${totalSeconds}s"
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-    if (minutes < 60) return if (seconds == 0L) "${minutes}m" else "${minutes}m${seconds}s"
-    val hours = minutes / 60
-    return "${hours}h${minutes % 60}m"
-}
-
-/** token 数。上千收成 `1.2k`，四位数字在这一栏里只会把行挤爆 */
-internal fun formatTokens(count: Int): String =
-    if (count < 1000) count.toString()
-    else String.format(java.util.Locale.US, "%.1fk", count / 1000.0)
 
 /**
  * `status` 帧的运行阶段。idle 不显示——它等于"没在干活"。

@@ -1,5 +1,10 @@
 package dev.min.code.core.codex
 
+import dev.min.code.core.json.arr
+import dev.min.code.core.json.bool
+import dev.min.code.core.json.int
+import dev.min.code.core.json.obj
+import dev.min.code.core.json.str
 import dev.min.code.core.session.ChatItem
 import dev.min.code.core.session.withClippedResult
 import kotlinx.serialization.json.JsonArray
@@ -250,8 +255,3 @@ private fun JsonArray.joinArgs(): String? = mapNotNull { (it as? JsonPrimitive)?
 private fun JsonPrimitive.contentOrNull(): String? =
     if (isString || this.content != "null") this.content else null
 
-private fun JsonObject.bool(key: String): Boolean? = when ((this[key] as? JsonPrimitive)?.content) {
-    "true" -> true
-    "false" -> false
-    else -> null
-}

@@ -1,5 +1,6 @@
 package dev.min.code.core.claudecode
 
+import dev.min.code.core.rootfs.DEFAULT_CWD
 import me.rerere.workspace.WorkspaceStorageArea
 
 /**
@@ -14,8 +15,8 @@ object CwdPath {
         val trimmed = relative.trim().trim('/').replace('\\', '/')
         return when (area) {
             WorkspaceStorageArea.FILES ->
-                if (trimmed.isBlank()) ClaudeCodeManager.DEFAULT_CWD
-                else "${ClaudeCodeManager.DEFAULT_CWD}/$trimmed"
+                if (trimmed.isBlank()) DEFAULT_CWD
+                else "${DEFAULT_CWD}/$trimmed"
             WorkspaceStorageArea.LINUX ->
                 if (trimmed.isBlank()) "/" else "/$trimmed"
         }
@@ -23,11 +24,11 @@ object CwdPath {
 
     fun split(guest: String): Pair<WorkspaceStorageArea, String> {
         val normalized = normalize(guest)
-        return if (normalized == ClaudeCodeManager.DEFAULT_CWD ||
-            normalized.startsWith("${ClaudeCodeManager.DEFAULT_CWD}/")
+        return if (normalized == DEFAULT_CWD ||
+            normalized.startsWith("${DEFAULT_CWD}/")
         ) {
             WorkspaceStorageArea.FILES to
-                normalized.removePrefix(ClaudeCodeManager.DEFAULT_CWD).trimStart('/')
+                normalized.removePrefix(DEFAULT_CWD).trimStart('/')
         } else {
             WorkspaceStorageArea.LINUX to normalized.trimStart('/')
         }
@@ -39,7 +40,7 @@ object CwdPath {
      */
     fun normalize(path: String): String {
         val trimmed = path.trim().replace('\\', '/')
-        if (trimmed.isBlank() || !trimmed.startsWith("/")) return ClaudeCodeManager.DEFAULT_CWD
+        if (trimmed.isBlank() || !trimmed.startsWith("/")) return DEFAULT_CWD
         val collapsed = trimmed.replace(Regex("/{2,}"), "/")
         return if (collapsed == "/") "/" else collapsed.trimEnd('/')
     }

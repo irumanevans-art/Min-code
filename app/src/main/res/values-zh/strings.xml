@@ -216,6 +216,7 @@
   <string name="session_plan_banner">Claude 给出了一份计划</string>
   <!-- 底部「改动过的文件」浮层（ChangedFilesLayer） -->
   <string name="changed_files_title">%1$d 个文件已改动</string>
+  <string name="changed_files_fallback_name">文件</string>
   <string name="changed_files_times">%1$d 次</string>
   <string name="changed_files_undone">已撤销</string>
   <string name="changed_files_back">返回列表</string>
@@ -619,6 +620,7 @@
   <string name="composer_delete_attachment_title">删除附件？</string>
   <string name="composer_delete_attachment_body">将把 %1$s 从工作区删除，不只是从这条消息里移除。</string>
   <string name="composer_photo">拍照</string>
+  <string name="composer_image_name">图片 %1$d</string>
   <string name="composer_menu">附件、用量与会话设置</string>
   <string name="composer_usage">用量</string>
   <string name="composer_add_file">添加文件</string>
@@ -1627,6 +1629,13 @@
     <string name="plugins_auto_update">自动更新</string>
     <string name="plugins_cancel">取消</string>
     <string name="plugins_install">安装</string>
+    <string name="plugins_private_url">私有插件源 URL</string>
+    <string name="plugins_auth_headers">认证头（JSON，保存后不回显）</string>
+    <string name="plugins_auth_save">保存认证</string>
+    <string name="plugins_source_invalid">来源格式无效</string>
+    <string name="plugins_command_confirm_title">确认插件命令</string>
+    <string name="plugins_command_confirm_run">执行并预览</string>
+    <string name="plugins_command_target">目标：%1$s</string>
   <string name="viewer_artifact_share">分享</string>
   <string name="viewer_artifact_close">关闭</string>
   <string name="viewer_draft_title">诊断包草稿</string>

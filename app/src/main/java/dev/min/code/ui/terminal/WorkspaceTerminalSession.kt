@@ -16,6 +16,9 @@ import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
 import dev.min.code.core.claudecode.ClaudeCodeInstaller
 import dev.min.code.core.network.activeDnsServers
+import dev.min.code.core.rootfs.filesDirFor
+import dev.min.code.core.rootfs.linuxDirFor
+import dev.min.code.core.rootfs.tmpDirFor
 import dev.min.code.util.LocalPreviewBus
 import dev.min.code.util.LocalUrls
 import dev.min.code.ui.components.openInExternalBrowser
@@ -96,13 +99,12 @@ internal fun createWorkspaceTerminalSession(
     bindMounts: List<WorkspaceBindMount> = emptyList(),
 ): TerminalSession {
     val appContext = context.applicationContext
-    val workspaceDir = File(File(appContext.filesDir, "workspaces"), root)
     val runner = ProotShellRunner(File(appContext.applicationInfo.nativeLibraryDir))
     val shellContext = buildTerminalShellContext(
         root = root,
-        filesDir = File(workspaceDir, "files"),
-        linuxDir = File(workspaceDir, "linux"),
-        tempDir = File(workspaceDir, "tmp"),
+        filesDir = filesDirFor(appContext, root),
+        linuxDir = linuxDirFor(appContext, root),
+        tempDir = tmpDirFor(appContext, root),
         cwd = cwd,
         credentials = credentials,
         bindMounts = bindMounts,
@@ -126,10 +128,9 @@ internal fun createWorkspaceTerminalSession(
 
 internal fun prepareWorkspaceTerminalSession(context: Context, root: String) {
     val appContext = context.applicationContext
-    val workspaceDir = File(File(appContext.filesDir, "workspaces"), root)
-    val linuxDir = File(workspaceDir, "linux")
-    File(workspaceDir, "files").mkdirs()
-    File(workspaceDir, "tmp").mkdirs()
+    val linuxDir = linuxDirFor(appContext, root)
+    filesDirFor(appContext, root).mkdirs()
+    tmpDirFor(appContext, root).mkdirs()
     RootfsPatcher().patch(
         linuxDir,
         RootfsPatchOptions(nameservers = appContext.activeDnsServers())
@@ -137,7 +138,7 @@ internal fun prepareWorkspaceTerminalSession(context: Context, root: String) {
 }
 
 internal fun workspaceRootfsReady(context: Context, root: String): Boolean {
-    val linuxDir = File(File(File(context.applicationContext.filesDir, "workspaces"), root), "linux")
+    val linuxDir = linuxDirFor(context.applicationContext, root)
     return linuxDir.isDirectory && File(linuxDir, "bin/sh").isFile
 }
 

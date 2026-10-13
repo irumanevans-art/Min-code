@@ -87,7 +87,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import dev.min.code.core.engine.EngineAvailability
 import android.util.Log
 import kotlinx.coroutines.launch
-import me.rerere.workspace.WorkspaceStorageArea
 import org.koin.android.ext.android.inject
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.res.stringResource
@@ -171,28 +170,31 @@ class MainActivity : ComponentActivity() {
         routeProviderLink(intent)
         routeSessionNotification(intent)
         // 通知（保活 / 审批提醒）点进来直接落到会话页；它是首页，清到栈底即可
-        if (intent.getBooleanExtra(EXTRA_OPEN_CLAUDE_CODE, false)) {
-            navStack?.let { stack ->
-                while (stack.size > 1) stack.removeLastOrNull()
-            }
+        if (intent.getBooleanExtra(EXTRA_OPEN_CLAUDE_CODE, false)) popToRoot()
+    }
+
+    /** 外部入口（通知、深链）落地前先清到栈底，免得叠在用户之前翻到的页面上 */
+    private fun popToRoot() {
+        navStack?.let { stack ->
+            while (stack.size > 1) stack.removeLastOrNull()
         }
     }
 
-    /** B5 直达：先打开通用会话；CC 页面在 B6 前仍读旧注册表，同步它的活跃项。 */
+    /** 通知直达：先打开通用会话；Claude 页的当前会话仍读旧注册表的 activeKey，所以也要同步它。 */
     private fun routeSessionNotification(intent: Intent) {
         val ref = intent.sessionRef() ?: return
-        navStack?.let { stack ->
-            while (stack.size > 1) stack.removeLastOrNull()
-            lifecycleScope.launch {
-                val registry: AgentSessionRegistry by inject()
-                // 冷启动时 DI 的状态流尚在读取磁盘；等就绪再打开，不能把默认 NeedsInstall 当最终结论。
-                withTimeoutOrNull(5_000) { registry.engine(ref.engine).availability.first { it == EngineAvailability.Ready } }
-                val result = registry.open(ref)
-                Log.i("SessionNotification", "open $ref result=$result")
-                if (ref.engine == EngineKind.ClaudeCode) {
-                    val legacy: ClaudeCodeSessionRegistry by inject()
-                    legacy.switchTo(ref.id)
-                }
+        // 栈还没建好（冷启动 Root 尚未组合）时什么都不做，Root 里的 LaunchedEffect 会再来一次
+        if (navStack == null) return
+        popToRoot()
+        lifecycleScope.launch {
+            val registry: AgentSessionRegistry by inject()
+            // 冷启动时 DI 的状态流尚在读取磁盘；等就绪再打开，不能把默认 NeedsInstall 当最终结论。
+            withTimeoutOrNull(5_000) { registry.engine(ref.engine).availability.first { it == EngineAvailability.Ready } }
+            val result = registry.open(ref)
+            Log.i("SessionNotification", "open $ref result=$result")
+            if (ref.engine == EngineKind.ClaudeCode) {
+                val legacy: ClaudeCodeSessionRegistry by inject()
+                legacy.switchTo(ref.id)
             }
         }
     }
@@ -206,10 +208,8 @@ class MainActivity : ComponentActivity() {
     private fun routeProviderLink(intent: Intent) {
         val link = intent.data?.toString()?.takeIf { isProviderDeepLink(it) } ?: return
         ProviderLinkInbox.offer(link)
-        navStack?.let { stack ->
-            while (stack.size > 1) stack.removeLastOrNull()
-            stack.add(Screen.Providers)
-        }
+        popToRoot()
+        navStack?.add(Screen.Providers)
     }
 
     @Composable
@@ -280,7 +280,7 @@ class MainActivity : ComponentActivity() {
                             entry<Screen.FileEditor> { key ->
                                 WorkspaceFileEditorPage(
                                     id = workspaceId,
-                                    area = WorkspaceStorageArea.valueOf(key.area),
+                                    area = key.area,
                                     path = key.path,
                                 )
                             }

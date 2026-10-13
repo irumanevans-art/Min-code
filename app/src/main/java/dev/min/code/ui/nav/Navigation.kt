@@ -16,8 +16,9 @@ sealed interface Screen : NavKey {
     @Serializable
     data object Terminal : Screen
 
+    /** 枚举在返回栈存档里按名字落盘（见 kotlinx.serialization 对枚举的默认处理）：改名 / 删成员会让旧存档读不回来 */
     @Serializable
-    data class FileEditor(val area: String, val path: String) : Screen
+    data class FileEditor(val area: me.rerere.workspace.WorkspaceStorageArea, val path: String) : Screen
 
     @Serializable
     data object Settings : Screen
@@ -25,9 +26,9 @@ sealed interface Screen : NavKey {
     @Serializable
     data object Plugins : Screen
 
-    /** 设置的二级页。[section] 是 SettingsSection 的 name（连接与安装 / 设备 / 外观与语言） */
+    /** 设置的二级页（连接与安装 / 设备 / 外观与语言…）。枚举按名字落盘，同 [FileEditor] 的说明 */
     @Serializable
-    data class SettingsSection(val section: String) : Screen
+    data class SettingsSection(val section: dev.min.code.ui.settings.SettingsSection) : Screen
 
     /** 供应商表。从设置页的「连接」区独立出来，那边只留一行入口 */
     @Serializable

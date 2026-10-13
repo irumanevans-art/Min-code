@@ -56,3 +56,61 @@ internal fun turnEndOfResult(
         ClaudeTurnEnd(ClaudeTurnEnd.Kind.Limit, atMs, resultText)
     else -> ClaudeTurnEnd(ClaudeTurnEnd.Kind.Failed, atMs, resultText ?: subtype)
 }
+
+/**
+ * [judgeTurnEnd] 的结论。
+ *
+ * @property noteError 要不要往对话流补一条"任务失败 / 已中断"。用户拒绝时带 interrupt 停下的那一轮
+ *   CLI 同样报 `error_during_execution`，但那是用户要的结果、工具卡上已经是被拒的样子，再补红字是噪声
+ */
+internal data class TurnEndVerdict(
+    val interrupted: Boolean,
+    val withdrew: Boolean,
+    val deniedStop: Boolean,
+    val turnEnd: ClaudeTurnEnd,
+    val noteError: Boolean,
+)
+
+/**
+ * 一轮的 result 到了：把 Manager 在这一轮里记下的几个标记（谁打断了哪一轮、哪一轮是被拒绝收的尾）
+ * 和 result 本身合成一个结论。纯函数；标记的读后即清留给调用方。
+ *
+ * 标记存的是**轮次号**而不是布尔：打断请求发出后若 result 恰好先落地，标记属于已经结束的那一轮，
+ * 不能算到下一轮头上（见 `interrupt` 里"一次读完"的注释），所以这里按 [endedTurn] 精确比对。
+ */
+internal fun judgeTurnEnd(
+    result: ClaudeCodeEvent.Result,
+    endedTurn: Int,
+    interruptedTurn: Int?,
+    interruptWithdrew: Boolean,
+    deniedTurn: Int?,
+    atMs: Long,
+): TurnEndVerdict {
+    val interrupted = interruptedTurn == endedTurn
+    val withdrew = interrupted && interruptWithdrew
+    val deniedStop = deniedTurn == endedTurn
+    return TurnEndVerdict(
+        interrupted = interrupted,
+        withdrew = withdrew,
+        deniedStop = deniedStop,
+        turnEnd = turnEndOfResult(
+            isError = result.isError, subtype = result.subtype, resultText = result.resultText,
+            interrupted = interrupted, withdrew = withdrew, deniedStop = deniedStop, atMs = atMs,
+        ),
+        noteError = result.isError && !deniedStop,
+    )
+}
+
+/**
+ * result 里的 `permission_denials` 去掉不是"规则拦的"那几条，剩下的才值得对用户说一句"被权限规则拦截"。
+ *
+ * 托管进进程表的 Bash 也是 deny 掉的，CLI 同样列进来；它们上面已经有托管结局的提示，再说一遍就自相矛盾了。
+ * 用户亲手点「拒绝」的同理：那是人拒的，不是规则。
+ */
+internal fun deniedByRule(
+    denials: List<ClaudeCodeEvent.PermissionDenial>,
+    exclusiveHosted: Set<String>,
+    userDenied: Set<String>,
+): List<ClaudeCodeEvent.PermissionDenial> =
+    denials.filterNot { it.toolUseId in exclusiveHosted || it.toolUseId in userDenied }
+

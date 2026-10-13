@@ -6,7 +6,6 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.os.PowerManager
 import android.provider.Settings
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -70,11 +69,13 @@ import dev.min.code.core.engine.min.withManaged
 import dev.min.code.ui.components.InkTextButton
 import dev.min.code.ui.components.InkTextField
 import dev.min.code.ui.components.InkTopBar
+import dev.min.code.ui.components.LocalToaster
 import dev.min.code.ui.components.Notice
 import dev.min.code.ui.components.NoticeTone
 import dev.min.code.ui.components.RikkaConfirmDialog
 import dev.min.code.ui.components.SectionTitle
 import dev.min.code.ui.components.SettingRow
+import dev.min.code.ui.components.ToastType
 import dev.min.code.ui.nav.LocalNavController
 import dev.min.code.ui.nav.Screen
 import dev.min.code.ui.providers.claudeConnectionOf
@@ -153,7 +154,7 @@ fun SettingsPage(vm: SettingsVM = koinViewModel()) {
                         } else {
                             stringResource(section.subtitle)
                         },
-                        onClick = { navController.navigate(Screen.SettingsSection(section.name)) },
+                        onClick = { navController.navigate(Screen.SettingsSection(section)) },
                         trailing = { NextPageArrow() },
                     )
                 }
@@ -459,6 +460,7 @@ private fun DeviceAllowlist(
 @Composable
 private fun VirtualDisplayRow(vm: SettingsVM) {
     val context = LocalContext.current
+    val toaster = LocalToaster.current
     val privState by vm.privilegedState.collectAsStateWithLifecycle()
     val session by vm.agentDisplayActive.collectAsStateWithLifecycle()
     // 纯流量冷启动要仅本地热点，Android 13+ 先要「附近的设备」
@@ -555,12 +557,11 @@ private fun VirtualDisplayRow(vm: SettingsVM) {
                 InkTextButton(
                     onClick = {
                         val posted = AdbPairingReceiver.post(context)
-                        Toast.makeText(
-                            context,
-                            if (posted) context.getString(R.string.adb_pair_notif_posted)
-                            else context.getString(R.string.adb_pair_notif_need_permission),
-                            Toast.LENGTH_LONG,
-                        ).show()
+                        toaster.show(
+                            context.getString(
+                                if (posted) R.string.adb_pair_notif_posted else R.string.adb_pair_notif_need_permission,
+                            ),
+                        )
                     },
                 ) {
                     Text(stringResource(R.string.device_virtual_pair_notif))
@@ -579,11 +580,7 @@ private fun VirtualDisplayRow(vm: SettingsVM) {
                     val cmd = vm.privilegedLaunchCommand()
                     val cm = context.getSystemService(ClipboardManager::class.java)
                     cm?.setPrimaryClip(ClipData.newPlainText("min-privileged", cmd))
-                    Toast.makeText(
-                        context,
-                        context.getString(R.string.device_virtual_cmd_copied),
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                    toaster.show(context.getString(R.string.device_virtual_cmd_copied), ToastType.Success)
                 },
             ) {
                 Text(stringResource(R.string.device_virtual_copy_cmd))
@@ -612,7 +609,7 @@ private fun VirtualDisplayRow(vm: SettingsVM) {
 }
 
 
-/** 设置的三组。标题 / 副题沿用原来折叠组的文案 */
+/** 设置的几组。标题 / 副题沿用原来折叠组的文案。成员名会随 [Screen.SettingsSection] 落进返回栈存档，改名 / 删除要想到旧存档 */
 enum class SettingsSection(@androidx.annotation.StringRes val title: Int, @androidx.annotation.StringRes val subtitle: Int) {
     CONNECTION(R.string.settings_group_connection, R.string.settings_group_connection_sub),
     DEVICE(R.string.settings_group_device, R.string.settings_group_device_sub),
@@ -628,8 +625,7 @@ enum class SettingsSection(@androidx.annotation.StringRes val title: Int, @andro
  * 首页是入口，点进来是这一组。只有真该收着的东西（关于页的版本历史、环境面板的「修复」）才折叠。
  */
 @Composable
-fun SettingsSectionPage(section: String, vm: SettingsVM = koinViewModel()) {
-    val group = SettingsSection.entries.firstOrNull { it.name == section } ?: SettingsSection.CONNECTION
+fun SettingsSectionPage(group: SettingsSection, vm: SettingsVM = koinViewModel()) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val scrollState = rememberScrollState()
     Scaffold(

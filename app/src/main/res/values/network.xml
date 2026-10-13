@@ -16,5 +16,7 @@
     <string name="network_allow_once">Allow once</string>
     <string name="network_allow_always">Always allow</string>
     <string name="network_deny">Deny</string>
+    <string name="network_isolation_title">Isolation layers for Min commands</string>
+    <string name="network_isolation_note">Commands still run as Min\'s Android identity. This applies to the Min engine; environment declarations in the terminal or external CLIs do not imply these limits.</string>
     <string name="network_decision_notice">Network %1$s:%2$d · %3$s · %4$s</string>
 </resources>

@@ -180,10 +180,3 @@ fun LocalPreviewPane(
         }
     }
 }
-
-/** @deprecated 用 [LocalPreviewPane]；保留别名避免外部引用炸编译 */
-@Deprecated("Use LocalPreviewPane", ReplaceWith("LocalPreviewPane(url, onCollapse)"))
-@Composable
-fun LocalPreviewSheet(url: String, onDismiss: () -> Unit) {
-    LocalPreviewPane(url = url, onCollapse = onDismiss)
-}

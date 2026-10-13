@@ -1,5 +1,8 @@
 package dev.min.code.ui.files
 
+import me.rerere.workspace.WorkspaceFileEntry
+import me.rerere.workspace.WorkspaceStorageArea
+
 /**
  * 多选态的纯函数部分。放在这里而不是 VM 里，是因为仓库的测试只有裸 JUnit
  * （没有 Robolectric、没有 coroutines-test），能测的只有这种不碰 Android 的东西。
@@ -68,6 +71,23 @@ fun archiveName(
     }
     return sanitizeFileName(stem) + ".zip"
 }
+
+/**
+ * 当前多选该导出成什么名字的 zip。「保存」和「分享」两个入口共用，别各抄一份；
+ * 区根多选时的标签（`workspace` / `rootfs`）会进文件名，是用户能看到的约定，改它要想到老包。
+ */
+fun archiveNameFor(
+    selected: List<WorkspaceFileEntry>,
+    currentFolderName: String?,
+    area: WorkspaceStorageArea,
+    date: String,
+): String = archiveName(
+    selectedNames = selected.map { it.name },
+    selectedIsSingleFolder = selected.size == 1 && selected.first().isDirectory,
+    currentFolderName = currentFolderName,
+    areaLabel = if (area == WorkspaceStorageArea.FILES) "workspace" else "rootfs",
+    date = date,
+)
 
 /** 清掉文件名里不能用的字符，压掉空白，再按 [ARCHIVE_STEM_MAX] 截断 */
 fun sanitizeFileName(raw: String): String {

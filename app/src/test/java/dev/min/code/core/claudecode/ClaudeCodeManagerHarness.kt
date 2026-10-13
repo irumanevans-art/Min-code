@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.rootfs.workspacesBaseDir
 import dev.min.code.core.session.ChatItem
 import dev.min.code.core.settings.SettingsStore
 import kotlinx.coroutines.CompletableDeferred
@@ -447,9 +448,12 @@ internal class ManagerHarness(fixtureName: String) : AutoCloseable {
     val dir: File = Files.createTempDirectory("ccm-test").toFile()
     private val context = FakeContext(dir)
     val fixture = CliFixture.load(fixtureName)
-    private val workspaceRepository = WorkspaceManager(File(context.filesDir, "workspaces")).let {
+    private val workspaceRepository = WorkspaceManager(workspacesBaseDir(context)).let {
         WorkspaceRepository(it, RootfsInstaller(it))
     }
+
+    /** 真的 Installer（假 Context）：下载 / 取消这类不碰 proot 的路径可以直接测 */
+    val installer = ClaudeCodeInstaller(context, workspaceRepository)
     val drafts = ComposerDraftStore(File(dir, "drafts"))
 
     class Launch(val options: ClaudeCodeManager.SessionOptions, val sessionId: String, val process: FakeCliProcess)
@@ -471,7 +475,7 @@ internal class ManagerHarness(fixtureName: String) : AutoCloseable {
         context = context,
         workspaceRepository = workspaceRepository,
         settingsStore = SettingsStore(context),
-        installer = ClaudeCodeInstaller(context, workspaceRepository),
+        installer = installer,
         costLedger = ClaudeCodeCostLedger(context),
         drafts = drafts,
         launcher = { options, sessionId ->

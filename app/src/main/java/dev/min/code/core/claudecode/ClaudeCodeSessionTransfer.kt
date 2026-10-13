@@ -1,6 +1,7 @@
 package dev.min.code.core.claudecode
 
 import android.util.Log
+import dev.min.code.core.rootfs.DEFAULT_CWD
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -58,7 +59,7 @@ class ClaudeCodeSessionTransfer(
     suspend fun stage(linuxDir: File, targetCwd: String, source: () -> InputStream?): Staged =
         withContext(Dispatchers.IO) {
             val dirName = SessionJsonl.projectDirName(targetCwd)
-                ?: SessionJsonl.projectDirName(ClaudeCodeManager.DEFAULT_CWD)!!
+                ?: SessionJsonl.projectDirName(DEFAULT_CWD)!!
             val dir = File(store.projectsDir(linuxDir), dirName)
             // 名字固定、不以 .jsonl 结尾：会话列表只认 .jsonl，扫不到它；上次半路被杀留下的
             // 残骸也会被下一次导入直接盖掉，不会越攒越多

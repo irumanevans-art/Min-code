@@ -17,6 +17,8 @@ import kotlinx.serialization.json.put
 import dev.min.code.core.persist.atomicWriteText
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
+import dev.min.code.core.rootfs.filesDirFor
+import dev.min.code.core.rootfs.linuxDirFor
 import dev.min.code.core.settings.ClaudeSettingsFile
 import java.io.File
 
@@ -300,15 +302,14 @@ class ClaudeCodeConfigStore(
      */
     private suspend fun linuxDir(): File? {
         val workspace = workspaceRepository.getById(CLAUDE_CODE_WORKSPACE_ID.toString()) ?: return null
-        val dir = File(File(File(context.filesDir, "workspaces"), workspace.root), "linux")
+        val dir = linuxDirFor(context, workspace.root)
         return dir.takeIf { it.isDirectory }
     }
 
     /** 项目侧（= guest 的 /workspace），宿主上就是工作区的 files/ 目录 */
     private suspend fun projectDir(): File? {
         val workspace = workspaceRepository.getById(CLAUDE_CODE_WORKSPACE_ID.toString()) ?: return null
-        return File(File(File(context.filesDir, "workspaces"), workspace.root), "files")
-            .apply { mkdirs() }
+        return filesDirFor(context, workspace.root).apply { mkdirs() }
     }
 
     private suspend fun settingsFile(): File? = linuxDir()?.let { File(it, "root/.claude/settings.json") }

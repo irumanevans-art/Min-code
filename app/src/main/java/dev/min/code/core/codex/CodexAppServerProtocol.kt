@@ -1,15 +1,16 @@
 package dev.min.code.core.codex
 
+import dev.min.code.core.json.arr
+import dev.min.code.core.json.int
+import dev.min.code.core.json.obj
+import dev.min.code.core.json.str
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
 /**
@@ -322,6 +323,28 @@ fun parseCodexEvent(line: String): CodexEvent? {
 }
 
 /**
+ * 逐行解析并分发，**每个事件单独兜底**：[handle] 里炸一次只丢这一个事件，读循环继续。
+ *
+ * 之前整段 `useLines` 包在一个 try 里，一个事件处理抛异常就让读循环收工，
+ * 但进程还活着、状态还是 Running —— 界面从此静止，日志里只有一句「读取结束」，看不出是哪个事件。
+ * 读流本身失败（进程死了、管道关了）不在这里吞：由 [lines] 的迭代抛给调用方。
+ */
+internal fun dispatchCodexLines(
+    lines: Sequence<String>,
+    handle: (CodexEvent) -> Unit,
+    onFailure: (CodexEvent, Exception) -> Unit,
+) {
+    for (line in lines) {
+        val event = parseCodexEvent(line) ?: continue
+        try {
+            handle(event)
+        } catch (e: Exception) {
+            onFailure(event, e)
+        }
+    }
+}
+
+/**
  * 警告里给人看的那句话。字段名按常见的几种依次试（`message` / `summary` / `details`），
  * 都没有就取第一个非空字符串字段 —— 宁可多显示一点，也别因为字段改了名就什么都不显示。
  */
@@ -488,13 +511,8 @@ private fun rpcRequest(id: String, method: String, params: JsonObject): String =
     buildJsonObject { put("id", id); put("method", method); put("params", params) }.toString()
 
 // ---------------------------------------------------------------------------
-// 安全访问器，见 parseCodexEvent 的注释
+// 安全访问器：str / obj / arr / int / long 在 core/json/SafeJson.kt，见 parseCodexEvent 的注释
 // ---------------------------------------------------------------------------
 
 private fun JsonElement?.asString(): String? = (this as? JsonPrimitive)?.contentOrNull
 
-internal fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
-internal fun JsonObject.obj(key: String): JsonObject? = this[key] as? JsonObject
-internal fun JsonObject.arr(key: String): JsonArray? = this[key] as? JsonArray
-internal fun JsonObject.int(key: String): Int? = (this[key] as? JsonPrimitive)?.intOrNull
-internal fun JsonObject.long(key: String): Long? = (this[key] as? JsonPrimitive)?.longOrNull

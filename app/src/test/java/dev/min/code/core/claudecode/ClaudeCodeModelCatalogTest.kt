@@ -155,10 +155,10 @@ class ClaudeCodeModelCatalogTest {
     @Test
     fun `fable entry point is the fixed id not the provider dependent alias`() {
         assertEquals("claude-fable-5-1", ClaudeCodeModelCatalog.FABLE_MODEL_ID)
-        assertTrue(ClaudeCodeManager.PROMOTED_MODEL_IDS.contains(ClaudeCodeModelCatalog.FABLE_MODEL_ID))
+        assertTrue(ClaudeCodeModelList.PROMOTED_MODEL_IDS.contains(ClaudeCodeModelCatalog.FABLE_MODEL_ID))
         assertEquals(
             ClaudeCodeModelCatalog.FABLE_MODEL_ID,
-            ClaudeCodeManager.HIDDEN_MODEL_ALIASES.first().value,
+            ClaudeCodeModelList.HIDDEN_MODEL_ALIASES.first().value,
         )
     }
 }

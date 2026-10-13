@@ -8,6 +8,9 @@ import dev.min.code.core.relay.RelayController
 import dev.min.code.core.rootfs.CLAUDE_CODE_WORKSPACE_ID
 import dev.min.code.core.rootfs.WorkspaceRepository
 import dev.min.code.core.rootfs.currentBindMounts
+import dev.min.code.core.rootfs.filesDirFor
+import dev.min.code.core.rootfs.linuxDirFor
+import dev.min.code.core.rootfs.tmpDirFor
 import dev.min.code.core.settings.ClaudeAuthMode
 import dev.min.code.core.settings.SettingsStore
 import me.rerere.workspace.ProotShellRunner
@@ -70,8 +73,8 @@ class ProotClaudeCodeLauncher(
         val workspaceId = CLAUDE_CODE_WORKSPACE_ID.toString()
         val workspace = workspaceRepository.getById(workspaceId)
             ?: error("Claude Code 工作区不存在")
-        val workspaceDir = File(File(context.filesDir, "workspaces"), workspace.root)
-        val linuxDir = File(workspaceDir, "linux")
+        val linuxDir = linuxDirFor(context, workspace.root)
+        val filesDir = filesDirFor(context, workspace.root)
 
         // 包在、二进制不在（上次那个 100 MB 的平台包没下完）也算"找不到"，
         // 但要把原因说清楚，否则用户只看到一句 ENOENT
@@ -101,10 +104,10 @@ class ProotClaudeCodeLauncher(
             // 走 bash 的 eval，必须逐个 shell 转义，否则含空格的参数（如模型名）会被拆开
             command = args.joinToString(" ") { ClaudeCodeManager.shellQuote(it) },
             cwd = "",
-            filesDir = File(workspaceDir, "files"),
+            filesDir = filesDir,
             linuxDir = linuxDir,
-            tempDir = File(workspaceDir, "tmp"),
-            workingDir = File(workspaceDir, "files"),
+            tempDir = tmpDirFor(context, workspace.root),
+            workingDir = filesDir,
             timeoutMillis = 0L, // 长会话不由 runner 管超时
             env = claudeSessionEnv(options, profile, relayBaseUrl, netSnap),
             // 和 ! 命令同一份挂载。现算而不是启动时快照：开关和权限随时会变

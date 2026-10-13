@@ -105,26 +105,62 @@ internal fun LocalSlash.toSection(): SettingsSection? = when (this) {
 internal fun LocalSlash.toSection(capabilities: EngineCapabilities): SettingsSection? =
     if (this == LocalSlash.MCP && capabilities.mcpServers) SettingsSection.MCP else toSection()
 
+/**
+ * 会话设置里「改点什么」的那一组回调，输入坞和设置面板之间原样传递。
+ *
+ * 原来是十几个同名参数在 [ClaudeCodeInputBar] 与 [ClaudeCodeSettingsSheet] 里各抄一遍，
+ * 加一项设置就要改四处签名；收成一个对象后只改这里和真正用它的那一段。
+ * 默认值就是「这个引擎没有这一项」的空实现。
+ *
+ * 只收回调，不收状态（`chineseDescriptions`、`extras` 等随会话变的值仍走参数）。
+ */
+internal class SessionSettingsActions(
+    /** (模型, 是否同时存成新会话默认)，语义见 [ModelPicker] */
+    val onSetModel: (String?, Boolean) -> Unit,
+    /** Min 的模型选择：(模型 id, 供应商档 id)，选别家档的模型就是跨供应商切换 */
+    val onSetModelOf: (String, String?) -> Unit,
+    val onSetPermissionMode: (String) -> Unit,
+    val onApplyEffort: (String?, Boolean) -> Unit,
+    val onSetPromptCacheTtl: (String) -> Unit,
+    /** 引擎专有的设置项（Codex 的思考摘要）：(键, 值)，值为空串 = 跟随默认 */
+    val onSetEngineOption: (String, String) -> Unit = { _, _ -> },
+    /** Codex 的连接方式面板（设置里的入口）；别的引擎不用 */
+    val onOpenConnection: () -> Unit = {},
+    val onSetChineseDescriptions: (Boolean) -> Unit = {},
+    val onSetCwd: (String) -> Unit = {},
+    /** 添加附加目录（只有 [EngineCapabilities.addDirectory] 的引擎显示这一项） */
+    val onAddDirectory: (String) -> Unit = {},
+    val onListCwd: suspend (String) -> Result<List<me.rerere.workspace.WorkspaceFileEntry>> = EmptyCwdList,
+    val onCreateCwd: (String, String, (Result<String>) -> Unit) -> Unit = NoopCwdCreate,
+) {
+    /**
+     * 「选完就收起面板」的版本：会改会话状态的那几项在原回调之后调一次 [afterApplied]。
+     * 只是切换显示语言、列目录 / 建目录这类不算「选定」的项保持原样。
+     */
+    fun closingAfterApply(afterApplied: () -> Unit) = SessionSettingsActions(
+        onSetModel = { model, asDefault -> onSetModel(model, asDefault); afterApplied() },
+        onSetModelOf = { model, profile -> onSetModelOf(model, profile); afterApplied() },
+        onSetPermissionMode = { onSetPermissionMode(it); afterApplied() },
+        onApplyEffort = { effort, ultra -> onApplyEffort(effort, ultra); afterApplied() },
+        onSetPromptCacheTtl = { onSetPromptCacheTtl(it); afterApplied() },
+        onSetEngineOption = onSetEngineOption,
+        onOpenConnection = onOpenConnection,
+        onSetChineseDescriptions = onSetChineseDescriptions,
+        onSetCwd = { onSetCwd(it); afterApplied() },
+        onAddDirectory = { onAddDirectory(it); afterApplied() },
+        onListCwd = onListCwd,
+        onCreateCwd = onCreateCwd,
+    )
+}
+
 @Composable
 internal fun ClaudeCodeSettingsSheet(
     session: AgentSessionState,
     capabilities: EngineCapabilities,
     initialSection: SettingsSection?,
     chineseDescriptions: Boolean,
-    onSetChineseDescriptions: (Boolean) -> Unit,
     onDismiss: () -> Unit,
-    /** (模型, 是否同时存成新会话默认)，语义见 [ModelPicker] */
-    onSetModel: (String?, Boolean) -> Unit,
-    /** Min 的模型选择：(模型 id, 供应商档 id)，选别家档的模型就是跨供应商切换 */
-    onSetModelOf: (String, String?) -> Unit,
-    onSetPermissionMode: (String) -> Unit,
-    onApplyEffort: (String?, Boolean) -> Unit,
-    onSetPromptCacheTtl: (String) -> Unit,
-    onSetCwd: (String) -> Unit,
-    /** 添加附加目录（只有 [EngineCapabilities.addDirectory] 的引擎显示这一项） */
-    onAddDirectory: (String) -> Unit = {},
-    onListCwd: suspend (String) -> Result<List<me.rerere.workspace.WorkspaceFileEntry>> = EmptyCwdList,
-    onCreateCwd: (String, String, (Result<String>) -> Unit) -> Unit = NoopCwdCreate,
+    actions: SessionSettingsActions,
     onPickCommand: (String) -> Unit,
     /** MCP 面板 / 信任段的状态与动作（[EngineUi.settingsLayout] 说有这两段时才用）；没有它们的引擎传 null */
     extras: SessionExtras? = null,
@@ -164,14 +200,14 @@ internal fun ClaudeCodeSettingsSheet(
                     appliedModel = settings.applied.model,
                     chineseDescriptions = chineseDescriptions,
                     enabled = !settingsBusy,
-                    onPick = onSetModel,
+                    onPick = actions.onSetModel,
                 )
                 ModelPickerStyle.Providers -> MinModelPicker(
                     settings = settings,
                     connection = session.connection,
                     // 供应商档被删了的会话是只读的（适配器也会拒），别让人点
                     enabled = !settingsBusy && !session.readOnly,
-                    onPick = onSetModelOf,
+                    onPick = actions.onSetModelOf,
                 )
             }
         }
@@ -191,14 +227,14 @@ internal fun ClaudeCodeSettingsSheet(
                     subtitle = ClaudeCodePermissionMode.fromWire(mode.id)?.let { stringResource(it.descRes()) },
                     selected = mode.id == settings.mode.id,
                     enabled = !settingsBusy,
-                    onClick = { if (needsConfirm) confirming = mode.id else onSetPermissionMode(mode.id) },
+                    onClick = { if (needsConfirm) confirming = mode.id else actions.onSetPermissionMode(mode.id) },
                 )
                 if (needsConfirm && confirming == mode.id) {
                     ModeConfirm(
                         warning = mode.warning.orEmpty(),
                         label = stringResource(R.string.min_settings_mode_confirm, mode.label),
                         enabled = !settingsBusy,
-                        onConfirm = { onSetPermissionMode(mode.id) },
+                        onConfirm = { actions.onSetPermissionMode(mode.id) },
                     )
                 }
             }
@@ -250,7 +286,7 @@ internal fun ClaudeCodeSettingsSheet(
                     defaultLabel = layout.effortDefaultLabel,
                     ultracode = layout.ultracode,
                     enabled = !settingsBusy,
-                    onApply = onApplyEffort,
+                    onApply = actions.onApplyEffort,
                 )
             }
         }
@@ -266,7 +302,7 @@ internal fun ClaudeCodeSettingsSheet(
                     options = settings.extra(ClaudeStateMapper.OPTION_CACHE_TTL)?.options.orEmpty(),
                     current = settings.promptCacheTtl,
                     enabled = !settingsBusy,
-                    onPick = onSetPromptCacheTtl,
+                    onPick = actions.onSetPromptCacheTtl,
                 )
             }
         }
@@ -281,9 +317,9 @@ internal fun ClaudeCodeSettingsSheet(
                 CwdPicker(
                     current = session.cwd,
                     enabled = !settingsBusy,
-                    onPick = onSetCwd,
-                    onList = onListCwd,
-                    onCreate = onCreateCwd,
+                    onPick = actions.onSetCwd,
+                    onList = actions.onListCwd,
+                    onCreate = actions.onCreateCwd,
                 )
                 if (capabilities.addDirectory) {
                     // 附加目录：只授予文件访问，只在这个会话里有效（不写设置）；选好之后内核触发 DirectoryAdded hooks
@@ -296,10 +332,10 @@ internal fun ClaudeCodeSettingsSheet(
                     if (addDirOpen) {
                         CwdPickerSheet(
                             current = session.cwd,
-                            onPick = { onAddDirectory(it); addDirOpen = false },
+                            onPick = { actions.onAddDirectory(it); addDirOpen = false },
                             onDismiss = { addDirOpen = false },
-                            onList = onListCwd,
-                            onCreate = onCreateCwd,
+                            onList = actions.onListCwd,
+                            onCreate = actions.onCreateCwd,
                         )
                     }
                 }
@@ -399,7 +435,7 @@ internal fun ClaudeCodeSettingsSheet(
                         DescriptionLanguageSwitch(
                             chinese = chineseDescriptions,
                             commands = session.slashCommands,
-                            onChange = onSetChineseDescriptions,
+                            onChange = actions.onSetChineseDescriptions,
                         )
                     }
                     session.slashCommands.forEach { cmd ->
@@ -439,7 +475,7 @@ private fun Section(
  * 模型选择。
  *
  * CLI 只把**当前选中**的模型放进 `list_models`，所以 Fable 这类没选中时根本不出现，
- * 用户会陷进「选不到 → 不列出 → 更选不到」的死循环。[ClaudeCodeManager.HIDDEN_MODEL_ALIASES]
+ * 用户会陷进「选不到 → 不列出 → 更选不到」的死循环。[ClaudeCodeModelList.HIDDEN_MODEL_ALIASES]
  * 就是补这一格；再加上自由输入，任何中转站策略下都不会没有出路。
  */
 /**

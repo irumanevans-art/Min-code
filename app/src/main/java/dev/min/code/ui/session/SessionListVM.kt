@@ -27,6 +27,7 @@ import dev.min.code.core.engine.EngineKind
 import dev.min.code.core.engine.SessionCommand
 import dev.min.code.core.engine.SessionRef
 import dev.min.code.core.engine.SessionSummary
+import dev.min.code.core.rootfs.DEFAULT_CWD
 import dev.min.code.core.settings.SettingsStore
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
@@ -383,7 +384,7 @@ class SessionListVM(
     /** 撞上已有同 id 会话、等用户选覆盖还是取消的那一份。非空时界面弹确认 */
     private var stagedImport: ClaudeCodeSessionTransfer.Staged.Ready? = null
     /** 暂存那一份改写进去的工作目录；确认覆盖时报给用户的得是它，而不是此刻的 lastOptions */
-    private var stagedCwd: String = ClaudeCodeManager.DEFAULT_CWD
+    private var stagedCwd: String = DEFAULT_CWD
     private val _pendingImportId = MutableStateFlow<String?>(null)
     val pendingImportId: StateFlow<String?> = _pendingImportId.asStateFlow()
 

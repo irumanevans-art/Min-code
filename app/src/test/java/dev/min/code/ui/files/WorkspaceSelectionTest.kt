@@ -1,5 +1,7 @@
 package dev.min.code.ui.files
 
+import me.rerere.workspace.WorkspaceFileEntry
+import me.rerere.workspace.WorkspaceStorageArea
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -86,5 +88,25 @@ class WorkspaceSelectionTest {
     @Test
     fun `a name made only of illegal characters still produces something openable`() {
         assertEquals("_.zip", archiveName(listOf("/"), true, null, "workspace", "2026-09-16"))
+    }
+
+    private fun file(name: String) = WorkspaceFileEntry("p/$name", name, isDirectory = false, sizeBytes = 1, updatedAt = 0)
+    private fun dir(name: String) = file(name).copy(isDirectory = true)
+
+    @Test
+    fun `area label follows the storage area`() {
+        val two = listOf(file("a"), file("b"))
+        assertEquals("workspace-2026-09-16.zip", archiveNameFor(two, null, WorkspaceStorageArea.FILES, "2026-09-16"))
+        assertEquals("rootfs-2026-09-16.zip", archiveNameFor(two, null, WorkspaceStorageArea.LINUX, "2026-09-16"))
+    }
+
+    @Test
+    fun `a single selected folder is detected from the entries`() {
+        assertEquals("docs.zip", archiveNameFor(listOf(dir("docs")), "proj", WorkspaceStorageArea.FILES, "2026-09-16"))
+        // 单个文件不算文件夹：回到「当前目录-日期」
+        assertEquals(
+            "proj-2026-09-16.zip",
+            archiveNameFor(listOf(file("a.txt")), "proj", WorkspaceStorageArea.FILES, "2026-09-16"),
+        )
     }
 }

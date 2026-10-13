@@ -218,6 +218,7 @@
   <string name="session_plan_banner">Claude proposed a plan</string>
   <!-- 底部「改动过的文件」浮层（ChangedFilesLayer） -->
   <string name="changed_files_title">%1$d files changed</string>
+  <string name="changed_files_fallback_name">file</string>
   <string name="changed_files_times">%1$d×</string>
   <string name="changed_files_undone">undone</string>
   <string name="changed_files_back">Back to list</string>
@@ -624,6 +625,7 @@
   <string name="composer_delete_attachment_title">Delete attachment?</string>
   <string name="composer_delete_attachment_body">%1$s will be deleted from the workspace, not just removed from this message.</string>
   <string name="composer_photo">Photo</string>
+  <string name="composer_image_name">Image %1$d</string>
   <string name="composer_menu">Attachments, usage and session settings</string>
   <string name="composer_usage">Usage</string>
   <string name="composer_add_file">Add a file</string>
@@ -1633,6 +1635,13 @@
     <string name="plugins_auto_update">Auto-update</string>
     <string name="plugins_cancel">Cancel</string>
     <string name="plugins_install">Install</string>
+    <string name="plugins_private_url">Private marketplace source URL</string>
+    <string name="plugins_auth_headers">Auth headers (JSON, hidden after saving)</string>
+    <string name="plugins_auth_save">Save credentials</string>
+    <string name="plugins_source_invalid">Invalid source format</string>
+    <string name="plugins_command_confirm_title">Confirm plugin commands</string>
+    <string name="plugins_command_confirm_run">Run and preview</string>
+    <string name="plugins_command_target">Target: %1$s</string>
   <string name="viewer_artifact_share">Share</string>
   <string name="viewer_artifact_close">Close</string>
   <string name="viewer_draft_title">Diagnostic report draft</string>

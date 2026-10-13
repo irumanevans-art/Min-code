@@ -1,5 +1,6 @@
 package dev.min.code.core.claudecode
 
+import dev.min.code.core.rootfs.DEFAULT_CWD
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -132,8 +133,8 @@ class ClaudeCodeSessionPrefsTest {
 
     @Test
     fun `the default cwd is encoded as an absent key`() {
-        val encoded = encodeSessionOptions(opusOneM.copy(cwd = ClaudeCodeManager.DEFAULT_CWD))
+        val encoded = encodeSessionOptions(opusOneM.copy(cwd = DEFAULT_CWD))
         assertFalse(encoded.containsKey(KEY_CWD))
-        assertEquals(ClaudeCodeManager.DEFAULT_CWD, decodeSessionOptions(encoded).cwd)
+        assertEquals(DEFAULT_CWD, decodeSessionOptions(encoded).cwd)
     }
 }

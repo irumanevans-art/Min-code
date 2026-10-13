@@ -18,9 +18,12 @@ import java.util.concurrent.ConcurrentHashMap
 internal sealed interface ControlOutcome {
     data class Ok(val payload: JsonObject) : ControlOutcome
 
+    /** 没拿到成功应答的两种情形：调用方要给用户一句话时统一走 [describe] / [reason]（在 ClaudeCodeControlErrors.kt） */
+    sealed interface Failure : ControlOutcome
+
     /** [code] 是 CLI 的 `error_code`（2.1.283+），进程没了等本地原因为 null，见 [ControlErrorCode] */
-    data class Error(val message: String, val code: String? = null) : ControlOutcome
-    data object Timeout : ControlOutcome
+    data class Error(val message: String, val code: String? = null) : Failure
+    data object Timeout : Failure
 }
 
 /**

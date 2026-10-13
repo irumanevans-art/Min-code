@@ -54,3 +54,18 @@ internal fun describeControlError(message: String, code: String?): String {
     } ?: return message
     return if (message.isBlank()) hint else "$hint（$message）"
 }
+
+/**
+ * 失败的原因，不带动作前缀：CLI 报了错就是 [describeControlError]，没应答就说超时多久。
+ * 调用方要在原因前后插别的信息（如"会话未在运行"的判断）时用这个，否则用 [describe]。
+ */
+internal fun ControlOutcome.Failure.reason(): String = when (this) {
+    is ControlOutcome.Error -> describeControlError(message, code)
+    ControlOutcome.Timeout -> "CLI 未应答（${ClaudeCodeControlChannel.TIMEOUT_MS / 1000} 秒超时）"
+}
+
+/** "<动作>失败：<原因>" / "<动作>超时"：同一个动作的失败在各处给用户看到的是同一句话 */
+internal fun ControlOutcome.Failure.describe(action: String): String = when (this) {
+    is ControlOutcome.Error -> "${action}失败：${reason()}"
+    ControlOutcome.Timeout -> "${action}超时"
+}

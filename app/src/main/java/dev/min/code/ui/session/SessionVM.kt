@@ -30,6 +30,7 @@ import dev.min.code.core.claudecode.ComposerDraft
 import dev.min.code.core.claudecode.ComposerDraftStore
 import dev.min.code.core.codex.CodexDraftStore
 import dev.min.code.core.codex.CodexRuntime
+import dev.min.code.core.rootfs.DEFAULT_CWD
 import dev.min.code.core.settings.CodexAuthMode
 import dev.min.code.core.settings.CodexProfile
 import dev.min.code.core.engine.codex.CodexStateMapper
@@ -210,6 +211,9 @@ class SessionVM(
     /** 命令被拒、话要原样退回输入框（会话已关掉发不出去）。和 [SessionSignal.Withdrawn] 合并成 [withdrawnMessages] */
     private val returnedMessages = MutableSharedFlow<ComposerDraft>(extraBufferCapacity = 4)
 
+    /** 退回输入框的图片的显示名：「图片 N」，序号 1 起 */
+    private fun composerImageName(number: Int): String = context.getString(R.string.composer_image_name, number)
+
     /**
      * 按停止键（Esc）在本轮还没产出时撤回的消息，要原样退还给输入框。
      * 和 [composerDraft] 分开：那是可以被重放的状态，这是一次性事件。
@@ -219,7 +223,7 @@ class SessionVM(
      */
     val withdrawnMessages: Flow<ComposerDraft> = merge(
         active.flatMapLatest { session ->
-            session?.signals?.filterIsInstance<SessionSignal.Withdrawn>()?.map { it.input.toComposerDraft() } ?: emptyFlow()
+            session?.signals?.filterIsInstance<SessionSignal.Withdrawn>()?.map { it.input.toComposerDraft(::composerImageName) } ?: emptyFlow()
         },
         returnedMessages,
     )
@@ -447,7 +451,7 @@ class SessionVM(
 
     /** 启动面板上默认选中的工作目录：活跃会话的，没有就是上次用过的；空白退回 /workspace */
     fun defaultCwd(): String =
-        (active.value?.state?.value?.cwd ?: registry.lastOptions().cwd).ifBlank { ClaudeCodeManager.DEFAULT_CWD }
+        (active.value?.state?.value?.cwd ?: registry.lastOptions().cwd).ifBlank { DEFAULT_CWD }
 
     /** 已在跑就直接切过去（不重启进程），否则新起一个并 --resume 续上 */
     fun openSession(ref: SessionRef) {
@@ -568,7 +572,7 @@ class SessionVM(
             // 没发出去的话（会话关了 / 没起来 / 接不回来，或斜杠命令不存在、预执行被拒）：原样退回输入框，能改了再发；
             // 并说一句为什么——只退回不说原因，人不知道为什么没发出去
             if (result is CommandResult.Rejected) {
-                returnedMessages.tryEmit(input.toComposerDraft())
+                returnedMessages.tryEmit(input.toComposerDraft(::composerImageName))
                 if (result.message.isNotBlank()) _notice.value = result.message
             }
         }
@@ -795,10 +799,10 @@ internal fun availabilityText(context: Application, availability: EngineAvailabi
     is EngineAvailability.Disabled -> availability.reason
 }
 
-/** 通用输入 -> 输入框草稿，和原 manager 退还时拼的一样（图片名按序号） */
-private fun UserInput.toComposerDraft() = ComposerDraft(
+/** 通用输入 -> 输入框草稿，和原 manager 退还时拼的一样（图片名按序号，[imageName] 收序号 1 起） */
+private fun UserInput.toComposerDraft(imageName: (Int) -> String) = ComposerDraft(
     text = text,
-    images = images.mapIndexed { i, img -> DraftImage(name = "图片 ${i + 1}", mediaType = img.mediaType, base64 = img.base64) },
+    images = images.mapIndexed { i, img -> DraftImage(name = imageName(i + 1), mediaType = img.mediaType, base64 = img.base64) },
 )
 
 /** 没有任何 Codex 连接配置时界面用的占位（与旧 Codex 页同一个 id） */

@@ -46,9 +46,9 @@ internal fun NetworkSettingsSection(vm: SettingsVM) {
 
 @Composable
 internal fun NetworkIsolationLayers(proxyEnabled: Boolean) {
-    SectionTitle("Min 命令的隔离层")
+    SectionTitle(stringResource(R.string.network_isolation_title))
     for (layer in dev.min.agent.policy.IsolationStatus.android(proxyEnabled)) {
         SettingRow(title = layer.name, subtitle = "${layer.state}\n${layer.strength}")
     }
-    Text("命令仍以 Min 的 Android 身份运行。此处适用于 Min 引擎；终端与外部 CLI 的环境声明不代表这些限制。", style = MaterialTheme.typography.bodySmall)
+    Text(stringResource(R.string.network_isolation_note), style = MaterialTheme.typography.bodySmall)
 }
