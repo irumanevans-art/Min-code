@@ -1,19 +1,21 @@
 package dev.min.agent.cli
 
 import dev.min.agent.host.HandleProcessReaper
+import dev.min.agent.spi.HostOs
+import dev.min.agent.spi.ShellQuote
 import java.nio.file.Files
 import java.nio.file.Path
 
 /** Windows 的命令正文不经 argv，避免 JDK 与 msys 对内嵌引号的解释不同。 */
 internal class LocalExecLaunch(private val shell: List<String>, logDir: Path, id: String) {
-    private val windows = System.getProperty("os.name").orEmpty().startsWith("Windows")
+    private val windows = HostOs.isWindows
     private val script = logDir.resolve("$id.sh")
     private val pidFile = logDir.resolve("$id.pid")
     private val discover = MsysProcesses(shell.first()).newDiscoverer(pidFile)
 
     fun argv(command: String): List<String> {
         if (!windows) return shell + command
-        Files.writeString(script, "echo \$\$ > ${posixQuote(bashPath(pidFile))}\n" + command + "\n", Charsets.UTF_8)
+        Files.writeString(script, "echo \$\$ > ${ShellQuote.posix(bashPath(pidFile))}\n" + command + "\n", Charsets.UTF_8)
         // 保留 login shell，只把执行字符串的 -c 改成读取脚本；调用者沿用原来的 bash -lc / bash -c 配置。
         val fileShell = shell.mapNotNull { when (it) { "-lc" -> "-l"; "-c" -> null; else -> it } }
         return fileShell + script.toAbsolutePath().toString()

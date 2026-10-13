@@ -27,6 +27,8 @@ import dev.min.agent.spi.LogHeader
 import dev.min.agent.spi.MemoryLoaded
 import dev.min.agent.spi.HooksLoaded
 import dev.min.agent.spi.PermissionRulesLoaded
+import dev.min.agent.spi.PromptBasis
+import dev.min.agent.spi.WorktreeBinding
 import dev.min.agent.spi.SessionCreated
 import dev.min.agent.spi.SessionEvent
 import dev.min.agent.spi.SessionStore
@@ -46,10 +48,7 @@ import dev.min.agent.protocol.QuestionId
 import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.UserQuestion
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -61,6 +60,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
@@ -166,7 +168,7 @@ fun normalizeSessionName(raw: String): String? {
             val invisible = Character.isISOControl(cp) ||
                 Character.getType(cp) == Character.FORMAT.toInt() ||
                 // 孤立的代理项（code point 落在代理区）：成对的到不了这里；落单的转不出合法 UTF-8，
-                // 落盘读回来变 ?，重开的名字与运行时对不上（N4）——换空格
+                // 落盘读回来变 ?，重开的名字与运行时对不上——换空格
                 Character.getType(cp) == Character.SURROGATE.toInt() ||
                 cp == 0x2028 || cp == 0x2029 // 行/段分隔：日志一行一条事件，名字里不能混进换行
             appendCodePoint(if (invisible) ' '.code else cp)
@@ -209,9 +211,9 @@ class SessionHub(
 
     /**
      * 本 Hub 实例在 hook 暂存目录里留下的 owner 记号（实例 id + 进程 pid）。桌面多终端共用 `~/.min/root`，
-     * 启动清扫按它区分：**别的实例**留下的目录、且那个进程已确认死掉（N2 的判死口径）才删——
-     * 本实例自己的（包括正在跑的）不动，清扫与首会话 SessionStart 后台 hook 的竞态也就不存在了（N1）。
-     * pid 从宿主端口取：内核侧 `ProcessHandle.current()` 在 Android 33 以下拿不到，宿主才知道自己平台怎么取
+     * 启动清扫按它区分：**别的实例**留下的目录、且那个进程已确认死掉才删——
+     * 本实例自己的（包括正在跑的）不动，清扫与首会话 SessionStart 后台 hook 的竞态也就不存在了。
+     * pid 从宿主端口取：内核侧 `ProcessHandle.current()` 在 Android 33 以下拿不到，宿主才知道自己平台怎么取。实例 id 不用 `deps.ids`：记号不进日志，计数式的 ids 多取一个就挪动所有会话 id（会让写死 `s_1` 的测试变红）
      */
     internal val hookStagingOwner = "${java.util.UUID.randomUUID()} ${deps.host.exec.currentPid()}"
 
@@ -255,23 +257,21 @@ class SessionHub(
 
     /**
      * owner 进程确认死了才真：只问宿主侧的进程表（[Exec.isPidAlive]）——guest shell 的 `kill -0` 在 Windows
-     * 拿宿主 pid 问 msys 的进程表，对活着的宿主进程也报「不存在」（M4）。端口说不了（null）或探测出错
-     * 都当活着——删错了没有回头路（与后台 hook 存活探测同一个口径，N2）
+     * 拿宿主 pid 问 msys 的进程表，对活着的宿主进程也报「不存在」。端口说不了（null）或探测出错
+     * 都当活着——删错了没有回头路（与后台 hook 存活探测同一个口径）
      */
     private suspend fun ownerConfirmedDead(pid: Long): Boolean =
         dev.min.agent.spi.catchingNonCancellation { deps.host.exec.isPidAlive(pid) }.getOrNull() == false
 
-    /** MCP 连接（MCP设计 §4）：根会话创建与打开时接上，卸下时松开。测试在建会话之前换成替身连接器 */
-    internal var mcp = McpManager(
-        scope,
-        ClientConnector(deps.host.processes, deps.host.mcpHttp, MCP_CLIENT_VERSION, deps.mcpConnectTimeoutMs, deps.mcpServerPath, deps.mcpTokenStore),
-        startupWaitMs = deps.mcpFirstSnapshotWaitMs,
-        sessionLookup = { runtimes[it] },
-        oauth = deps.host.mcpHttp?.let { dev.min.agent.mcp.McpOAuthClient(it, deps.mcpTokenStore, deps.mcpAuthorizer, deps.clock::nowMs) },
-        nowMs = deps.clock::nowMs,
-    )
     private val runtimes = ConcurrentHashMap<SessionId, SessionRuntime>()
-    internal val lsp = dev.min.agent.lsp.LspManager(scope, deps.host.processes, deps.mcpServerPath, guestPath = deps.lspGuestPath)
+
+    /** 根会话与 MCP / LSP / channel 的接线（连接管理器也在里面） */
+    private val mcpAttach = McpAttachment(deps, scope) { runtimes[it] }
+
+    /** MCP 连接（MCP设计 §4）：根会话创建与打开时接上，卸下时松开。测试在建会话之前换成替身连接器 */
+    internal var mcp: McpManager
+        get() = mcpAttach.mcp
+        set(value) { mcpAttach.mcp = value }
     private val openLock = Mutex()
 
     /** agent 团队的运行时：建团队、任务清单、邮箱、并发名额（状态本身在负责人日志的折叠里） */
@@ -328,7 +328,7 @@ class SessionHub(
      * 起 hook agent 子会话并等它跑完一个回合，返回最终回复文本（没有文字给 null）。子会话只读
      * （Read / Grep / Glob，CC 原文限定）、最多 [HOOK_AGENT_MAX_TURNS] 回合、不跑 SubagentStart hook、
      * 不写 SubagentSpawned——它不是委派，不进线程表；它的花费落自己的日志（ModelCharged，谁的账本
-     * 谁记）。跑完就从 Hub 卸下（L3）：它不在任何在线汇总里，挂着只是泄漏；日志都在磁盘上，要查随时
+     * 谁记）。跑完就从 Hub 卸下：它不在任何在线汇总里，挂着只是泄漏；日志都在磁盘上，要查随时
      * peek。父回合被取消时由调用方（ModelHookRunner）经 [stopHookAgent] 停掉它
      */
     internal suspend fun runHookAgent(parent: SessionRuntime, prompt: String, model: dev.min.agent.protocol.ModelRef? = null): String? {
@@ -350,7 +350,7 @@ class SessionHub(
         )
         val child = SessionRuntime.create(
             store, header, created, deps, scope,
-            // M3：守父会话的权限规则（含父会话里「总是允许」攒下的 sessionRules 与附加目录）——hook agent 的
+            // 守父会话的权限规则（含父会话里「总是允许」攒下的 sessionRules 与附加目录）——hook agent 的
             // 结论会回灌主模型，它读到了不该读的就等于绕过权限。hooks 一概不继承（settings 与组件的都不）：
             // hook 钩出 hook 是无限递归，防护就靠这条（HookDriver 里的 HOOK_AGENT_TYPE 守卫是第二道保险）
             listOf(origin) + inheritedHookAgentRules(ps),
@@ -375,14 +375,14 @@ class SessionHub(
     internal suspend fun stopHookAgent(parent: SessionRuntime) {
         val agents = subtreeOnline(parent.sessionId).mapNotNull { runtimes[it] }
             .filter { it.state.value.origin?.agentType == HOOK_AGENT_TYPE }
-        agents.forEach { child -> child.state.value.turn?.let { quietReports += child.sessionId to it.turnId } }
+        agents.forEach { child -> child.state.value.turn?.let { reports.quiet(child.sessionId, it.turnId) } }
         agents.forEach { it.interrupt() }
         agents.forEach { it.awaitIdle() }
         agents.forEach { unload(it.sessionId) }
     }
 
     /**
-     * hook agent 从父会话继承的权限规则（M3）：口径与子 agent 的 [inheritedRules] 一致（规则快照 +
+     * hook agent 从父会话继承的权限规则：口径与子 agent 的 [inheritedRules] 一致（规则快照 +
      * 「总是允许」攒下的 + 附加目录），但**不带** HooksLoaded / autoReview——hook agent 不跑 hook（递归），
      * 也不叠审查（它自己是被门禁调来当判官的）
      */
@@ -402,59 +402,29 @@ class SessionHub(
         } != null
     }
 
-    /** 正被前台委派等着的子会话：它们这一回合的报告交给等待的工具，不进收件箱 */
-    private val awaitedInForeground: MutableSet<SessionId> = ConcurrentHashMap.newKeySet()
-
-    /**
-     * 已经作为前台工具结果交出去的子回合。等待方一拿到结局就会把子会话移出 [awaitedInForeground]，
-     * 而盯结局的协程可能稍后才处理到同一个结局——没有这份记录，它会把报告再往收件箱里交一次。
-     * 只防本进程内的这个空档；跨重启由工具结果里的 ReportDelivered 在折叠时记账
-     */
-    private val consumedInForeground: MutableSet<Pair<SessionId, TurnId>> = ConcurrentHashMap.newKeySet()
-
-    /**
-     * 被人整棵停下的子回合（[stopTree]、[shutdown]、[delete]）：它们的报告照常交付，但不唤醒父会话开新回合——
-     * 用户刚说了停，不该因为子 agent 交来报告又自己动起来。按 (子会话, 回合) 记，盯结局的协程什么时候处理到都认得出
-     */
-    private val quietReports: MutableSet<Pair<SessionId, TurnId>> = ConcurrentHashMap.newKeySet()
-
-    /**
-     * [stopTree] 正在停的会话。盯结局的协程常常先于 stopTree 一步拿到被打断的结局并 [deliver]；
-     * 那时回合号还没记进 [quietReports]，所以 [deliver] 看到子会话在这里就一律不唤醒父会话。
-     * stopTree 收尾时先把结局记进 [quietReports]、再把会话移出这里，中间不留空档
-     */
-    private val stopping: MutableSet<SessionId> = ConcurrentHashMap.newKeySet()
+    /** 子 agent 报告的协调状态（前台交付 / 静音 / 停树窗口 / 盯结局的协程）：每条规则的先后次序写在 [ChildReportState] 的方法上 */
+    internal val reports = ChildReportState()
 
     /** 测试用：登记着的静音结局条数（卸下会话时该会话的条目要清掉） */
-    internal fun quietReportCount(): Int = quietReports.size
+    internal fun quietReportCount(): Int = reports.quietCount()
 
-    /** 已经在盯着回合结局的子会话（每个只盯一次） */
-    private val watched: MutableSet<SessionId> = ConcurrentHashMap.newKeySet()
+    /** 测试用：登记着的「已作前台结果交出」条数（卸下会话时该会话的条目要清掉） */
+    internal fun consumedInForegroundCount(): Int = reports.consumedCount()
 
-    /** 盯着子会话回合结局的协程（每个子会话一个）；卸下会话时一并取消 */
-    private val watchJobs = ConcurrentHashMap<SessionId, Job>()
-
-    /** 每个在线会话一个：把它的状态汇总进 [online] / [running] / [pending] */
-    private val observers = ConcurrentHashMap<SessionId, Job>()
-    private val summaryLock = Any()
-    private val runningIds = HashSet<SessionId>()
-    private val pendingBySession = HashMap<SessionId, List<HubPending>>()
-
-    private val _online = MutableStateFlow<Set<SessionId>>(emptySet())
-    private val _running = MutableStateFlow<Set<SessionId>>(emptySet())
-    private val _pending = MutableStateFlow<List<HubPending>>(emptyList())
+    /** 在线 / 在跑 / 等人的三份汇总（并发规则见 [HubPendingAggregator]） */
+    private val summary = HubPendingAggregator(scope) { runtimes.containsKey(it) }
 
     /** 在线（运行时驻留在内存里）的会话 */
-    val online: StateFlow<Set<SessionId>> = _online.asStateFlow()
+    val online: StateFlow<Set<SessionId>> get() = summary.online
 
     /** 有回合在跑的会话。前台服务据此保活：非空就别让系统把进程收掉 */
-    val running: StateFlow<Set<SessionId>> = _running.asStateFlow()
+    val running: StateFlow<Set<SessionId>> get() = summary.running
 
     /**
      * 所有在线会话里在等人的审批与提问，按发起时间排。子 agent 的也在这里（设计 §7「审批上浮」）：
      * 界面在根会话里内联显示、通知栏按它发通知，答复经 [get] 拿到对应会话的运行时写回去
      */
-    val pending: StateFlow<List<HubPending>> = _pending.asStateFlow()
+    val pending: StateFlow<List<HubPending>> get() = summary.pending
 
     /** 新建根会话。[initial] 与 SessionCreated 一起写入（宿主的说明 Note 等），会话日志要么完整建好、要么不存在 */
     suspend fun create(
@@ -465,7 +435,7 @@ class SessionHub(
         initial: List<SessionEvent> = emptyList(),
         /** `--name` 建会话时命名（已规整）；同目录已有同名根会话时自动改成 `-2`、`-3` 变体（CC 是两个英文单词后缀，Min 不带词表） */
         name: String? = null,
-        /** 这条会话是不是 `-p` / 无头跑的（CC :78：--continue 跳过 -p 会话）；标记随 SessionCreated 落盘 */
+        /** 这条会话是不是 `-p` / 无头跑的（CC 的 --continue 会跳过 -p 会话）；标记随 SessionCreated 落盘 */
         headless: Boolean = false,
         loadingModes: dev.min.agent.spi.SessionLoadingModes? = null,
         /** CLI 的 `--init-only` / `--init` / `--maintenance`：这次启动要触发的 Setup（matcher 按顺序），在 SessionStart(startup) 之前跑 */
@@ -482,7 +452,7 @@ class SessionHub(
         }
         register(runtime)
         peerMail.publish(runtime)
-        attachMcp(runtime, fresh = true)
+        mcpAttach.attach(runtime, fresh = true)
         crons.attach(runtime)
         // 插件声明的 monitors 随会话创建自动启动（`-p` 与子 agent 不启，见 PluginMonitors.kt）
         runtime.startPluginMonitors()
@@ -538,190 +508,46 @@ class SessionHub(
             SessionSummary(header, name, created?.cwd)
         }
 
-    /**
-     * 读 MCP 配置（与 CC 同一套文件，MCP设计 §3）并接上。没有主目录的宿主不接；配置读不了记一条说明、不拦会话。
-     * 项目层的信任沿用 hooks 那一个（工作区信任由宿主判定）
-     */
-    private suspend fun attachMcp(runtime: SessionRuntime, fresh: Boolean) {
-        val deps = runtime.deps
-        val home = deps.memoryHome ?: return
-        if (runtime.state.value.origin != null) return
-        // --bare / --safe-mode：MCP 服务器不自动发现（CC :72；safe 连托管配的也不连——原文保留清单里没有它）。
-        // create / open / branch / reload 都汇到这一点，闸在这里关得严
-        if (deps.customizations != Customizations.Full) {
-            // channel 是 MCP 的一种：MCP 不连的档位 channel 也不连（点了名的要说清为什么没开）
-            applyChannels(runtime, null, dev.min.agent.ext.mcp.ChannelPolicy.Open, blocked = "当前启动档位（--bare / --safe-mode）不连 MCP 服务器")
-            return
-        }
-        // 连接配置冻结在会话起点，cwd 切换只更新 roots；否则重开会话会悄悄接上另一套服务器。
-        val cwd = runtime.state.value.created.cwd
-        bindLsp(runtime, cwd, runtime.plugins()?.lspSources().orEmpty())
-        val (config, channelPolicy) = dev.min.agent.spi.catchingNonCancellation {
-            val settings = dev.min.agent.ext.config.SettingsLoader.load(deps.host.fs, cwd, home, inputs = deps.settingsInputs)
-            dev.min.agent.ext.mcp.McpConfigLoader.load(deps.host.fs, home, cwd, settings.merged, deps.trustProjectHooks(cwd), deps.env, plugins = runtime.plugins()?.mcpSources().orEmpty(), restricted = deps.settingsInputs.restricted) to
-                dev.min.agent.ext.mcp.ChannelPolicy.fromLayers(settings.merged.layers)
-        }.getOrElse { e ->
-            // 只写异常类名：异常消息可能带着配置里的 env / headers 值
-            runtime.commit(
-                listOf(dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "MCP 配置没读成（${e::class.simpleName}），这个会话没有接 MCP 服务器。")),
-                Durability.Batched,
-            )
-            return
-        }
-        // 「本会话关掉的服务器」只存在内存里（面板的开关）：同一进程里关了再开会话仍然关着，重启进程后回到配置的样子
-        val off = mcpOff[runtime.sessionId].orEmpty()
-        val gated = if (off.isEmpty()) config else config.copy(servers = config.servers.map {
-            if (it.spec.name in off && it.gate == dev.min.agent.ext.mcp.McpGate.Enabled) it.copy(gate = dev.min.agent.ext.mcp.McpGate.Disabled, reason = "本会话已关闭。") else it
-        })
-        mcp.attach(runtime, gated, cwd, fresh)
-        applyChannels(runtime, gated, channelPolicy)
-    }
+    // ---- MCP / LSP / channel：接线都在 [McpAttachment]，这里只是 Hub 的对外方法 ----
 
-    // ---- MCP channel（CC channels）----
+    /** 本进程默认要开的 channel（CLI 的 `--channels`）：见 [McpAttachment.defaultChannels] */
+    var defaultChannels: List<dev.min.agent.ext.mcp.ChannelRequest>
+        get() = mcpAttach.defaultChannels
+        set(value) { mcpAttach.defaultChannels = value }
 
-    /**
-     * 本进程默认要开的 channel（CLI 的 `--channels` / `--dangerously-load-development-channels`）：新建、重开的根会话套用。
-     * 宿主在开会话前设；开发参数的那些必须是**用户已确认过**的（内核不替宿主确认）。会话自己设过（[setChannels]）就以它为准
-     */
-    var defaultChannels: List<dev.min.agent.ext.mcp.ChannelRequest> = emptyList()
-
-    private val channelRequests = ConcurrentHashMap<SessionId, List<dev.min.agent.ext.mcp.ChannelRequest>>()
-    private val channelRefusals = ConcurrentHashMap<SessionId, List<String>>()
-
-    /**
-     * 设定一个根会话要开的 channel（整份替换），并立刻生效：重读 MCP 配置、按托管策略与 MCP 闸把请求落到服务器上。
-     * 返回没开成的原因（逐项）。只有用户点名的才会开；要给的 [requests] 里带 `development = true` 的须是宿主确认过的
-     */
-    suspend fun setChannels(id: SessionId, requests: List<dev.min.agent.ext.mcp.ChannelRequest>): List<String> {
-        if (runtimes[id] == null) return emptyList()
-        channelRequests[id] = requests
-        reloadMcp(id)
-        return channelRefusals[id].orEmpty()
-    }
+    /** 设定一个根会话要开的 channel（整份替换）并立刻生效，返回没开成的原因；见 [McpAttachment.setChannels] */
+    suspend fun setChannels(id: SessionId, requests: List<dev.min.agent.ext.mcp.ChannelRequest>): List<String> = mcpAttach.setChannels(id, requests)
 
     /** 本会话现在要开的 channel 请求（没单独设过就是 [defaultChannels]） */
-    fun channelRequestsOf(id: SessionId): List<dev.min.agent.ext.mcp.ChannelRequest> = channelRequests[id] ?: defaultChannels
+    fun channelRequestsOf(id: SessionId): List<dev.min.agent.ext.mcp.ChannelRequest> = mcpAttach.channelRequestsOf(id)
 
     /** 面板「channel」一栏的一行：声明了 channel 能力、已连上的服务器，和它对应的点名写法 */
     data class ChannelOption(val server: String, val ref: dev.min.agent.ext.mcp.ChannelRef, val state: ChannelState)
 
-    /**
-     * 本会话里可以开成 channel 的服务器（连上了、握手时声明了 channel 能力）。[ChannelOption.ref]：插件清单声明为 channel 的
-     * 服务器是 `plugin:<name>@<market>`（批准口径：用户点名即可）；别的是 `server:<name>`（只能走开发参数、宿主要先确认）
-     */
-    suspend fun channelOptions(id: SessionId): List<ChannelOption> {
-        val runtime = runtimes[id] ?: return emptyList()
-        val pluginServers = runtime.plugins()?.channelServers().orEmpty()
-        return mcp.panelOf(id).mapNotNull { row ->
-            val state = row.channel ?: return@mapNotNull null
-            val declared = pluginServers.firstOrNull { it.serverName == row.info.name }
-            ChannelOption(row.info.name, declared?.ref?.marketplace?.let { market -> dev.min.agent.ext.mcp.ChannelRef.Plugin(declared.ref.name, market) } ?: dev.min.agent.ext.mcp.ChannelRef.Server(row.info.name), state)
-        }
-    }
+    /** 本会话里可以开成 channel 的服务器；见 [McpAttachment.channelOptions] */
+    suspend fun channelOptions(id: SessionId): List<ChannelOption> = mcpAttach.channelOptions(id)
 
-    /**
-     * 面板勾选：开 / 关一台服务器的 channel。开的是 `server:` 形式（没经批准清单）时 [confirmedDevelopment] 必须为真
-     * ——宿主要先弹确认（CC：开发参数「Prompts for confirmation」）；没确认抛 [IllegalArgumentException]，什么都不改
-     */
-    suspend fun setChannelEnabled(id: SessionId, server: String, enabled: Boolean, confirmedDevelopment: Boolean = false): List<String> {
-        val option = channelOptions(id).firstOrNull { it.server == server } ?: throw IllegalArgumentException("MCP 服务器 $server 没有声明 channel 能力，或还没连上。")
-        val others = channelRequestsOf(id).filterNot { it.ref == option.ref }
-        if (!enabled) return setChannels(id, others)
-        val development = option.ref is dev.min.agent.ext.mcp.ChannelRef.Server
-        require(!development || confirmedDevelopment) { "这台服务器不在批准范围内，开成 channel 要先确认（开发用途）。" }
-        return setChannels(id, others + dev.min.agent.ext.mcp.ChannelRequest(option.ref, development))
-    }
+    /** 面板勾选：开 / 关一台服务器的 channel；开发用途的要先确认，见 [McpAttachment.setChannelEnabled] */
+    suspend fun setChannelEnabled(id: SessionId, server: String, enabled: Boolean, confirmedDevelopment: Boolean = false): List<String> =
+        mcpAttach.setChannelEnabled(id, server, enabled, confirmedDevelopment)
 
-    /**
-     * 把点名的请求落成本会话的 channel 授权（[resolveChannels]）。授权变化与没开成的原因各记一条说明（相同的不重复记）。
-     * [blocked] 非空 = 这个档位根本不连 MCP：点了名的全部拒绝，原因就是它
-     */
-    private suspend fun applyChannels(
-        runtime: SessionRuntime,
-        config: dev.min.agent.ext.mcp.McpConfigSnapshot?,
-        policy: dev.min.agent.ext.mcp.ChannelPolicy,
-        blocked: String? = null,
-    ) {
-        val id = runtime.sessionId
-        val requests = channelRequests[id] ?: defaultChannels
-        val resolution = if (blocked != null || config == null) {
-            ChannelResolution(emptyMap(), requests.map { "${it.ref.label}：$blocked" })
-        } else resolveChannels(requests, config, runtime.plugins()?.channelServers().orEmpty(), policy)
-        val before = mcp.channelsOf(id)
-        mcp.setChannels(id, resolution.grants)
-        val added = resolution.grants.filterKeys { it !in before }
-        val notes = added.map { (server, grant) ->
-            dev.min.agent.spi.Note(
-                dev.min.agent.spi.NoteLevel.Info,
-                "Channels（实验）：来自 $server 的消息会直接进入本会话（外部来源，不是用户本人输入）" +
-                    if (grant.development) "；这是用开发参数开启的，没有经过批准清单。" else "。",
-            )
-        } + if (resolution.refusals != channelRefusals[id].orEmpty()) resolution.refusals.map {
-            dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "Channels 没有开启：$it")
-        } else emptyList()
-        channelRefusals[id] = resolution.refusals
-        if (notes.isNotEmpty()) runtime.commit(notes, Durability.Batched)
-    }
+    /** 重读 MCP 配置并换上（界面批准了项目服务器、撤销了工作区信任、切了本会话开关之后调）；见 [McpAttachment.reload] */
+    suspend fun reloadMcp(id: SessionId) = mcpAttach.reload(id)
 
-    private fun bindLsp(runtime: SessionRuntime, root: GuestPath, servers: List<dev.min.agent.spi.LspServerSpec>) {
-        runtime.lspServers = servers
-        runtime.lspRoot = root
-        val policy = ToolExecutor(runtime)
-        fun verdict(path: dev.min.agent.spi.GuestPath): dev.min.agent.policy.Verdict {
-            val context = policy.policyContext()
-            val ask = dev.min.agent.spi.PermissionAsk("LSP", "读取代码诊断", paths = listOf(dev.min.agent.spi.PathAccess(path, dev.min.agent.spi.AccessKind.Read, context.scopeOf(path))))
-            return dev.min.agent.policy.PolicyEngine.evaluate(ask, true, context)
-        }
-        // 主文件已经过工具批准；服务器返回的其它文件仍须已获 Read 许可，不能借符号结果读取待批准文件。
-        runtime.lsp = lsp.port(root, servers, deps.host.fs,
-            canReturn = { verdict(it) is dev.min.agent.policy.Verdict.Allow },
-            canRead = { verdict(it) !is dev.min.agent.policy.Verdict.Deny })
-    }
+    internal suspend fun reloadPluginLsp(id: SessionId) = mcpAttach.reloadPluginLsp(id)
 
-    private fun inheritLsp(runtime: SessionRuntime, parent: SessionRuntime) {
-        bindLsp(runtime, parent.lspRoot ?: parent.state.value.created.cwd, parent.lspServers)
-    }
+    internal suspend fun cwdChanged(runtime: SessionRuntime) = mcpAttach.cwdChanged(runtime)
 
-    internal suspend fun cwdChanged(runtime: SessionRuntime) {
-        mcp.refreshRoots(runtime)
-    }
-
-    private val mcpOff = ConcurrentHashMap<SessionId, Set<String>>()
-
-    /**
-     * 重读 MCP 配置并换上（界面批准了项目服务器、撤销了工作区信任、切了本会话开关之后调）。
-     * 已连着的服务器共享同一条连接（先占后放，不重连）；新放行的服务器后台连、连上后排到下一回合生效，
-     * 被去掉的服务器的工具也在下一回合才从工具表里消失——与 list_changed 同一条路径，缓存前缀只在回合边界变。
-     * 只对根会话有效（子 agent 沿用父会话的服务器表）；会话没在线时什么都不做
-     */
-    suspend fun reloadMcp(id: SessionId) {
-        val runtime = runtimes[id] ?: return
-        attachMcp(runtime, fresh = false)
-    }
-    internal suspend fun reloadPluginLsp(id: SessionId) {
-        val runtime = runtimes[id] ?: return
-        bindLsp(runtime, runtime.state.value.created.cwd, runtime.plugins()?.lspSources().orEmpty())
-    }
-
-    /** 面板的「本会话开关」：关掉的服务器连接引用放掉（别的会话还在用就留着），工具下一回合起不在工具表里 */
-    suspend fun setMcpServerEnabled(id: SessionId, server: String, enabled: Boolean) {
-        mcpOff.compute(id) { _, old -> if (enabled) old.orEmpty() - server else old.orEmpty() + server }
-        reloadMcp(id)
-    }
+    /** 面板的「本会话开关」：关掉的服务器连接引用放掉，工具下一回合起不在工具表里 */
+    suspend fun setMcpServerEnabled(id: SessionId, server: String, enabled: Boolean) = mcpAttach.setServerEnabled(id, server, enabled)
 
     /** 面板整行（状态 + stderr 尾巴 + 是否已登录），见 [McpManager.panelOf] */
-    suspend fun mcpPanel(sessionId: SessionId): List<McpServerPanel> {
-        val off = mcpOff[sessionId].orEmpty()
-        return mcp.panelOf(sessionId).map { it.copy(sessionOff = it.info.name in off) }
-    }
+    suspend fun mcpPanel(sessionId: SessionId): List<McpServerPanel> = mcpAttach.panel(sessionId)
 
     suspend fun reconnectMcp(server: String, sessionId: SessionId) = mcp.reconnect(server, sessionId)
 
     /** WaitForMcpServers 的端口：绑在一个会话上（它的 MCP 服务器）。内核 ToolExecutor 发给工具 */
-    internal fun mcpWaitFor(rt: SessionRuntime): dev.min.agent.spi.McpWaitPort = object : dev.min.agent.spi.McpWaitPort {
-        override suspend fun await(servers: List<String>, timeoutMs: Long): Map<String, String> = mcp.awaitStartup(rt.sessionId, servers, timeoutMs)
-        override fun states(): Map<String, String> = mcp.statesOf(rt.sessionId)
-    }
+    internal fun mcpWaitFor(rt: SessionRuntime): dev.min.agent.spi.McpWaitPort = mcpAttach.waitPort(rt)
 
     /**
      * 卸下一个会话及它在线的整棵子树（运行时离开内存，日志不动，之后 [open] 能原样重开）。
@@ -772,7 +598,7 @@ class SessionHub(
      * 返回时整棵树都空闲了。不在内存里的会话不用停。
      *
      * 子树要反复收集（最多 [STOP_ROUNDS] 轮）：打断的瞬间，正在跑的回合可能刚委派出新的子会话，第一轮的快照里没有它。
-     * 整个过程中树里的会话都在 [stopping] 里：盯结局的协程抢在这里之前交付时不唤醒父会话（见 [deliver]）。
+     * 整个过程中树里的会话都在 [ChildReportState.startStopping] 登记着：盯结局的协程抢在这里之前交付时不唤醒父会话（见 [deliver]）。
      */
     suspend fun stopTree(id: SessionId) {
         val seen = LinkedHashSet<SessionId>()
@@ -780,10 +606,10 @@ class SessionHub(
             for (round in 0 until STOP_ROUNDS) {
                 val fresh = subtreeOnline(id).filter { seen.add(it) }
                 if (fresh.isEmpty()) break
-                stopping += fresh
+                reports.startStopping(fresh)
                 val tree = seen.mapNotNull { runtimes[it] }
                 // 先记下要静音的回合再打断：结局一出现，盯结局的协程就可能去交付
-                tree.forEach { rt -> rt.state.value.turn?.let { quietReports += rt.sessionId to it.turnId } }
+                tree.forEach { rt -> rt.state.value.turn?.let { reports.quiet(rt.sessionId, it.turnId) } }
                 tree.forEach { it.interrupt() }
                 // 子 agent 被人停下，它起的 watch 一起停（根自己的 watch 不动：■ 停的是回合，不是后台任务，要停用任务条或 TaskStop）
                 tree.filter { it.sessionId != id }.forEach { it.background.stopAllMonitors(BackgroundJobs.Stopper.User) }
@@ -794,18 +620,18 @@ class SessionHub(
         } finally {
             withContext(NonCancellable) {
                 // 打断时回合还没写 TurnStarted 的（刚委派、刚唤醒），结局的回合号到这里才知道。
-                // 只给有 origin 的子会话记：根会话没有盯结局的协程。先记、再移出 stopping，不留空档
+                // 只给有 origin 的子会话记：根会话没有盯结局的协程。先记、再 finishStopping，不留空档
                 seen.mapNotNull { runtimes[it] }.filter { it.state.value.origin != null }.forEach { rt ->
-                    rt.state.value.lastTurn?.let { quietReports += rt.sessionId to it.turnId }
+                    rt.state.value.lastTurn?.let { reports.quiet(rt.sessionId, it.turnId) }
                 }
-                stopping -= seen
+                reports.finishStopping(seen)
             }
         }
     }
 
     /**
      * 预算到限时停掉在跑的后台子 agent（CC changelog：running background agents halted）。只由**根会话**的
-     * [TurnRunner] 调（见 [TurnRunner.finishBudgetCapped]）：这里天然排除根自己——发起检查的根会话正走在
+     * [TurnRunner] 调（见 [TurnEndings.budgetCapped]）：这里天然排除根自己——发起检查的根会话正走在
      * Limit 收尾的路上，打断它会把 Limit 顶成中断；前台子 agent 此刻本来就是闲的（父回合正等着它们的报告），
      * 停了报告就没人收。到限的子 agent 只收自己的回合，不经这里。报告按 [stopTree] 的口径静音：
      * 被停的子 agent 不该再往根会话投报告——那会触发新回合，正是预算要拦的
@@ -830,10 +656,10 @@ class SessionHub(
      * 宿主退出前调用：把全部 MCP 服务器连接按礼貌顺序关掉（关 stdin → 等 2 秒 → SIGTERM → SIGKILL），连同还在等回收的。
      * 只靠卸下会话不够：那只是开始计「无人使用」的两分钟，宿主进程先退出了的话，不看 stdin 的服务器就成了孤儿进程
      */
-    suspend fun closeMcpConnections() { lsp.closeAll(); mcp.closeAll() }
+    suspend fun closeMcpConnections() { mcpAttach.lsp.closeAll(); mcp.closeAll() }
 
     /** 没有会话在用、正等着回收的 MCP 连接现在就关（宿主进后台时用，见 [McpManager.closeUnused]）；还在用的不动 */
-    suspend fun closeUnusedMcp() { lsp.closeUnused(); mcp.closeUnused() }
+    suspend fun closeUnusedMcp() { mcpAttach.lsp.closeUnused(); mcp.closeUnused() }
 
     suspend fun loginMcp(server: String, sessionId: SessionId? = null) = mcp.login(server, sessionId)
     suspend fun logoutMcp(server: String, sessionId: SessionId? = null) = mcp.logout(server, sessionId)
@@ -877,8 +703,7 @@ class SessionHub(
         for (id in order) unload(id)
         var deletedRoot = false
         for (id in order) {
-            mcpOff.remove(id)
-            channelRequests.remove(id); channelRefusals.remove(id)
+            mcpAttach.forget(id)
             forgetSnapshots(id)
             val deleted = store.delete(id)
             if (id == root) deletedRoot = deleted
@@ -926,12 +751,12 @@ class SessionHub(
         runtime.worktrees.resumeBinding()
         val origin = runtime.state.value.origin
         if (origin == null) {
-            attachMcp(runtime, fresh = false)
+            mcpAttach.attach(runtime, fresh = false)
             // 重开会话 = 恢复未过期的定时任务（过期的在这里结案）；任务本身从日志折叠里来
             crons.attach(runtime)
             // 重开会话：带着进行中的 /goal 恢复（回合与 check-in 计数清零；已达成或已清除的没有条件，不恢复）
             runtime.resumeGoal(deps.clock.nowMs())
-        } else runtimes[origin.parent]?.let { mcp.attachInherited(runtime, it); inheritLsp(runtime, it) }
+        } else runtimes[origin.parent]?.let { mcpAttach.inherit(runtime, it) }
         if (resumedByUser) resumeStart(runtime, setupTriggers)
         if (runtime.state.value.origin != null) watch(runtime, reconcile = true)
         if (runtime.state.value.origin == null) runtime.fileWatches.arm()
@@ -993,7 +818,7 @@ class SessionHub(
             runtime.commit(listOf(dev.min.agent.spi.SessionRenamed(uniqueName(s.created.cwd, n, exclude = runtime.sessionId))), Durability.Sync)
         }
         // 根会话接上 MCP（快照已在日志里，与 open 同一套）；检查点的回收根给新会话登记一份（复用 Checkpointer.retain）
-        attachMcp(runtime, fresh = false)
+        mcpAttach.attach(runtime, fresh = false)
         crons.attach(runtime)
         runtime.checkpointer.retainAfterTurn()
         return runtime
@@ -1134,25 +959,7 @@ class SessionHub(
         )
         // 三种生成入口在建日志、建 worktree、跑 hook 之前汇合；脚本与助手的文字不能升级成用户授权。
         if (ps.settings.mode == PermissionMode.Auto) {
-            val candidate = SubagentOrigin(parent.sessionId, parentOrigin?.root ?: parent.sessionId, callId, type, fork, depth,
-                cacheKey = "review", tools = definition?.let { toolsFor(it, depth) },
-                mcpTools = definition?.tools?.filter { it.startsWith(MCP_PREFIX) }, mcpDenied = definition?.disallowedTools.orEmpty().filter { it.startsWith(MCP_PREFIX) },
-                workflow = request.workflow || parentOrigin?.workflow == true, workflowSchema = request.schema, teamMember = teamMember)
-            val capabilities = availableTools(ps.copy(origin = candidate), deps, runtime = parent).map { it.name }
-            val input = kotlinx.serialization.json.buildJsonObject {
-                put("description", kotlinx.serialization.json.JsonPrimitive(request.description))
-                put("prompt", kotlinx.serialization.json.JsonPrimitive(request.prompt))
-                put("prompt_origin", kotlinx.serialization.json.JsonPrimitive(if (request.workflow) "script" else "assistant"))
-                put("agent_type", kotlinx.serialization.json.JsonPrimitive(type))
-                put("tools", kotlinx.serialization.json.JsonArray(capabilities.map { kotlinx.serialization.json.JsonPrimitive(it) }))
-                put("mcp_tools", kotlinx.serialization.json.JsonArray(definition?.tools.orEmpty().filter { it.startsWith(MCP_PREFIX) }.map { kotlinx.serialization.json.JsonPrimitive(it) }))
-                put("instructions", kotlinx.serialization.json.JsonPrimitive(definition?.instructions.orEmpty()))
-            }
-            when (val verdict = parent.reviewAutoAction(turnId, "Agent", input, "启动子 agent：${request.description}",
-                backgroundSpawn = !request.workflow && (request.background || definition?.alwaysBackground == true))) {
-                is dev.min.agent.policy.Verdict.Deny -> return DelegateResult.Rejected(verdict.messageToModel)
-                else -> Unit
-            }
+            reviewSpawn(parent, ps, turnId, callId, request, definition, type, fork, depth, teamMember)?.let { return it }
             ps = parent.state.value
         }
         val root = parentOrigin?.root ?: parent.sessionId
@@ -1164,14 +971,9 @@ class SessionHub(
         if (definition == null) {
             // 分身：模型、档位、环境、记忆、缓存键、工具表全部照父会话，前缀才能逐字节相同（设计 §3.2）
             created = SessionCreated(ps.settings.cwd, ps.settings.model, ps.settings.mode, ps.settings.effort, headless = ps.created.headless, loadingModes = ps.created.loadingModes)
-            initial += SubagentOrigin(
-                parent = parent.sessionId, root = root, parentCall = callId, agentType = FORK_AGENT_TYPE, fork = true,
-                depth = depth, promptBasis = promptBasisOf(ps, deps), cacheKey = parentOrigin?.cacheKey ?: parent.sessionId.value,
-                workflow = request.workflow || parentOrigin?.workflow == true,
-                workflowSchema = request.schema.takeIf { request.workflow },
-                workflowAttempts = request.workflowAttempts.takeIf { request.workflow },
-                workflowRunId = request.workflowRunId ?: parentOrigin?.workflowRunId,
-                workflowName = request.workflowName ?: parentOrigin?.workflowName,
+            initial += buildOrigin(
+                parent, callId, request, FORK_AGENT_TYPE, fork = true, depth, definition = null, teamMember = false,
+                cacheKey = parentOrigin?.cacheKey ?: parent.sessionId.value, promptBasis = promptBasisOf(ps, deps),
             )
             initial += forkSeed(ps, callId, request.prompt)
             initial += forkInheritance(ps, callId)
@@ -1191,56 +993,20 @@ class SessionHub(
             }
             val mode = childPermissionMode(ps.settings.mode, definition, deps.trustProjectHooks(ps.settings.cwd), ps.autoReviewSettings)
             created = SessionCreated(ps.settings.cwd, model, mode, request.effort ?: definition.effort ?: ps.settings.effort, headless = ps.created.headless, loadingModes = ps.created.loadingModes)
-            initial += SubagentOrigin(
-                parent = parent.sessionId, root = root, parentCall = callId, agentType = definition.name, fork = false,
-                depth = depth, cacheKey = "agent:${definition.name}:${root.value}",
-                tools = toolsFor(definition, depth), instructions = definition.instructions, maxTurns = definition.maxTurns,
-                teamMember = teamMember,
-                omitMemory = definition.omitMemory,
-                // 定义里 mcp__ 开头的写法单独存：MCP 工具运行时才知道有哪些（写了 tools 却没列 MCP 工具 = 一个都不给）
-                mcpTools = definition.tools?.filter { it.startsWith(MCP_PREFIX) },
-                mcpDenied = definition.disallowedTools.filter { it.startsWith(MCP_PREFIX) },
-                // 禁止中途提问是整棵工作流树的约束，不能通过再委派或分身绕开。
-                workflow = request.workflow || parentOrigin?.workflow == true,
-                workflowSchema = request.schema.takeIf { request.workflow },
-                workflowAttempts = request.workflowAttempts.takeIf { request.workflow },
-                workflowRunId = request.workflowRunId ?: parentOrigin?.workflowRunId,
-                workflowName = request.workflowName ?: parentOrigin?.workflowName,
+            initial += buildOrigin(
+                parent, callId, request, definition.name, fork = false, depth, definition, teamMember,
+                cacheKey = "agent:${definition.name}:${root.value}",
             )
         }
         // 分身 skill 的 allowed-tools：只记那个 skill 自己声明的（已代入），不是父会话当下的全部放行
         if (request.skillGrants.isNotEmpty()) initial += dev.min.agent.spi.SkillToolsGranted(request.description, request.skillGrants.distinct())
-        initial += dev.min.agent.spi.AutoUserContextInherited(AutoReviewer(parent).trustedUserTexts(ps, ToolExecutor(parent, HookDriver(parent)).policyContext()))
+        initial += dev.min.agent.spi.AutoUserContextInherited(AutoReviewer(parent).trustedUserTexts(ps, PolicyContextFactory(parent).context()))
         val background = !request.workflow && (request.background || definition?.alwaysBackground == true)
 
-        // 子 agent 定义的 frontmatter hooks：登记进**子会话**自己的日志——只在它运行期间生效（CC），
-        // 不进父会话（inheritedRules 复制的是 settings 快照）。子会话再派生时经 inheritedComponentHooks
-        // 快照式传给孙会话（M8：登记时刻的一份拷贝，Stop 已在登记时改写成 SubagentStop）。项目层定义
-        // （project / local）要过工作区信任——与 settings 同一条规则；Min 里 `-p` 不自动信任，
-        // CC 的「-p 不算接受信任」天然成立
-        definition?.hooks?.let { h ->
-            val layer = definition.hooksLayer ?: "user"
-            val trusted = !(layer == "project" || layer == "local") || deps.trustProjectHooks(ps.created.cwd)
-            if (trusted) {
-                initial += dev.min.agent.spi.ComponentHooksRegistered("agent", definition.name, layer, stopToSubagentStop(h))
-            } else {
-                parent.commit(
-                    listOf(dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "$layer 层子 agent「${definition.name}」的 frontmatter hooks 未启用：工作区还没有被信任。")),
-                    Durability.Batched,
-                )
-            }
-        }
+        definition?.let { initial += frontmatterHooksEvents(parent, ps, it) }
 
-        val isolated = if (request.isolationWorktree || definition?.isolationWorktree == true) {
-            dev.min.agent.spi.catchingNonCancellation { parent.worktrees.prepare("agent-${childId.value}", null, pinned = true) }
-                .getOrElse { return DelegateResult.Rejected(it.message ?: "Worktree creation failed.") }
-        } else null
-        if (isolated != null) {
-            if (definition?.omitMemory != true) initial += MemoryLoaded((ps.memory + ps.cwdMemory).distinctBy { it.path }, autoMemory = ps.autoMemory)
-            initial += dev.min.agent.spi.CwdChanged(created.cwd, isolated.path, isolated)
-        } else if (ps.worktree != null) {
-            initial += dev.min.agent.spi.CwdChanged(created.cwd, created.cwd, ps.worktree.copy(pinned = true, owned = false))
-        }
+        val isolated = prepareIsolation(parent, request, definition, childId).getOrElse { return DelegateResult.Rejected(it.message ?: "Worktree creation failed.") }
+        initial += isolationEvents(ps, definition, created, isolated)
         val child = SessionRuntime.create(
             store, header, created, deps, scope,
             initial + inheritedRules(ps) + inheritedSkills(ps) + inheritedMcp(ps) + inheritedComponentHooks(ps),
@@ -1249,14 +1015,13 @@ class SessionHub(
         )
         // 工作流自己的节点闸同时管排队与模型请求，不能再被默认 Hub 的 3 个流式槽压回去。
         child.requestGate = if (request.workflow) null else childGate
-        mcp.attachInherited(child, parent)
-        inheritLsp(child, parent)
+        mcpAttach.inherit(child, parent)
         register(child)
         parent.commit(
             listOf(SubagentSpawned(turnId, callId, childId, type, fork, background, request.description, request.name)),
             Durability.Sync,
         )
-        if (!background) awaitedInForeground += childId
+        if (!background) reports.markForeground(childId)
         watch(child, reconcile = false)
         // SubagentStart（hooks设计 §7）：子会话建好之后、第一个回合之前跑——上下文要赶在子会话的第一个请求之前挂好
         runSubagentStart(child)
@@ -1272,6 +1037,93 @@ class SessionHub(
         return awaitForeground(parent, child)
     }
 
+    /**
+     * 子会话的来历。审查候选、分身、新开的子 agent 三处共用这一份，工作流相关的字段只在这里算：
+     * [SubagentOrigin.workflow]（禁止中途提问）是整棵工作流树的约束，沿父来历继承，不能通过再委派或分身绕开；
+     * schema / attempts 只属于发起这次委派的工作流节点；运行 id 与脚本名沿父来历继承给后代（遥测用）。
+     * [definition] 为 null = 分身（工具表、模型、缓存键都照父会话，所以不带 tools / instructions）
+     */
+    private fun buildOrigin(
+        parent: SessionRuntime, callId: CallId, request: DelegateRequest, type: String, fork: Boolean, depth: Int,
+        definition: AgentDefinition?, teamMember: Boolean, cacheKey: String, promptBasis: PromptBasis? = null,
+    ): SubagentOrigin {
+        val parentOrigin = parent.state.value.origin
+        return SubagentOrigin(
+            parent = parent.sessionId, root = parentOrigin?.root ?: parent.sessionId, parentCall = callId, agentType = type, fork = fork,
+            depth = depth, promptBasis = promptBasis, cacheKey = cacheKey,
+            tools = definition?.let { toolsFor(it, depth) }, instructions = definition?.instructions, maxTurns = definition?.maxTurns,
+            omitMemory = definition?.omitMemory == true,
+            // 定义里 mcp__ 开头的写法单独存：MCP 工具运行时才知道有哪些（写了 tools 却没列 MCP 工具 = 一个都不给）
+            mcpTools = definition?.tools?.filter { it.startsWith(MCP_PREFIX) },
+            mcpDenied = definition?.disallowedTools.orEmpty().filter { it.startsWith(MCP_PREFIX) },
+            teamMember = teamMember,
+            workflow = request.workflow || parentOrigin?.workflow == true,
+            workflowSchema = request.schema.takeIf { request.workflow },
+            workflowAttempts = request.workflowAttempts.takeIf { request.workflow },
+            workflowRunId = request.workflowRunId ?: parentOrigin?.workflowRunId,
+            workflowName = request.workflowName ?: parentOrigin?.workflowName,
+        )
+    }
+
+    /**
+     * Auto 档下委派先过一遍自动审查：脚本与助手的文字不能升级成用户授权。审查看到的是「如果真建出来，这个子 agent 会带哪些工具」，
+     * 所以用同一份 [buildOrigin] 造一个候选来历去算工具表。被拒返回 [DelegateResult.Rejected]，放行返回 null
+     */
+    private suspend fun reviewSpawn(
+        parent: SessionRuntime, ps: SessionState, turnId: TurnId, callId: CallId, request: DelegateRequest,
+        definition: AgentDefinition?, type: String, fork: Boolean, depth: Int, teamMember: Boolean,
+    ): DelegateResult.Rejected? {
+        val candidate = buildOrigin(parent, callId, request, type, fork, depth, definition, teamMember, cacheKey = "review")
+        val capabilities = availableTools(ps.copy(origin = candidate), deps, runtime = parent).map { it.name }
+        val input = buildJsonObject {
+            put("description", JsonPrimitive(request.description))
+            put("prompt", JsonPrimitive(request.prompt))
+            put("prompt_origin", JsonPrimitive(if (request.workflow) "script" else "assistant"))
+            put("agent_type", JsonPrimitive(type))
+            put("tools", JsonArray(capabilities.map { JsonPrimitive(it) }))
+            put("mcp_tools", JsonArray(definition?.tools.orEmpty().filter { it.startsWith(MCP_PREFIX) }.map { JsonPrimitive(it) }))
+            put("instructions", JsonPrimitive(definition?.instructions.orEmpty()))
+        }
+        val verdict = parent.reviewAutoAction(turnId, "Agent", input, "启动子 agent：${request.description}",
+            backgroundSpawn = !request.workflow && (request.background || definition?.alwaysBackground == true))
+        return (verdict as? dev.min.agent.policy.Verdict.Deny)?.let { DelegateResult.Rejected(it.messageToModel) }
+    }
+
+    /**
+     * 子 agent 定义的 frontmatter hooks：登记进**子会话**自己的日志——只在它运行期间生效（CC），
+     * 不进父会话（inheritedRules 复制的是 settings 快照）。子会话再派生时经 [inheritedComponentHooks]
+     * 快照式传给孙会话（登记时刻的一份拷贝，Stop 已在登记时改写成 SubagentStop）。项目层定义
+     * （project / local）要过工作区信任——与 settings 同一条规则；Min 里 `-p` 不自动信任，
+     * CC 的「-p 不算接受信任」天然成立。没过信任时只往父会话记一条说明，返回空
+     */
+    private suspend fun frontmatterHooksEvents(parent: SessionRuntime, ps: SessionState, definition: AgentDefinition): List<SessionEvent> {
+        val hooks = definition.hooks ?: return emptyList()
+        val layer = definition.hooksLayer ?: "user"
+        val trusted = !(layer == "project" || layer == "local") || deps.trustProjectHooks(ps.created.cwd)
+        if (trusted) return listOf(dev.min.agent.spi.ComponentHooksRegistered("agent", definition.name, layer, stopToSubagentStop(hooks)))
+        parent.commit(
+            listOf(dev.min.agent.spi.Note(dev.min.agent.spi.NoteLevel.Warning, "$layer 层子 agent「${definition.name}」的 frontmatter hooks 未启用：工作区还没有被信任。")),
+            Durability.Batched,
+        )
+        return emptyList()
+    }
+
+    /** 请求或定义要求隔离就建一个 worktree（钉住，子 agent 结束时由 [Worktrees] 收）；不要求返回 null。建失败的原因写给模型 */
+    private suspend fun prepareIsolation(parent: SessionRuntime, request: DelegateRequest, definition: AgentDefinition?, childId: SessionId): Result<WorktreeBinding?> =
+        if (request.isolationWorktree || definition?.isolationWorktree == true) {
+            dev.min.agent.spi.catchingNonCancellation { parent.worktrees.prepare("agent-${childId.value}", null, pinned = true) }
+        } else Result.success(null)
+
+    /** 子会话落到哪个工作目录的开场事件：自己的 worktree（并带上父会话的记忆，因为 cwd 变了），或沿用父会话已有的 worktree（只读借用） */
+    private fun isolationEvents(ps: SessionState, definition: AgentDefinition?, created: SessionCreated, isolated: WorktreeBinding?): List<SessionEvent> = buildList {
+        if (isolated != null) {
+            if (definition?.omitMemory != true) add(MemoryLoaded((ps.memory + ps.cwdMemory).distinctBy { it.path }, autoMemory = ps.autoMemory))
+            add(dev.min.agent.spi.CwdChanged(created.cwd, isolated.path, isolated))
+        } else if (ps.worktree != null) {
+            add(dev.min.agent.spi.CwdChanged(created.cwd, created.cwd, ps.worktree.copy(pinned = true, owned = false)))
+        }
+    }
+
     /** 前台委派：等子回合结束，报告作为工具结果交回。父回合被中断时子 agent 一起中断，报告改走收件箱 */
     private suspend fun awaitForeground(parent: SessionRuntime, child: SessionRuntime): DelegateResult {
         try {
@@ -1280,18 +1132,18 @@ class SessionHub(
             val origin = child.state.value.origin!!
             child.worktrees.finishChild()
             val report = Reports.render(child.sessionId, summary, origin.agentType, origin.fork, ended, child.state.value)
-            consumedInForeground += child.sessionId to ended.turnId
+            reports.consume(child.sessionId, ended.turnId)
             return DelegateResult.Finished(child.sessionId, ended.turnId, report, Reports.isError(ended.outcome, child.state.value))
         } catch (e: CancellationException) {
             withContext(NonCancellable) {
                 child.interrupt()
                 child.awaitIdle()
-                awaitedInForeground -= child.sessionId
+                reports.releaseForeground(child.sessionId)
                 child.state.value.lastTurn?.let { deliver(child, it, autoStart = false) }
             }
             throw e
         } finally {
-            awaitedInForeground -= child.sessionId
+            reports.releaseForeground(child.sessionId)
         }
     }
 
@@ -1299,7 +1151,7 @@ class SessionHub(
         val child = requireNotNull(get(childId))
         require(child.state.value.origin?.workflow == true && child.state.value.origin?.parent == parent.sessionId)
         val previousTurn = child.state.value.lastTurn?.turnId
-        awaitedInForeground += childId
+        reports.markForeground(childId)
         child.receive(ClientMsgId(deps.ids.next("workflow_retry")), listOf(TextPart(prompt)), Delivery.Queue,
             InputOrigin.Parent(parent.sessionId), TurnTrigger.User)
         child.state.first { it.turn != null || it.lastTurn?.turnId != previousTurn }
@@ -1411,26 +1263,15 @@ class SessionHub(
         if (events.isNotEmpty()) child.commit(events, Durability.Sync)
     }
 
-    // ---- 报告 ----
-
     // ---- 在线集合与汇总 ----
 
     private fun register(runtime: SessionRuntime) {
         val id = runtime.sessionId
         runtimes[id] = runtime
-        synchronized(summaryLock) { _online.value = _online.value + id }
-        observers[id] = scope.launch {
-            runtime.state.collect { s ->
-                synchronized(summaryLock) {
-                    if (s.turn != null) runningIds += id else runningIds -= id
-                    pendingBySession[id] = pendingOf(id, s)
-                    _running.value = runningIds.toSet()
-                    publishPendingLocked()
-                }
-                // 有人订阅了「空闲时通知我」：回合收尾（含接着排队的下一回合）之后查一次。等回合 Job 结束再判，免得在两个回合之间的空档误报
-                if (s.turn == null && runtime.state.value.origin == null && peerMail.isWatched(id)) {
-                    scope.launch { runtime.awaitIdle(); peerMail.checkIdle(id) }
-                }
+        summary.attach(runtime) { s ->
+            // 有人订阅了「空闲时通知我」：回合收尾（含接着排队的下一回合）之后查一次。等回合 Job 结束再判，免得在两个回合之间的空档误报
+            if (s.turn == null && runtime.state.value.origin == null && peerMail.isWatched(id)) {
+                scope.launch { runtime.awaitIdle(); peerMail.checkIdle(id) }
             }
         }
     }
@@ -1438,22 +1279,14 @@ class SessionHub(
     private fun unload(id: SessionId) {
         deps.networkProxy?.closeSession(id)
         // 把运行时对象带上：关了马上重开时，这次卸下可能晚于新运行时的接入，McpManager 只摘它自己那份
-        runtimes[id]?.let { rt -> scope.launch { mcp.detach(rt) } }
-        observers.remove(id)?.cancel()
-        watchJobs.remove(id)?.cancel()
-        watched -= id
-        quietReports.removeIf { it.first == id }
+        runtimes[id]?.let(mcpAttach::detach)
+        summary.stopObserving(id)
+        reports.forget(id)
         teams.forget(id)
         peerMail.withdraw(id)
         crons.detach(id)
         runtimes.remove(id)
-        synchronized(summaryLock) {
-            runningIds -= id
-            pendingBySession -= id
-            _online.value = _online.value - id
-            _running.value = runningIds.toSet()
-            publishPendingLocked()
-        }
+        summary.detach(id)
     }
 
     /**
@@ -1476,38 +1309,13 @@ class SessionHub(
         return result
     }
 
-    /** 邮箱里待批准的消息（[HubPending.What.Peer]），按收件会话。由 [publishHeld] 在邮箱变动时刷新；与 [pendingBySession] 同一把锁 */
-    private var heldPending: List<HubPending> = emptyList()
-
-    /** 在 [summaryLock] 里调用：会话状态里的交互 + 邮箱里待批准的消息。收件会话已卸下的不列（打开回来时会重新出现） */
-    private fun publishPendingLocked() {
-        _pending.value = (pendingBySession.values.flatten() + heldPending.filter { runtimes.containsKey(it.session) }).sortedBy { it.atMs }
-    }
-
-    /** 邮箱的待批准队列变了（来了一封、批了 / 拒了一封、过期了）：重算这一份并发布。邮箱在它自己的锁外调用，不会两把锁交叉 */
+    /** 邮箱的待批准队列变了（来了一封、批了 / 拒了一封、过期了）：重算并发布。邮箱在它自己的锁外调用，不会两把锁交叉 */
     private fun publishHeld() {
-        synchronized(summaryLock) {
-            heldPending = peerMail.heldAll().flatMap { (receiver, list) ->
+        summary.republishHeld {
+            peerMail.heldAll().flatMap { (receiver, list) ->
                 list.map { m -> HubPending(receiver, receiver, null, null, m.sentAtMs, HubPending.What.Peer(m.messageId, m.from, m.fromName, m.text)) }
             }
-            publishPendingLocked()
         }
-    }
-
-    private fun pendingOf(id: SessionId, s: SessionState): List<HubPending> {
-        val t = s.turn
-        val origin = s.origin
-        fun item(atMs: Long, what: HubPending.What) =
-            HubPending(id, origin?.root ?: id, origin?.parent, origin?.agentType, atMs, what)
-        val approvals = t?.calls?.values.orEmpty().mapNotNull { call ->
-            (call.phase as? CallPhase.AwaitingApproval)?.let { a ->
-                item(a.requestedAtMs, HubPending.What.Approval(a.approvalId, call.callId, call.tool, a.ask, a.suggestedRule, a.floorReason))
-            }
-        }
-        val questions = (t?.pendingQuestions.orEmpty() + s.pendingMcpQuestions).map { q -> item(q.askedAtMs, HubPending.What.Question(q.questionId, q.callId, q.questions)) }
-        val urls = s.pendingMcpUrls.map { p -> item(p.atMs, HubPending.What.Question(p.request.questionId, p.request.callId ?: MCP_IDLE_CALL, listOf(urlQuestion(p.request)), p.request)) }
-        val network = s.networkPending.values.map { item(it.atMs, HubPending.What.Network(it)) }
-        return approvals + questions + urls + network
     }
 
     /**
@@ -1515,11 +1323,11 @@ class SessionHub(
      * [reconcile] 为真（打开已有会话时）：第一次看到的结局是上次进程留下的，补交但不自动开回合。
      */
     private fun watch(child: SessionRuntime, reconcile: Boolean) {
-        if (!watched.add(child.sessionId)) return
-        watchJobs[child.sessionId] = scope.launch {
+        if (!reports.claimWatch(child.sessionId)) return
+        reports.trackWatch(child.sessionId, scope.launch {
             var first = reconcile
             child.state.map { it.lastTurn }.distinctUntilChanged().collect { ended ->
-                if (ended != null && child.sessionId !in awaitedInForeground && (child.sessionId to ended.turnId) !in consumedInForeground) {
+                if (ended != null && !reports.isHandledInForeground(child.sessionId, ended.turnId)) {
                     try {
                         deliver(child, ended, autoStart = !first)
                     } catch (e: CancellationException) {
@@ -1530,7 +1338,7 @@ class SessionHub(
                 }
                 first = false
             }
-        }
+        })
     }
 
     /**
@@ -1540,7 +1348,7 @@ class SessionHub(
      */
     private suspend fun deliver(child: SessionRuntime, ended: EndedTurn, autoStart: Boolean) {
         // 先取（并消耗）静音记录，再做别的判断：放在 && 链里会被前面的条件短路掉，留下永远不被清的条目
-        val quiet = quietReports.remove(child.sessionId to ended.turnId)
+        val quiet = reports.takeQuiet(child.sessionId, ended.turnId)
         val origin = child.state.value.origin ?: return
         val parent = open(origin.parent) ?: return
         val summary = parent.state.value.children[child.sessionId] ?: return
@@ -1557,7 +1365,7 @@ class SessionHub(
             listOf(TextPart(report)),
             Delivery.Steer,
             InputOrigin.Agent(child.sessionId, AgentInputKind.Report, ended.turnId),
-            startTurn = if (autoStart && parentHealthy && !restarted && !quiet && !peerTriggered && child.sessionId !in stopping) {
+            startTurn = if (autoStart && parentHealthy && !restarted && !quiet && !peerTriggered && !reports.isStopping(child.sessionId)) {
                 TurnTrigger.Notification
             } else null,
         )
@@ -1751,8 +1559,6 @@ class SessionHub(
 
     private companion object {
         const val AGENT_TOOL = "Agent"
-        /** 握手时报给 MCP 服务器的客户端版本 */
-        const val MCP_CLIENT_VERSION = "1"
         private const val MCP_PREFIX = "mcp__"
 
         /** [stopTree] 收集子树、[shutdown] 重试「停树 + 卸下」的最多轮数 */

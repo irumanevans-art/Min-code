@@ -36,7 +36,7 @@ internal suspend fun trustedLocalSettings(deps: KernelDeps, snapshot: SettingsSn
             if (!accepted) continue
             if (repository == null) { result += layer.path; continue }
             val relative = layer.path.value.removePrefix(repository.value.trimEnd('/') + "/")
-            val command = "GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 git -c core.hooksPath=/dev/null -c core.fsmonitor=false ls-files --error-unmatch -- " + Worktrees.quote(relative) + " 2>/dev/null"
+            val command = "GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 git -c core.hooksPath=/dev/null -c core.fsmonitor=false ls-files --error-unmatch -- " + ShellQuote.posix(relative) + " 2>/dev/null"
             val checked = deps.host.exec.run(ShellCommand(command, repository), ExecOptions(30_000, maxOutputChars = 4096))
             if (checked is ExecResult.Backgrounded) deps.host.exec.kill(checked.handle)
             if (checked is ExecResult.Exited && checked.exitCode == 1 && !checked.truncated) result += layer.path

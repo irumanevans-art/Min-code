@@ -210,7 +210,7 @@ internal class KernelSkillRunPort(
         )
         // 起点先定：目录失效时这里重置，下面的判定读到的 shell 目录与真正起进程的目录才是同一个（[shellStart]）
         val start = rt.shellStart().dir
-        val context = ToolExecutor(rt, HookDriver(rt)).policyContext()
+        val context = PolicyContextFactory(rt).context()
         when (val verdict = PolicyEngine.evaluate(ask, readOnly = false, context)) {
             is Verdict.Allow -> Unit
             is Verdict.Deny -> return RunResult.Refused(refusal(command, verdict.messageToModel))

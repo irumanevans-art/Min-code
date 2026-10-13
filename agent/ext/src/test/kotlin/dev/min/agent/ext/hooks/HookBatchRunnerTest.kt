@@ -34,9 +34,9 @@ class HookBatchRunnerTest {
         val argv = handler().copy(command = "program with space", args = listOf("it's", "\$(touch bad)", "中文\nline"))
         val script = runner(exec).buildScript(listOf(h, argv), mapOf("GOOD" to "it's \$(bad)",
             "BAD-NAME" to "secret", "9BAD" to "secret"), dir, listOf(2, 3))
-        assertTrue(script.script.contains("export GOOD='it'\"'\"'s \$(bad)'"))
+        assertTrue(script.script.contains("export GOOD='it'\\''s \$(bad)'"))
         assertFalse(script.script.contains("secret")); assertEquals(2, script.notes.size)
-        assertTrue(script.script.contains("'program with space' 'it'\"'\"'s' '\$(touch bad)' '中文\nline'"))
+        assertTrue(script.script.contains("'program with space' 'it'\\''s' '\$(touch bad)' '中文\nline'"))
         assertTrue(script.script.contains("sh -c 'printf '"))
         assertTrue(script.script.contains("timeout -k 2 3"))
         assertEquals(2, Regex("\\) &").findAll(script.script).count())

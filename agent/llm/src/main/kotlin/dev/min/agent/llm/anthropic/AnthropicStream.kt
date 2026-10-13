@@ -1,8 +1,11 @@
 package dev.min.agent.llm.anthropic
 
 import dev.min.agent.llm.ModelException
+import dev.min.agent.llm.OverflowMatcher
+import dev.min.agent.llm.bodyPreview
 import dev.min.agent.llm.ModelProfile
 import dev.min.agent.llm.ModelStreamEvent
+import dev.min.agent.llm.INVALID_JSON_KEY
 import dev.min.agent.protocol.AgentJson
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.Part
@@ -28,9 +31,6 @@ import kotlinx.serialization.json.longOrNull
  * 做成不碰协程的状态机：feed 一个 SSE 事件，吐出零到多个流式事件。这样测试可以逐事件喂，
  * 客户端那一层只管接线与错误分类。
  */
-
-/** 工具调用参数解析失败时的占位键：工具的 parse 会拒掉它并告诉模型（规范 §2） */
-internal const val INVALID_JSON_KEY = "__invalid_json"
 
 /** 撞输出上限的原文。model_context_window_exceeded 是上下文窗口先满了：同样意味着输出被截断、工具参数可能不全 */
 private val TRUNCATING_STOP_REASONS = setOf("max_tokens", "model_context_window_exceeded")
@@ -78,7 +78,7 @@ internal class AnthropicStreamParser(
         if (finished || event.data.isBlank()) return emptyList()
         val obj = parseObject(event.data) ?: throw ModelException(
             ModelFailureKind.Other,
-            "无法解析的 SSE 事件 ${event.event ?: ""}：${bodyPreview(event.data)}",
+            "无法解析的 SSE 事件 ${event.event ?: ""}：${bodyPreview(event.data, ellipsis = true)}",
             beforeFirstByte = before == 0,
         )
         val out = mutableListOf<ModelStreamEvent>()

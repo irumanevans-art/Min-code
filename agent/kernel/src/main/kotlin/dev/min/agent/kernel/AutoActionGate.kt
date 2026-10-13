@@ -14,14 +14,14 @@ internal suspend fun SessionRuntime.reviewAutoAction(turnId: TurnId, name: Strin
     val call = ToolCallPart(CallId(deps.ids.next("review")), name, input)
     val specifier = (input["agent_type"] as? kotlinx.serialization.json.JsonPrimitive)?.content
     val ask = PermissionAsk(name, summary, specifiers = listOfNotNull(specifier))
-    val context = ToolExecutor(this, HookDriver(this)).policyContext()
+    val context = PolicyContextFactory(this).context()
     val readOnly = name == "SubagentHandback"
     val policy = dev.min.agent.policy.PolicyEngine.evaluate(ask, readOnly, context)
     if (policy is Verdict.Deny) return policy
     var verdict = AutoReviewer(this).review(turnId, call, ask, context, dev.min.agent.policy.PolicyEngine.askRuleHit(ask, context) != null)
     // 生成要服从新模式；终报的只读免批不能覆盖已经得到的分类器拒绝或人工审查要求。
     if (state.value.settings.mode != context.mode) {
-        val current = dev.min.agent.policy.PolicyEngine.evaluate(ask, readOnly, ToolExecutor(this, HookDriver(this)).policyContext())
+        val current = dev.min.agent.policy.PolicyEngine.evaluate(ask, readOnly, PolicyContextFactory(this).context())
         if (!readOnly || current is Verdict.Deny) verdict = current
     }
     if (verdict != Verdict.Ask) return verdict

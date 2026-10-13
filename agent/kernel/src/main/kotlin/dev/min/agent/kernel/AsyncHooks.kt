@@ -20,6 +20,7 @@ import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.Note
 import dev.min.agent.spi.NoteLevel
 import dev.min.agent.spi.ShellCommand
+import dev.min.agent.spi.ShellQuote
 import dev.min.agent.spi.TurnTrigger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -97,7 +98,7 @@ internal class AsyncHookRunner(
         // Windows 的 ProcessBuilder -> Git Bash 会破坏复杂的 -c 参数；与同步批同一条路：脚本文本走文件端口（HookBatchRunner 同）。
         // timeoutMs 给到天级：Android 宿主会在到点时硬杀后台进程（桌面不设限），它是后台 hook 的寿命上限而不是本轮的等待
         val result = deps.host.exec.run(
-            ShellCommand("sh ${cq(deps.hookShellPath(child(dir, "start.sh")))}", cwd, dev.min.agent.ext.hooks.pluginProcessEnv(listOf(handler)), extraWritable = dev.min.agent.ext.hooks.hookWritableRoots(env)),
+            ShellCommand("sh ${ShellQuote.posix(deps.hookShellPath(child(dir, "start.sh")))}", cwd, dev.min.agent.ext.hooks.pluginProcessEnv(listOf(handler)), extraWritable = dev.min.agent.ext.hooks.hookWritableRoots(env)),
             ExecOptions(timeoutMs = MAX_LIFETIME_MS, foregroundBudgetMs = 1),
         )
         if (result !is ExecResult.Backgrounded) {
@@ -129,7 +130,7 @@ internal class AsyncHookRunner(
     private fun script(handler: HookHandler, env: Map<String, String>, dir: GuestPath, timeoutSeconds: Int?): String = buildString {
         append("# Min async hook\n")
         env.forEach { (name, value) ->
-            if (Regex("[A-Za-z_][A-Za-z0-9_]*").matches(name)) append("export $name=${q(value)}\n")
+            if (Regex("[A-Za-z_][A-Za-z0-9_]*").matches(name)) append("export $name=${ShellQuote.posix(value)}\n")
         }
         append("if command -v mv >/dev/null 2>&1; then\n")
         append("  atomic_out() { printf '%s\\n' \"\$2\" > \"\$1.tmp\" && mv \"\$1.tmp\" \"\$1\"; }\n")
@@ -137,13 +138,13 @@ internal class AsyncHookRunner(
         val invocation = if (handler.args != null) {
             val argv = (handler.command?.let(::listOf) ?: emptyList()) + handler.args!!
             argv.mapIndexed { ai, arg -> if (handler.source == dev.min.agent.ext.config.ConfigSource.Plugin)
-                "\"\${MIN_PLUGIN_0_ARG_$ai}\"" else q(arg) }.joinToString(" ")
-        } else "sh -c ${q(requireNotNull(handler.command))}"
+                "\"\${MIN_PLUGIN_0_ARG_$ai}\"" else ShellQuote.posix(arg) }.joinToString(" ")
+        } else "sh -c ${ShellQuote.posix(requireNotNull(handler.command))}"
         handler.pluginEnv.keys.forEachIndexed { ei, key -> if (Regex("[A-Za-z_][A-Za-z0-9_]*").matches(key)) append("export $key=\"\${MIN_PLUGIN_0_ENV_$ei}\"\n") }
-        val input = q(deps.hookShellPath(child(dir, "in.json")))
-        val out = q(deps.hookShellPath(child(dir, "out")))
-        val err = q(deps.hookShellPath(child(dir, "err")))
-        append("atomic_out ${q(deps.hookShellPath(child(dir, "pid")))} \"\$\$\"\n")
+        val input = ShellQuote.posix(deps.hookShellPath(child(dir, "in.json")))
+        val out = ShellQuote.posix(deps.hookShellPath(child(dir, "out")))
+        val err = ShellQuote.posix(deps.hookShellPath(child(dir, "err")))
+        append("atomic_out ${ShellQuote.posix(deps.hookShellPath(child(dir, "pid")))} \"\$\$\"\n")
         // asyncRewake 套 timeout（超时退出码 124，-k 补杀后 137；没有 timeout 命令时退化为不套——CC 原文）
         if (timeoutSeconds != null) {
             append("if command -v timeout >/dev/null 2>&1; then\n")
@@ -152,7 +153,7 @@ internal class AsyncHookRunner(
         } else {
             append("$invocation < $input > $out 2> $err\n")
         }
-        append("atomic_out ${q(deps.hookShellPath(child(dir, "code")))} \"\$?\"\n")
+        append("atomic_out ${ShellQuote.posix(deps.hookShellPath(child(dir, "code")))} \"\$?\"\n")
     }
 
     private suspend fun watch(
@@ -371,7 +372,7 @@ internal class AsyncHookRunner(
             val finished = fs.stat(child(dir, "code")) != null
             if (!finished && handle != null) deps.host.exec.kill(handle)
             val rm = deps.host.exec.run(
-                ShellCommand("rm -rf -- ${q(deps.hookShellPath(dir))}", rt.state.value.settings.cwd, extraWritable = dev.min.agent.ext.hooks.hookWritableRoots()),
+                ShellCommand("rm -rf -- ${ShellQuote.posix(deps.hookShellPath(dir))}", rt.state.value.settings.cwd, extraWritable = dev.min.agent.ext.hooks.hookWritableRoots()),
                 ExecOptions(5_000),
             )
             if (rm is ExecResult.Backgrounded) deps.host.exec.kill(rm.handle)
@@ -386,8 +387,6 @@ internal class AsyncHookRunner(
         (handler.command ?: handler.args?.firstOrNull() ?: handler.type).lineSequence().first().take(200)
 
     private fun child(dir: GuestPath, name: String) = GuestPath("${dir.value}/$name")
-    private fun q(text: String): String = "'" + text.replace("'", "'\"'\"'") + "'"
-    private fun cq(text: String): String = "'" + text.replace("'", "'\\''") + "'"
 
     /** 测试断言「关闭时后台 hook 都收掉了」用 */
     internal fun runningCount(): Int = running.size

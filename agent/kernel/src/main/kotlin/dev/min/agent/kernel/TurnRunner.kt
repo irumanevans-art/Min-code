@@ -75,6 +75,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     private val deps = rt.deps
     private val hooks = HookDriver(rt)
     private val tools = ToolExecutor(rt, hooks)
+    private val endings = TurnEndings(rt)
 
     /** UserPromptSubmit 已经过过的输入 → 它带来的上下文（提升后挂到那条消息上）。每条输入只过一次 hook */
     private val screened = mutableMapOf<ClientMsgId, List<String>>()
@@ -101,7 +102,10 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         }
     }
 
-    /** 返回 true = 正常结束；中断抛 [CancellationException]（收尾已写好）；失败返回 false（收尾已写好） */
+    /**
+     * 返回 true = 正常结束；中断抛 [CancellationException]（收尾已写好）；失败返回 false（收尾已写好）。
+     * 其它停法（[TurnAbort]、[HookStop]、预算 / 上限……）都以异常传到这里，由 [TurnEndings] 翻成回合结局，为什么用异常见它的头注释
+     */
     private suspend fun runTurn(trigger: TurnTrigger): Boolean {
         rt.refreshNetworkSettings()
         workflowInputs.clear()
@@ -145,87 +149,9 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             // 原因默认是用户；定时任务的花费上限停回合时先放下 Budget 再取消（SessionRuntime.interrupt(by)）
             rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(rt.takeInterruptReason())), Durability.Sync)
             throw e
-        } catch (e: TurnAbort) {
-            // StopFailure（hooks.md :2625）：回合因 API 错误结束时代替 Stop——只有带 kind 的（模型/API 错误）才算；
-            // 请求上限、压缩失败这类收尾不是 API 错误，不发。放在回合收尾提交之前，与 Stop 在回合内跑同一条时序。
-            // 无决策控制，输出与退出码全被引擎丢弃，结论用不上
-            if (e.kind != null) {
-                val target = stopFailureTarget(e.kind)
-                HookDriver(rt).run(
-                    HookEvent.StopFailure, target,
-                    HookJson.encodeToJsonElement(
-                        StopFailureInput.serializer(),
-                        StopFailureInput(error = target, errorDetails = kotlinx.serialization.json.JsonPrimitive(e.message ?: ""),
-                            lastAssistantMessage = e.message),
-                    ).jsonObject,
-                    turnId,
-                )
-            }
-            // `/goal` 随失败处理：不可恢复的清掉，其它暂停（CC），目标事件与回合收尾同一次提交
-            val goal = goalFailureEvents(rt.state.value.goal.condition, e.kind, e.message ?: "回合失败")
-            rt.commit(goal + closeTurn(rt.state.value, TurnOutcome.Failed(e.message ?: "回合失败", e.kind, e.failureCause)), Durability.Sync)
-            false
-        } catch (e: HookStop) {
-            // 某个 hook 说 continue: false：结束这一轮，理由给人看（hooks设计 §5）
-            val reason = "hook 停止了这一轮" + (e.reason?.let { "：$it" } ?: "")
-            // `/goal` 在这种情况下暂停（CC：「a hook that ended the turn」）
-            val goal = goalFailureEvents(rt.state.value.goal.condition, null, reason)
-            rt.commit(listOf(Note(NoteLevel.Info, reason)) + goal + closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Hook)), Durability.Sync)
-            false
-        } catch (e: CronBudgetReached) {
-            // 定时运行花到了单次上限，下一个请求被预检拦下：只停这一次运行，结局记预算（原因在引擎写的 Note 里）
-            rt.takeInterruptReason()
-            rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Budget)), Durability.Sync)
-            false
-        } catch (e: TurnLimitReached) {
-            rt.commit(closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Limit)), Durability.Sync)
-            false
-        } catch (e: ConversationEndedStop) {
-            // 模型自己结束了会话：安静收尾，不当作失败；那句说明让界面与 CLI 看得到
-            rt.commit(listOf(Note(NoteLevel.Info, CONVERSATION_ENDED_NOTE)) + closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Ended)), Durability.Sync)
-            false
-        } catch (e: BudgetExceeded) {
-            // 下一个请求被预检拦下：树里已花到限，或当前模型缺 USD 定价（fail-closed）核对不了
-            finishBudgetCapped()
-        } catch (e: TurnBudgetReached) {
-            finishBudgetCapped()
         } catch (e: Exception) {
-            // 意外（内核 bug、日志写不进去……）：尽量把回合收尾，别让会话卡在「进行中」；
-            // 收尾本身也失败时（多半是日志坏了），留给下次打开会话时的恢复去补
-            try {
-                rt.commit(closeTurn(rt.state.value, TurnOutcome.Failed("内部错误：${e.message ?: e::class.simpleName}")), Durability.Sync)
-            } catch (inner: Exception) {
-                e.addSuppressed(inner)
-            }
-            false
+            endings.end(turnId, e)
         }
-    }
-
-    /**
-     * 本次运行的 USD 花费到限（`--max-budget-usd`）：回合以 Interrupted(Limit)+limitCause=max_budget_usd 收尾
-     * （-p 的 result.subtype 据此写 error_max_budget_usd），不再是「内部错误」。CC changelog：cap reached →
-     * new spawns denied（[SessionHub.spawn] 的闸门拒）、running background agents halted（根会话停掉在跑的后台子 agent）。
-     *
-     * 停树只由根会话做、且 [SessionHub.haltChildrenOf] 排除根自己：到限的子 agent 只收自己的回合——
-     * 它对自己 interrupt 再 awaitIdle 是在自己的回合 Job 里 join 自己（H1），前台父会话也就永远等不到返回
-     */
-    private suspend fun finishBudgetCapped(): Boolean {
-        if (rt.state.value.origin == null) rt.hub?.haltChildrenOf(rt.sessionId)
-        val budget = rt.hub?.budget
-        val limit = rt.deps.maxBudgetUsd
-        val spent = budget?.spentUsd()
-        val why = if (limit != null && spent != null && spent < limit) {
-            // 上限没花到却被拦：是当前请求的模型缺 USD 定价（fail-closed），花费核对不了
-            "有请求的模型缺 USD 定价，花费核对不了"
-        } else {
-            "已花 ${spent?.let(::money) ?: "?"}，到 --max-budget-usd ${limit?.let(::money) ?: "?"} 的上限"
-        }
-        rt.commit(
-            listOf(Note(NoteLevel.Warning, "本次运行的 USD 花费到限：$why。回合到此为止，新的子 agent 不再派生。")) +
-                closeTurn(rt.state.value, TurnOutcome.Interrupted(InterruptedBy.Limit), LIMIT_CAUSE_MAX_BUDGET_USD),
-            Durability.Sync,
-        )
-        return false
     }
 
     private suspend fun runSavedWorkflows(turnId: TurnId, trigger: TurnTrigger): Boolean {
@@ -263,13 +189,15 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val model = deps.models.resolve(rt.state.value.settings.effectiveModel)
         when (val result = compactor.force(turnId, model, CompactionTrigger.Manual, rt.takeCompactInstructions())) {
             // 被拦不算失败：回合照常完成，免得界面给出「继续」；理由进 Note（CC：manual 的 stderr 给用户看）
-            is CompactResult.Blocked -> rt.commit(
-                listOf(Note(NoteLevel.Info, "压缩被 PreCompact hook 拦下：" + (result.reason ?: "未给出理由"))),
-                Durability.Batched,
-            )
+            is CompactResult.Blocked -> noteCompactionBlocked(result)
             is CompactResult.Failed -> throw TurnAbort("压缩没有成功：" + result.reason)
             CompactResult.Done -> Unit
         }
+    }
+
+    /** 压缩被 PreCompact hook 拦下时留给人看的那句说明（手动压缩与撞墙压缩共用） */
+    private suspend fun noteCompactionBlocked(result: CompactResult.Blocked) {
+        rt.commit(listOf(Note(NoteLevel.Info, "压缩被 PreCompact hook 拦下：" + (result.reason ?: "未给出理由"))), Durability.Batched)
     }
 
     private suspend fun loop(turnId: TurnId) {
@@ -451,14 +379,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
             val feedback = verdict.reason?.text ?: "/goal 还没达成，接着干"
             rt.commit(listOf(GoalEvaluated(GoalVerdict.NotMet, feedback, toolUse)), Durability.Batched)
             toolRoundsSinceEvaluation = 0
-            rt.receive(
-                ClientMsgId("goal:${turnId.value}:${rt.state.value.goal.turns}"),
-                listOf(TextPart(feedback)),
-                Delivery.Steer,
-                InputOrigin.Hook(GOAL_ORIGIN),
-                startTurn = null,
-            )
-            return promote(setOf(Delivery.Steer)) > 0
+            return steerFromHook(ClientMsgId("goal:${turnId.value}:${rt.state.value.goal.turns}"), feedback, GOAL_ORIGIN)
         }
         val reason = (verdict.impossibleReason ?: verdict.reason)?.text
         val (verdictKind, end) = if (verdict.impossible) GoalVerdict.Impossible to GoalEndReason.Impossible
@@ -476,14 +397,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
      */
     private suspend fun securityReviewContinues(turnId: TurnId, phase: SecurityGuidanceRuntime.Phase): Boolean {
         val feedback = rt.security.turnEnd(phase) ?: return false
-        rt.receive(
-            ClientMsgId(deps.ids.next("security-review")),
-            listOf(TextPart(feedback)),
-            Delivery.Steer,
-            InputOrigin.Hook("security-guidance"),
-            startTurn = null,
-        )
-        return promote(setOf(Delivery.Steer)) > 0
+        return steerFromHook(ClientMsgId(deps.ids.next("security-review")), feedback, "security-guidance")
     }
 
     private suspend fun hookStopContinues(turnId: TurnId, completed: ModelStreamEvent.Completed): Boolean {
@@ -508,24 +422,13 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         if (outcome.decision == HookOutcome.Decision.Stop) throw HookStop(outcome.stopReason)
         val blocking = outcome.decision == HookOutcome.Decision.Block
         if (!blocking && outcome.contexts.isEmpty()) return false
-        val cap = stopBlockCap()
-        if (blocks >= cap) {
-            rt.commit(listOf(Note(NoteLevel.Warning, "$event hook 本回合已经让模型继续了 $cap 次，这次放行")), Durability.Batched)
-            return false
-        }
+        if (stopCapReached(blocks, event.name, "模型")) return false
         val feedback = if (blocking) outcome.reason ?: "$event hook 要求继续，还没做完" else outcome.contexts.joinToString("\n")
-        rt.receive(
-            ClientMsgId("hook-stop:${turnId.value}:${blocks + 1}"),
-            listOf(TextPart(feedback)),
-            Delivery.Steer,
-            InputOrigin.Hook(event.name),
-            startTurn = null,
-        )
-        return promote(setOf(Delivery.Steer)) > 0
+        return steerFromHook(ClientMsgId("hook-stop:${turnId.value}:${blocks + 1}"), feedback, event.name)
     }
 
     /**
-     * TeammateIdle（团队成员将空闲时触发，hooks.md :2653）：团队成员的回合要结束了、团队清单里又没有可认领的活——它真的要闲下来了——
+     * TeammateIdle（团队成员将空闲时触发）：团队成员的回合要结束了、团队清单里又没有可认领的活——它真的要闲下来了——
      * 才跑。这时间点在 Stop / SubagentStop 之后、**报告交给负责人之前**，所以拦下（exit 2 / `decision: block`）能让成员接着干，
      * 而不会先唤醒负责人再改口。`continue: false` 同 Stop：整个停下。理由作为 hook 来源的输入交给成员，
      * 与 Stop 共用同一个计数与上限（[stopBlockCap]）。
@@ -543,19 +446,32 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val outcome = hooks.run(HookEvent.TeammateIdle, null, specific, turnId) ?: return false
         if (outcome.decision == HookOutcome.Decision.Stop) throw HookStop(outcome.stopReason)
         if (outcome.decision != HookOutcome.Decision.Block) return false
-        val cap = stopBlockCap()
-        if (blocks >= cap) {
-            rt.commit(listOf(Note(NoteLevel.Warning, "TeammateIdle hook 本回合已经让成员继续了 $cap 次，这次放行")), Durability.Batched)
-            return false
-        }
-        rt.receive(
+        if (stopCapReached(blocks, HookEvent.TeammateIdle.name, "成员")) return false
+        return steerFromHook(
             ClientMsgId("hook-stop:${turnId.value}:${blocks + 1}"),
-            listOf(TextPart(outcome.reason ?: "TeammateIdle hook 要求继续，还没做完")),
-            Delivery.Steer,
-            InputOrigin.Hook(HookEvent.TeammateIdle.name),
-            startTurn = null,
+            outcome.reason ?: "TeammateIdle hook 要求继续，还没做完",
+            HookEvent.TeammateIdle.name,
         )
+    }
+
+    /**
+     * 把 hook 来源的反馈作为一条 Steer 输入交给模型并立刻提升（停止类 hook、`/goal`、安全审查共用的收尾）。
+     * 返回 true = 确有输入送达，回合应继续；提升时被 UserPromptSubmit 拦下或刚被撤回则为 false
+     */
+    private suspend fun steerFromHook(id: ClientMsgId, feedback: String, origin: String): Boolean {
+        rt.receive(id, listOf(TextPart(feedback)), Delivery.Steer, InputOrigin.Hook(origin), startTurn = null)
         return promote(setOf(Delivery.Steer)) > 0
+    }
+
+    /**
+     * 本回合里停止类 hook（Stop / SubagentStop / TeammateIdle，共用一个计数 [blocks]）已经让 [who]（模型 / 成员）续了 [blocks] 次，
+     * 到 [stopBlockCap] 就放行：落一条警告并返回 true，调用方不再续
+     */
+    private suspend fun stopCapReached(blocks: Int, hook: String, who: String): Boolean {
+        val cap = stopBlockCap()
+        if (blocks < cap) return false
+        rt.commit(listOf(Note(NoteLevel.Warning, "$hook hook 本回合已经让${who}继续了 $cap 次，这次放行")), Durability.Batched)
+        return true
     }
 
     /** 一回合里 Stop hook 最多能让模型继续几次：默认 [DEFAULT_STOP_BLOCK_CAP]，环境变量 [STOP_CAP_ENV]（正整数）可改，别的值忽略 */
@@ -564,94 +480,129 @@ internal class TurnRunner(private val rt: SessionRuntime) {
     /** `/goal` 遇到可重试的错误自动重试几次；`CLAUDE_CODE_GOAL_CHECKIN_MINUTES=0` 时不重试（CC：0 关掉 check-in 与自动重试） */
     private fun goalAutoRetries(): Int = if (goalCheckInMinutes(deps.env) == 0L) 0 else GOAL_AUTO_RETRIES
 
+    /**
+     * 一个请求在重试、撞墙压缩、换回退模型之间要记住的状态。[requestWithRetry] 持有，[recoverFromFailure] 改它
+     */
+    private class RequestAttempts {
+        /** 尝试次数按「当前这个模型」数：换到回退模型后从 1 重来，重试预算与界面的「第 n 次」都不该带着主模型的失败 */
+        var attempt = 1
+
+        /** 撞墙（上下文超长）时压缩一次再重发，只试一次；换模型后重新算 */
+        var overflowCompacted = false
+
+        /**
+         * 这个请求第一次尝试的 ModelRequestStarted 的 seq：遥测的 llm_request span id 由它算出（出站 traceparent 要在请求发出前指向这个 span）。
+         * 重试、撞墙压缩后重发沿用它（同一个 span）；换到回退模型从 attempt 1 重来，是另一个 span，跟着重取
+         */
+        var spanStartSeq: Long? = null
+    }
+
+    /** 一次失败之后怎么办，由 [planRecovery] 一次算出（落盘的 [ModelRequestFailed] 要带上这里的 [willRetry] 与等待） */
+    private class RecoveryPlan(val overflowRetry: Boolean, val goalOn: Boolean, val attemptsAllowed: Int, val willRetry: Boolean, val waitMs: Long)
+
     private suspend fun requestWithRetry(turnId: TurnId): ModelStreamEvent.Completed {
         val requestId = RequestId(deps.ids.next("req"))
-        // 尝试次数按「当前这个模型」数：换到回退模型后从 1 重来，重试预算与界面的「第 n 次」都不该带着主模型的失败
-        var attempt = 1
+        val attempts = RequestAttempts()
         // 发请求前按阈值遮蔽 / 摘要（docs/agent/detail/压缩设计.md §2）；撞墙时再压缩一次，只重试一次。
         // 回退链生效中（同一回合的后续请求）按回退模型的窗口算
         compactor.beforeRequest(turnId, resolveActiveModel(rt.state.value, deps, rt::modelPermitted))
-        var overflowCompacted = false
-        // 这个请求第一次尝试的 ModelRequestStarted 的 seq：遥测的 llm_request span id 由它算出（出站 traceparent 要在请求发出前指向这个 span）。
-        // 重试、撞墙压缩后重发沿用它（同一个 span）；换到回退模型从 attempt 1 重来，是另一个 span，跟着重取
-        var spanStartSeq: Long? = null
         while (true) {
             val state = rt.state.value
             val model = resolveActiveModel(state, deps, rt::modelPermitted)
-            val assembled = assemble(state, model.profile)
-            // 只有这家的编解码器真会把它放进请求头才生成、才落盘：不带的供应商不编造一个没发出去的 id
-            val clientRequestId = if (model.client.sendsClientRequestId) deps.ids.next("creq") else null
-            val started = rt.commit(
-                listOf(ModelRequestStarted(turnId, requestId, attempt, model.profile.ref, prefixFingerprint(assembled), clientRequestId)),
-                Durability.Sync,
-            )
-            if (attempt == 1) spanStartSeq = started.firstOrNull()?.seq
-            // 出站 traceparent：宿主给（追踪没开 / 没接遥测就是 null），再由编解码器的端点策略把关（只 Anthropic 本家，自定义端点要显式开）。
-            // 遥测不许挡住请求：算不出来就不带
-            val trace = spanStartSeq?.let { seq ->
-                dev.min.agent.spi.catchingNonCancellation { deps.traceContext.modelRequest(rt.sessionId, turnId, requestId, seq) }.getOrNull()
-            }?.takeIf { model.client.propagatesTrace(it.allowCustomAnthropicEndpoint) }
-            val request = assembled.copy(clientRequestId = clientRequestId, trace = trace)
+            val request = openAttempt(turnId, requestId, state, model, attempts)
             try {
                 val gate = rt.requestGate
                 return if (gate == null) stream(turnId, requestId, model, request) else gate.withPermit { stream(turnId, requestId, model, request) }
             } catch (e: ModelException) {
-                val overflowRetry = e.kind == ModelFailureKind.ContextOverflow && !overflowCompacted
-                // `/goal` 在跑时（CC）：速率 / 用量限制不重试，直接暂停；其它可重试的错误最多重试 [GOAL_AUTO_RETRIES] 次，之后暂停
-                val goalOn = rt.state.value.goal.condition != null
-                val goalRetryable = !goalOn || e.kind != ModelFailureKind.RateLimited
-                val attemptsAllowed = if (goalOn) goalAutoRetries() + 1 else deps.retry.maxAttempts
-                val willRetry = overflowRetry || e.retryable && goalRetryable && attempt < attemptsAllowed
-                // 重发前的等待先算出来、与失败一起落盘（stream-json 的 api_retry 要给 retry_delay_ms）；撞墙重试是压缩后立刻重发，不等
-                val wait = if (willRetry && !overflowRetry) deps.retry.delayMs(attempt, e.retryAfterMs) else 0L
-                rt.commit(
-                    listOf(
-                        ModelRequestFailed(
-                            turnId, requestId, attempt, e.kind, e.message ?: e.kind.name, e.httpStatus, willRetry,
-                            retryDelayMs = if (willRetry) wait else null,
-                            maxRetries = if (willRetry) attemptsAllowed - 1 else null,
-                            timedOut = e.timedOut, responseId = e.responseId, traceResponse = e.traceResponse,
-                        ),
-                    ),
-                    Durability.Sync,
-                )
-                if (overflowRetry) {
-                    overflowCompacted = true
-                    when (val result = compactor.force(turnId, model, CompactionTrigger.Overflow, null)) {
-                        // 被拦也救不了这次请求：原来那个「上下文超长」错误照常结束回合，Note 说明是被 hook 拦的
-                        is CompactResult.Blocked -> {
-                            rt.commit(
-                                listOf(Note(NoteLevel.Info, "压缩被 PreCompact hook 拦下：" + (result.reason ?: "未给出理由"))),
-                                Durability.Batched,
-                            )
-                            throw TurnAbort("上下文超长，压缩也没能腾出空间。可以开一个新会话，或换上下文更大的模型。", e.kind)
-                        }
-                        is CompactResult.Failed ->
-                            throw TurnAbort("上下文超长，压缩也没能腾出空间。可以开一个新会话，或换上下文更大的模型。", e.kind)
-                        CompactResult.Done -> Unit
-                    }
-                    attempt++
-                    continue
-                }
-                if (!willRetry) {
-                    // 重试用尽（或根本不可重试）：换链上的下一个模型，同一个请求在新模型上重新来过
-                    val fallback = switchToFallback(turnId, requestId, e)
-                    if (fallback != null) {
-                        attempt = 1
-                        overflowCompacted = false
-                        // 新模型的窗口可能更小：先按它的预算遮蔽 / 摘要
-                        compactor.beforeRequest(turnId, fallback)
-                        continue
-                    }
-                    throw TurnAbort(failureMessage(e), e.kind)
-                }
-                if (goalOn) {
-                    // CC：「Goal still active」——告诉用户这次失败会自动重试、等多久，免得以为卡住了
-                    rt.commit(listOf(Note(NoteLevel.Info, "Goal still active：${e.message ?: e.kind.name}。${wait / 1000} 秒后自动重试（第 ${attempt + 1} 次）")), Durability.Batched)
-                }
-                delay(wait)
-                attempt++
+                // 正常返回 = 该再发一次（状态已更新、该等的已等）；不该再发的抛 TurnAbort
+                recoverFromFailure(turnId, requestId, model, attempts, e)
             }
+        }
+    }
+
+    /** 开一次尝试：组请求、落 [ModelRequestStarted]、算出站 traceparent。返回要发的请求 */
+    private suspend fun openAttempt(turnId: TurnId, requestId: RequestId, state: SessionState, model: ResolvedModel, attempts: RequestAttempts): ModelRequest {
+        val assembled = assemble(state, model.profile)
+        // 只有这家的编解码器真会把它放进请求头才生成、才落盘：不带的供应商不编造一个没发出去的 id
+        val clientRequestId = if (model.client.sendsClientRequestId) deps.ids.next("creq") else null
+        val started = rt.commit(
+            listOf(ModelRequestStarted(turnId, requestId, attempts.attempt, model.profile.ref, prefixFingerprint(assembled), clientRequestId)),
+            Durability.Sync,
+        )
+        if (attempts.attempt == 1) attempts.spanStartSeq = started.firstOrNull()?.seq
+        // 出站 traceparent：宿主给（追踪没开 / 没接遥测就是 null），再由编解码器的端点策略把关（只 Anthropic 本家，自定义端点要显式开）。
+        // 遥测不许挡住请求：算不出来就不带
+        val trace = attempts.spanStartSeq?.let { seq ->
+            dev.min.agent.spi.catchingNonCancellation { deps.traceContext.modelRequest(rt.sessionId, turnId, requestId, seq) }.getOrNull()
+        }?.takeIf { model.client.propagatesTrace(it.allowCustomAnthropicEndpoint) }
+        return assembled.copy(clientRequestId = clientRequestId, trace = trace)
+    }
+
+    /** 判断这次失败要不要重发、最多发几次、重发前等多久；不落盘、不改状态 */
+    private fun planRecovery(e: ModelException, attempts: RequestAttempts): RecoveryPlan {
+        val overflowRetry = e.kind == ModelFailureKind.ContextOverflow && !attempts.overflowCompacted
+        // `/goal` 在跑时（CC）：速率 / 用量限制不重试，直接暂停；其它可重试的错误最多重试 [GOAL_AUTO_RETRIES] 次，之后暂停
+        val goalOn = rt.state.value.goal.condition != null
+        val goalRetryable = !goalOn || e.kind != ModelFailureKind.RateLimited
+        val attemptsAllowed = if (goalOn) goalAutoRetries() + 1 else deps.retry.maxAttempts
+        val willRetry = overflowRetry || e.retryable && goalRetryable && attempts.attempt < attemptsAllowed
+        // 重发前的等待先算出来、与失败一起落盘（stream-json 的 api_retry 要给 retry_delay_ms）；撞墙重试是压缩后立刻重发，不等
+        val waitMs = if (willRetry && !overflowRetry) deps.retry.delayMs(attempts.attempt, e.retryAfterMs) else 0L
+        return RecoveryPlan(overflowRetry, goalOn, attemptsAllowed, willRetry, waitMs)
+    }
+
+    /**
+     * 一次失败之后：落 [ModelRequestFailed]，再按 [planRecovery] 的结论走三条路之一——
+     * 撞墙压缩后立刻重发；重试用尽就换回退模型从头来；否则等一等再发。正常返回表示调用方该再发一次，不该再发就抛 [TurnAbort]
+     */
+    private suspend fun recoverFromFailure(turnId: TurnId, requestId: RequestId, model: ResolvedModel, attempts: RequestAttempts, e: ModelException) {
+        val plan = planRecovery(e, attempts)
+        rt.commit(
+            listOf(
+                ModelRequestFailed(
+                    turnId, requestId, attempts.attempt, e.kind, e.message ?: e.kind.name, e.httpStatus, plan.willRetry,
+                    retryDelayMs = if (plan.willRetry) plan.waitMs else null,
+                    maxRetries = if (plan.willRetry) plan.attemptsAllowed - 1 else null,
+                    timedOut = e.timedOut, responseId = e.responseId, traceResponse = e.traceResponse,
+                ),
+            ),
+            Durability.Sync,
+        )
+        when {
+            plan.overflowRetry -> {
+                attempts.overflowCompacted = true
+                compactForOverflow(turnId, model, e)
+                attempts.attempt++
+            }
+            !plan.willRetry -> {
+                // 重试用尽（或根本不可重试）：换链上的下一个模型，同一个请求在新模型上重新来过
+                val fallback = switchToFallback(turnId, requestId, e) ?: throw TurnAbort(failureMessage(e), e.kind)
+                attempts.attempt = 1
+                attempts.overflowCompacted = false
+                // 新模型的窗口可能更小：先按它的预算遮蔽 / 摘要
+                compactor.beforeRequest(turnId, fallback)
+            }
+            else -> {
+                if (plan.goalOn) {
+                    // CC：「Goal still active」——告诉用户这次失败会自动重试、等多久，免得以为卡住了
+                    rt.commit(listOf(Note(NoteLevel.Info, "Goal still active：${e.message ?: e.kind.name}。${plan.waitMs / 1000} 秒后自动重试（第 ${attempts.attempt + 1} 次）")), Durability.Batched)
+                }
+                delay(plan.waitMs)
+                attempts.attempt++
+            }
+        }
+    }
+
+    /** 撞墙（上下文超长）后压缩一次；压缩被拦或失败都救不了这个请求，回合以「上下文超长」失败 */
+    private suspend fun compactForOverflow(turnId: TurnId, model: ResolvedModel, cause: ModelException) {
+        when (val result = compactor.force(turnId, model, CompactionTrigger.Overflow, null)) {
+            // 被拦也救不了这次请求：原来那个「上下文超长」错误照常结束回合，Note 说明是被 hook 拦的
+            is CompactResult.Blocked -> {
+                noteCompactionBlocked(result)
+                throw TurnAbort(OVERFLOW_NOT_RESOLVED, cause.kind)
+            }
+            is CompactResult.Failed -> throw TurnAbort(OVERFLOW_NOT_RESOLVED, cause.kind)
+            CompactResult.Done -> Unit
         }
     }
 
@@ -819,40 +770,16 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         const val STRUCTURED_OUTPUT_REMINDER =
             "本次任务要求结构化输出：最终答案必须通过调用 StructuredOutput 工具交出（参数符合给定的 JSON Schema，只调用一次）。请现在调用它。"
 
-        /** 防止模型陷入「调工具 → 看结果 → 再调」的死循环把钱烧光；循环检测（M3）落地后这只是最后一道闸 */
+        /** 防止模型陷入「调工具 → 看结果 → 再调」的死循环把钱烧光；循环检测落地后这只是最后一道闸 */
         const val MAX_REQUESTS_PER_TURN = 200
+
+        private const val OVERFLOW_NOT_RESOLVED = "上下文超长，压缩也没能腾出空间。可以开一个新会话，或换上下文更大的模型。"
 
         /** 半截回答的落盘粒度：约一屏字，或 1.5 秒 */
         const val SEGMENT_CHARS = 2_000
         const val SEGMENT_INTERVAL_MS = 1_500L
     }
 }
-
-/** 回合放弃（不可重试的模型错误、达到上限）。带给人看的原因 */
-internal class TurnAbort(message: String, val kind: ModelFailureKind? = null, val failureCause: String? = null) : Exception(message)
-
-/** StopFailure 的 error 类别与 matcher（hooks.md :2636–:2637）：Min 的失败类别对到原文的枚举，没有的都归 unknown */
-internal fun stopFailureTarget(kind: ModelFailureKind): String = when (kind) {
-    ModelFailureKind.RateLimited -> "rate_limit"
-    ModelFailureKind.Overloaded -> "overloaded"
-    ModelFailureKind.Auth -> "authentication_failed"
-    ModelFailureKind.ModelUnavailable -> "model_not_found"
-    ModelFailureKind.Server -> "server_error"
-    ModelFailureKind.ContextOverflow, ModelFailureKind.BadRequest -> "invalid_request"
-    ModelFailureKind.Network, ModelFailureKind.Other -> "unknown"
-}
-
-/** 子 agent 用完了定义给的请求次数：回合以 Interrupted(Limit) 结束，可以续 */
-internal class TurnLimitReached : Exception()
-
-/** 模型用 EndConversation 结束了会话：工具批结束后安静停下，不再请求模型（[dev.min.agent.spi.ConversationEnded] 已落盘） */
-internal class ConversationEndedStop : Exception()
-
-/** 会话已由模型结束后又来了用户输入：界面与 CLI 都看得到的那句说明 */
-internal const val CONVERSATION_ENDED_NOTE = "会话已由模型结束。新开一个会话（或 /clear）才能继续。"
-
-/** `--max-budget-usd` 到限（最后一个请求把线压过、没有下一个请求可拦）：回合以 Interrupted(Limit)+limitCause 收尾 */
-internal class TurnBudgetReached : Exception()
 
 /** 组系统提示用的环境事实：子会话带着的（分身 = 父会话的）优先；分支会话用 session_branched 冻结的原会话事实；
  *  否则由本会话的创建时间与 cwd 推出。分支不带原会话的事实，日期一变系统提示就变，缓存前缀全断 */
@@ -889,7 +816,7 @@ internal fun availableTools(state: SessionState, deps: KernelDeps, mcp: McpCalle
         if (at >= 0) selected.add(at.coerceAtMost(selected.size), dev.min.agent.tools.ApplyPatchTool)
         selected.toList()
     } else deps.tools.filterNot { it.name == "apply_patch" }
-    // --restricted（CC :123）：Workflow 是内置的 JavaScript 执行器（"run … code"），受限会话不给；它不在 CLI 的工具表里，只能在这里去掉
+    // --restricted：Workflow 是内置的 JavaScript 执行器（"run … code"），受限会话不给；它不在 CLI 的工具表里，只能在这里去掉
     val builtins = editTools +
         (if (runtime != null && state.advisor.model != null) listOf(AdvisorTool(runtime)) else emptyList()) +
         (if (runtime != null && !deps.settingsInputs.restricted && runtime.workflowsAvailable()) listOf(WorkflowTool(runtime)) else emptyList())

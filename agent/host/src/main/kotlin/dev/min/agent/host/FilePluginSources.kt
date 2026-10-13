@@ -141,7 +141,7 @@ class FilePluginSources(private val fs: RootfsFileSystem, private val exec: Exec
                 source.sha?.let { require(Regex("[a-f0-9]{40}").matches(it)) { "无效 git SHA" } }
                 val raw = GuestPath(destination.value + "-git")
                 owned(raw); Files.createDirectories(owned(raw).parent)
-                val flags = source.ref?.let { " --branch ${quote(it)}" }.orEmpty()
+                val flags = source.ref?.let { " --branch ${ShellQuote.posix(it)}" }.orEmpty()
                 try {
                     val env = gitEnvironment(source)
                     if (privateProcess != null) {
@@ -150,8 +150,8 @@ class FilePluginSources(private val fs: RootfsFileSystem, private val exec: Exec
                             source.sha?.let { " && git -C ${processQuote(processPath(raw))} -c core.hooksPath=/dev/null checkout --detach ${processQuote(it)}" }.orEmpty(),
                             home, 120_000, env)
                     } else {
-                        val result = exec.run(ShellCommand("git -c core.hooksPath=/dev/null -c protocol.ext.allow=never clone --no-recurse-submodules$flags -- ${quote(location)} ${quote(raw.value)}" +
-                            source.sha?.let { " && git -C ${quote(raw.value)} -c core.hooksPath=/dev/null checkout --detach ${quote(it)}" }.orEmpty(), pluginsRoot, env), ExecOptions(120_000))
+                        val result = exec.run(ShellCommand("git -c core.hooksPath=/dev/null -c protocol.ext.allow=never clone --no-recurse-submodules$flags -- ${ShellQuote.posix(location)} ${ShellQuote.posix(raw.value)}" +
+                            source.sha?.let { " && git -C ${ShellQuote.posix(raw.value)} -c core.hooksPath=/dev/null checkout --detach ${ShellQuote.posix(it)}" }.orEmpty(), pluginsRoot, env), ExecOptions(120_000))
                         require(result is ExecResult.Exited && result.exitCode == 0) { "git 拉取失败或超时" }
                     }
                     val path = source.path?.let { safeRelative(it); "/$it" }.orEmpty()
@@ -216,7 +216,7 @@ class FilePluginSources(private val fs: RootfsFileSystem, private val exec: Exec
     private fun sourceUri(value: String): URI = try { URI(value) } catch (_: Exception) { error("插件源 URL 格式无效") }
     private fun processQuote(value: String): String {
         require(value.none { it == '\u0000' || it == '\n' || it == '\r' }) { "无效进程参数" }
-        if (!System.getProperty("os.name").startsWith("Windows")) return quote(value)
+        if (!HostOs.isWindows) return ShellQuote.posix(value)
         require(value.none { it in "\"%!" }) { "进程参数包含 shell 元字符" }
         return "\"$value\""
     }
@@ -331,7 +331,6 @@ class FilePluginSources(private val fs: RootfsFileSystem, private val exec: Exec
         fun safeRelative(path: String) {
             require(path.isNotBlank() && !path.startsWith('/') && !path.contains('\\') && !path.contains(':') && !path.contains('\u0000') && path.split('/').none { it == ".." || it.isEmpty() }) { "路径穿越或无效路径" }
         }
-        private fun quote(text: String) = "'" + text.replace("'", "'\"'\"'") + "'"
         private fun digest(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
     }
 }

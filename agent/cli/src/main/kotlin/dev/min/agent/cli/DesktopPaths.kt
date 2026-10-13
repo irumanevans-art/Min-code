@@ -4,6 +4,7 @@ import dev.min.agent.host.BindMount
 import dev.min.agent.host.RootfsFileSystem
 import dev.min.agent.host.ScopeRules
 import dev.min.agent.spi.GuestPath
+import dev.min.agent.spi.HostOs
 import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
@@ -18,7 +19,7 @@ import java.nio.file.Path
 internal class DesktopPaths(
     workspace: Path,
     scratchRoot: Path,
-    private val windows: Boolean = System.getProperty("os.name").orEmpty().startsWith("Windows"),
+    private val windows: Boolean = HostOs.isWindows,
 ) {
     private val drives: List<Path> =
         if (windows) FileSystems.getDefault().rootDirectories.toList() else emptyList()

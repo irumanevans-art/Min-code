@@ -1,24 +1,18 @@
 package dev.min.agent.kernel
 
-import dev.min.agent.context.AutoMemory
 import dev.min.agent.context.MemoryDiscovery
 import dev.min.agent.context.MemoryLoader
-import dev.min.agent.ext.config.RuleSpecKind
 import dev.min.agent.ext.config.SettingsLoader
 import dev.min.agent.ext.config.SettingsSnapshot
 import dev.min.agent.ext.hooks.HookEvent
 import dev.min.agent.ext.hooks.HookJson
 import dev.min.agent.ext.hooks.NotificationInput
 import dev.min.agent.ext.hooks.SessionStartInput
-import dev.min.agent.ext.styles.OutputStyleFiles
 import dev.min.agent.spi.HookContextAdded
 import dev.min.agent.spi.HookContextTarget
-import dev.min.agent.spi.HookSourceData
-import dev.min.agent.spi.HttpPolicyData
 import dev.min.agent.spi.HooksLoaded
 import dev.min.agent.spi.Note
 import dev.min.agent.spi.NoteLevel
-import dev.min.agent.spi.OutputStyleLoaded
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -42,15 +36,9 @@ import dev.min.agent.spi.EventRecord
 import dev.min.agent.spi.InterruptedBy
 import dev.min.agent.spi.InputOrigin
 import dev.min.agent.spi.InputReceived
-import dev.min.agent.spi.PermissionRulesLoaded
-import dev.min.agent.spi.RuleEntry
-import dev.min.agent.spi.RuleKindData
 import dev.min.agent.spi.InputWithdrawn
 import dev.min.agent.spi.LogHeader
-import dev.min.agent.spi.AutoMemoryInfo
 import dev.min.agent.spi.GuestPath
-import dev.min.agent.spi.LoadedMemoryFile
-import dev.min.agent.spi.MemoryLoaded
 import dev.min.agent.spi.QuestionAnswer
 import dev.min.agent.spi.QuestionAnswered
 import dev.min.agent.spi.SessionCreated
@@ -115,12 +103,6 @@ class SessionRuntime private constructor(
     internal var requestGate: Semaphore? = null
 
     /**
-     * 按需加载记忆的发现器（缓存只在内存里，丢了只是多读几次盘）。没有主目录、或这是个不吃记忆的子 agent
-     * （来历里的 [dev.min.agent.spi.SubagentOrigin.omitMemory]：Explore / Plan、omitClaudeMd）时为 null。
-     * 由折叠出的来历推出，所以创建与重新打开一致
-     */
-    private var memoryDiscoveryCwd: GuestPath? = null
-    /**
      * 把 skill 的 `allowed-tools` 记成本轮放行，落日志（[dev.min.agent.spi.SkillToolsGranted]）。文档：「The grant clears when you send your next message」，
      * 所以用户的下一条输入（[send]）写一条 SkillToolsCleared。放行以日志为准（折叠进 `SessionState.skillGrants`）：重开会话时原样恢复，
      * 记的是**已代入**的规则文字，不回头读磁盘上的 skill，所以恢复出来的范围不会比当初大；拒绝与询问规则仍在它之上。
@@ -138,20 +120,11 @@ class SessionRuntime private constructor(
     /** `allowed-tools` 被托管层策略忽略过的 skill 名，每个只提示一次（[ignoredSkillTools]） */
     internal val ignoredSkillToolNames: MutableSet<String> = java.util.Collections.synchronizedSet(LinkedHashSet())
 
-    private var cachedMemoryDiscovery: MemoryDiscovery? = null
-    internal val memoryDiscovery: MemoryDiscovery? get() {
-        val home = deps.memoryHome
-        if (home == null || !deps.memoryEnabled || state.value.origin?.omitMemory == true) return null
-        // --bare / --safe-mode：记忆不发现，按需加载（读到匹配文件时注入规则）也一并关掉，
-        // 不然启动时跳过的记忆会从这条缝里回来
-        if (deps.customizations != Customizations.Full) return null
-        val cwd = state.value.settings.cwd
-        if (memoryDiscoveryCwd != cwd) {
-            memoryDiscoveryCwd = cwd
-            cachedMemoryDiscovery = MemoryDiscovery(deps.host.fs, cwd, home, deps.memoryLimits, suppressCwdRules = state.value.worktree?.pinned == true, includeUser = !deps.settingsInputs.restricted)
-        }
-        return cachedMemoryDiscovery
-    }
+    /** 读盘加载（设置 / 记忆 / 输出样式 / skills / 插件）与它们的懒缓存，见 [SessionLoaders] */
+    internal val loaders = SessionLoaders(this)
+
+    /** 按需加载记忆的发现器，见 [SessionLoaders.memoryDiscovery] */
+    internal val memoryDiscovery: MemoryDiscovery? get() = loaders.memoryDiscovery
 
     internal val worktrees = Worktrees(this)
     /** security-guidance 的三层（只在 settings 里启用了才有动作，见 [SecurityGuidanceRuntime]） */
@@ -185,10 +158,7 @@ class SessionRuntime private constructor(
         snapshot?.let { modelPolicy = it.merged.modelPolicy() }
         val trustProject = deps.trustProjectHooks(cwd)
         val trustedLocal = snapshot?.let { trustedLocalSettings(deps, it, cwd, trustProject || state.value.created.headless) }.orEmpty()
-        val rules = snapshot?.merged?.ruleSpecs(trustProject, trustedLocal)?.map { spec -> RuleEntry(
-            when (spec.kind) { RuleSpecKind.Allow -> RuleKindData.Allow; RuleSpecKind.Ask -> RuleKindData.Ask; RuleSpecKind.Deny -> RuleKindData.Deny },
-            spec.text, spec.source, spec.baseDir,
-        ) }
+        val rules = snapshot?.merged?.ruleSpecs(trustProject, trustedLocal)?.map { it.toEntry() }
         // 原来的显式附加目录是绝对授权，不随 cwd 重新解释；新项目的设置目录在新 cwd 上解析。
         val dirs = snapshot?.merged?.fileAccessDirectories(cwd, requireNotNull(home), trustProject, trustedLocal)?.let { (state.value.additionalDirectories + it).distinct() }
         commit(listOf(dev.min.agent.spi.CwdChanged(old, cwd, worktree, memory.filter { it.path !in state.value.memoryPathsInContext }, rules, dirs)), Durability.Sync)
@@ -224,34 +194,12 @@ class SessionRuntime private constructor(
     /** `CLAUDE_ENV_FILE`：hook 写的 export 在后续每条 Bash 命令前执行（[SessionEnvFiles]） */
     internal val envFiles by lazy(LazyThreadSafetyMode.PUBLICATION) { SessionEnvFiles(this) }
 
-    private var pluginsInstance: dev.min.agent.ext.plugins.PluginBundle? = null
     internal var lsp: dev.min.agent.spi.LspPort = dev.min.agent.spi.LspPort.Unavailable
     internal var lspServers: List<dev.min.agent.spi.LspServerSpec> = emptyList()
     internal var lspRoot: GuestPath? = null
-    private var pluginsAttempted = false
-    internal suspend fun plugins(): dev.min.agent.ext.plugins.PluginBundle? {
-        pluginsInstance?.let { return it }
-        if (pluginsAttempted) return null
-        // --bare / --safe-mode：已安装插件不发现（CC :72/:125）；插件带来的 hooks、skills、样式、MCP、monitors 随之全无
-        if (deps.customizations != Customizations.Full) return null
-        val home = deps.memoryHome ?: return null
-        val cwd = state.value.created.cwd
-        return try {
-        val settings = SettingsLoader.load(deps.host.fs, cwd, home, inputs = deps.settingsInputs)
-        dev.min.agent.ext.plugins.PluginBundle.load(deps.host.fs, cwd, home, settings.merged,
-            dirs = deps.pluginDirs, canonical = deps.canonicalPath,
-            trust = { root -> deps.pluginTrust(root, cwd) },
-            secrets = dev.min.agent.ext.plugins.PluginSecretStore(deps.mcpTokenStore),
-            installedPath = deps.pluginInstalledPath, shellPath = deps.hookShellPath,
-            installIndex = !deps.settingsInputs.restricted,
-        ).also { pluginsInstance = it; pluginsAttempted = true }
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (_: Exception) {
-            pluginsAttempted = true
-            commit(listOf(Note(NoteLevel.Warning, "插件装载失败，本会话按无插件继续")), Durability.Sync)
-            null
-        }
-    }
+
+    /** 本会话的插件包（装载一次、并发安全，见 [SessionLoaders.plugins]）；--bare / --safe-mode、没有主目录、装载失败时为 null */
+    internal suspend fun plugins(): dev.min.agent.ext.plugins.PluginBundle? = loaders.plugins()
 
     /** 回合与维护共用互斥锁；磁盘变更不能在正在运行的模型请求中偷换工具表或提示快照。 */
     suspend fun reloadPlugins(force: Boolean = false, reconnectServers: Boolean = false): String = whileIdle {
@@ -259,20 +207,17 @@ class SessionRuntime private constructor(
         val home = deps.memoryHome ?: return@whileIdle "没有插件配置目录"
         val old = plugins()
         val settings = SettingsLoader.load(deps.host.fs, state.value.created.cwd, home, inputs = deps.settingsInputs)
-        val next = dev.min.agent.ext.plugins.PluginBundle.load(deps.host.fs, state.value.created.cwd, home, settings.merged,
-            dirs = deps.pluginDirs, canonical = deps.canonicalPath, trust = { deps.pluginTrust(it, state.value.created.cwd) },
-            secrets = dev.min.agent.ext.plugins.PluginSecretStore(deps.mcpTokenStore), installedPath = deps.pluginInstalledPath,
-            shellPath = deps.hookShellPath, installIndex = !deps.settingsInputs.restricted)
+        val next = loaders.loadPluginBundle(home, settings)
         fun mcpSignature(bundle: dev.min.agent.ext.plugins.PluginBundle?) = bundle?.mcpSources().orEmpty().map { listOf(it.name, it.config, it.trusted, it.error, it.requiresApproval) }
         val serversChanged = mcpSignature(old) != mcpSignature(next) || old?.lspSources().orEmpty() != next.lspSources()
         if (reconnectServers && serversChanged && !force) return@whileIdle "插件 MCP/LSP 变化会使提示缓存失效；请用 /reload-plugins --force 确认成本"
         val registered = state.value.componentHooks.filter { it.layer.startsWith("plugin") }
-        pluginsInstance = next; pluginsAttempted = true
+        loaders.replacePlugins(next)
         // 调用时登记的组件 hooks 也要撤销，不能让磁盘上已删除的插件继续执行旧命令。
         commit(registered.map { dev.min.agent.spi.ComponentHooksUpdated(it.kind, it.name, kotlinx.serialization.json.JsonObject(emptyMap())) }, Durability.Sync)
         // 没有新 hooks / 样式也要清除旧快照，否则被禁用的插件会继续执行。
         commit(listOf(HooksLoaded(emptyList(), emptyList()), dev.min.agent.spi.OutputStyleLoaded("Default", "", false), dev.min.agent.spi.SkillsLoaded(emptyList())), Durability.Sync)
-        loadSettings(settings); loadOutputStyle(settings); loadSkills()
+        loaders.loadSettings(settings); loaders.loadOutputStyle(settings); loaders.loadSkills()
         if (reconnectServers) hub?.reloadMcp(sessionId) else hub?.reloadPluginLsp(sessionId)
         val message = "Reloaded: ${next.batch.plugins.size} plugins · ${next.skills.size} skills · ${next.commands.size} commands. 插件已重载；下个回合生效。Monitors 下个会话生效。" + if (!reconnectServers && serversChanged) " MCP 保持当前连接，下个会话生效。" else ""
         commit(listOf(Note(NoteLevel.Info, message)), Durability.Sync)
@@ -437,124 +382,11 @@ class SessionRuntime private constructor(
         }
     }
 
-    /**
-     * 会话创建时读一次记忆文件与自动记忆索引，快照写进日志（[MemoryLoaded]）；之后系统提示只从这份快照拼，会话内冻结。
-     * 什么都没读到、自动记忆也没开时不写事件。
-     */
-    private suspend fun loadMemory(settings: SettingsSnapshot?) {
-        if (!deps.memoryEnabled) return
-        val home = deps.memoryHome ?: return
-        // --bare / --safe-mode：CLAUDE.md 与自动记忆都在跳过清单里（CC :72/:125），这次启动一个都不读。
-        // 闸门在 deps 上而不是这里看参数：具名子 agent 会自己走这条路径重读，子会话必须跟着父会话的档位
-        if (deps.customizations != Customizations.Full) return
-        val memory = MemoryLoader.load(deps.host.fs, state.value.created.cwd, home, deps.memoryLimits, includeUser = !deps.settingsInputs.restricted)
-        val (autoFiles, autoInfo, autoNotes) = autoMemory(settings, home)
-        if (memory.files.isEmpty() && memory.notes.isEmpty() && autoFiles.isEmpty() && autoInfo == null) return
-        commit(listOf(MemoryLoaded(memory.files + autoFiles, memory.notes + autoNotes, autoInfo)), Durability.Sync)
-    }
-
-    /**
-     * 自动记忆（设计 §2）：开关 = settings 各层的 `autoMemoryEnabled`（默认开），`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`
-     * 经 [KernelDeps.env] 强制关；目录 = settings 的 `autoMemoryDirectory`（合并时已只认 user / managed 层），
-     * 否则按项目键算的默认位置。开着就返回目录与用量（索引还不存在也是 0/0——提示段要告诉模型能写到哪里）。
-     */
-    private suspend fun autoMemory(settings: SettingsSnapshot?, home: GuestPath): Triple<List<LoadedMemoryFile>, AutoMemoryInfo?, List<String>> {
-        // --restricted（Min 的解释）：自动记忆住在用户目录（~/.claude/projects）下，不开
-        if (deps.settingsInputs.restricted) return Triple(emptyList(), null, emptyList())
-        val merged = settings?.merged ?: return Triple(emptyList(), null, emptyList())
-        val enabled = merged.autoMemoryEnabled ?: true
-        if (!enabled || isTruthyEnv(deps.env("CLAUDE_CODE_DISABLE_AUTO_MEMORY"))) return Triple(emptyList(), null, emptyList())
-        val override = merged.autoMemoryDirectory
-        val directory = when {
-            override == null -> AutoMemory.directory(deps.host.fs, state.value.created.cwd, home)
-            else -> AutoMemory.directoryOverride(home, override)
-        }
-        if (override != null && directory == null) {
-            // 合并层只认 user / managed，但值仍可能是乱的（相对路径）：按默认位置，给人记一条
-            val fallback = AutoMemory.directory(deps.host.fs, state.value.created.cwd, home)
-            val index = AutoMemory.loadIndex(deps.host.fs, fallback)
-            val note = "settings 的 autoMemoryDirectory=$override 不是绝对路径也不是 ~/ 开头，按默认位置 $fallback 处理"
-            return Triple(listOfNotNull(index.file), index.info, listOf(note))
-        }
-        val index = AutoMemory.loadIndex(deps.host.fs, requireNotNull(directory))
-        return Triple(listOfNotNull(index.file), index.info, emptyList())
-    }
-
-    /**
-     * 会话创建时读一次 settings：权限规则与 hooks 各写一份快照（都在会话内冻结）。
-     * 项目层（project / local）的 hooks 只在工作区被信任时才进快照：它们会在手机上执行任意命令（hooks设计 §1）。
-     */
+    /** settings 里关了工作流（`disableWorkflows` / `CLAUDE_CODE_DISABLE_WORKFLOWS`）：创建时读到后冻结进日志 */
     internal val workflowSettingsDisabled: Boolean get() = state.value.workflowSettingsDisabled
 
-    private suspend fun loadSettings(snapshot: SettingsSnapshot) {
-        refreshNetworkSettings()
-        try {
-            val trustProject = deps.trustProjectHooks(state.value.created.cwd)
-            val locals = trustedLocalSettings(deps, snapshot, state.value.created.cwd, trustProject || state.value.created.headless)
-            val advisor = dev.min.agent.ext.config.advisorSettingsOf(snapshot.merged, state.value.settings.model.providerId, trustProject || state.value.created.headless, locals)
-            if (advisor.model != null) changeAdvisor(advisor.model)
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (e: Exception) { commit(listOf(Note(NoteLevel.Warning, "advisorModel 未启用：${e.message}")), Durability.Sync) }
-        if ((snapshot.merged.raw("disableWorkflows") as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull == true || snapshot.merged.env["CLAUDE_CODE_DISABLE_WORKFLOWS"] == "1")
-            commit(listOf(dev.min.agent.spi.WorkflowSettingsDisabled()), Durability.Sync)
-        val review = dev.min.agent.ext.config.autoReviewSettingsOf(snapshot.merged)
-        val managed = snapshot.merged.layers.lastOrNull { it.source == dev.min.agent.ext.config.ConfigSource.Managed }
-        val configured = review.copy(reviewer = deps.autoModeReviewer ?: review.reviewer,
-            disableAutoMode = managed?.permissions?.disableAutoMode == true,
-            // --restricted（CC :123）拒绝 bypassPermissions：与托管禁用同一条锁（创建、切换、子会话都经它）
-            disableBypassPermissionsMode = managed?.permissions?.disableBypassPermissionsMode == true || deps.settingsInputs.restricted)
-        if (review.notes.isNotEmpty()) commit(review.notes.map { Note(NoteLevel.Warning, it) }, Durability.Sync)
-        if (configured != dev.min.agent.spi.AutoReviewSettingsLoaded()) commit(listOf(configured), Durability.Sync)
-        val mode = state.value.settings.mode
-        if (mode == PermissionMode.Auto && configured.disableAutoMode || mode == PermissionMode.BypassPermissions && configured.disableBypassPermissionsMode) {
-            commit(listOf(SettingsChanged(mode = PermissionMode.Default), Note(NoteLevel.Warning, "这次启动禁用了 $mode（托管策略，或 --restricted），使用 Default 模式")), Durability.Sync)
-        }
-        loadPermissionRules(snapshot)
-        hooksEventOf(snapshot, state.value.created.cwd)?.let { commit(listOf(it), Durability.Sync) }
-    }
-
-    /**
-     * settings 各层算出的 hooks 快照事件（创建时与 ConfigChange 重读都用它）；没有任何 hook、说明与闸时没有东西可冻结，返回 null。
-     * 项目层（project / local）按 [cwd] 的信任筛层；--bare / --safe-mode 的取舍照旧
-     */
-    private suspend fun hooksEventOf(snapshot: SettingsSnapshot, cwd: GuestPath): HooksLoaded? {
-        // 先按信任筛层、再算 hooks 的一切键（含 disableAllHooks 与 http 两道闸）：没被信任的项目层一个键都不能影响用户的门禁
-        val baseHooks = snapshot.merged.hookSnapshot(deps.trustProjectHooks(cwd))
-        // --bare / --safe-mode 对 hooks 的取舍（CC :72/:125）：bare 一律不发现（原文对托管层也没有例外）；
-        // safe 只留托管层的（原文点名「managed settings policy still applies, including policy-configured hooks」），
-        // 托管插件声明的 hooks 随插件一起不加载（plugins() 在这两种档位下是 null）
-        val hooks = when (deps.customizations) {
-            Customizations.Bare -> baseHooks.copy(sources = emptyList(), notes = emptyList())
-            Customizations.Safe -> baseHooks.copy(sources = baseHooks.sources.filter { it.source == dev.min.agent.ext.config.ConfigSource.Managed })
-            Customizations.Full -> {
-                val plugins = plugins()
-                val pluginHooks = if (snapshot.merged.layers.any { it.source == dev.min.agent.ext.config.ConfigSource.Managed && it.allowManagedHooksOnly == true } ||
-                    snapshot.merged.layers.filter { it.source == dev.min.agent.ext.config.ConfigSource.User || it.source == dev.min.agent.ext.config.ConfigSource.Managed || deps.trustProjectHooks(cwd) }.lastOrNull { it.disableAllHooks != null }?.disableAllHooks == true) emptyList()
-                else plugins?.hookSources.orEmpty().map { dev.min.agent.ext.config.HookSource(dev.min.agent.ext.config.ConfigSource.Plugin, it) }
-                baseHooks.copy(sources = baseHooks.sources + pluginHooks, notes = baseHooks.notes + plugins?.notes.orEmpty())
-            }
-        }
-        val policy = hooks.httpPolicy.takeIf { it.allowedUrls != null || it.allowedEnvVars != null }
-            ?.let { HttpPolicyData(it.allowedUrls, it.allowedEnvVars) }
-        // 只有闸、没有任何 hook 也没有说明时没有东西可冻结（闸只管 http hook）
-        if (hooks.sources.isEmpty() && hooks.notes.isEmpty() && hooks.disabledBy == null) return null
-        // http 的两道闸随快照一起冻结：设置只在创建（或重读）时读得到，之后 hook 执行时再看就晚了
-        return HooksLoaded(hooks.sources.map { HookSourceData(it.source.label, it.hooks) }, hooks.notes, policy, hooks.disabledBy)
-    }
-
-    /**
-     * ConfigChange 放行之后把重读的设置并进运行中的会话（官方 settings 页「When edits take effect」：权限与 hooks 的编辑不用重启就生效）。
-     * **当场生效**的：权限规则（allow / ask / deny）、附加目录（settings 里列的；`--add-dir` 与会话中途 /add-dir 加的会并回去）、hooks（含 http 两道闸、
-     * disableAllHooks / allowManagedHooksOnly，项目层仍按工作区信任筛）、模型限制（availableModels 等）。
-     * **等下一个会话**的：model / effort / outputStyle / env / advisor / MCP 服务器 / 插件 / 网络设置 / 检查点开关 / 托管的模式锁——它们在创建时读一次、冻结进日志，
-     * 中途改文件不会悄悄换掉正在跑的会话的前缀与规矩（与原文「some keys are read only once at session start」同一类）。
-     */
-    internal suspend fun reapplySettings(snapshot: SettingsSnapshot, cwd: GuestPath) {
-        loadPermissionRules(snapshot, cwd, force = true)
-        val event = hooksEventOf(snapshot, cwd) ?: HooksLoaded(emptyList())
-        val s = state.value
-        if (event.sources != s.hooks || event.httpPolicy != s.hooksHttpPolicy || event.disabledBy != s.hooksDisabledBy) commit(listOf(event), Durability.Sync)
-    }
+    /** ConfigChange 放行之后把重读的设置并进运行中的会话，哪些当场生效见 [SessionLoaders.reapplySettings] */
+    internal suspend fun reapplySettings(snapshot: SettingsSnapshot, cwd: GuestPath) = loaders.reapplySettings(snapshot, cwd)
 
     /**
      * Setup（官方 hooks 页「Setup」）：只在 CLI 以 `--init-only`（matcher `init`）、或 `-p` 下 `--init`（`init`）/ `--maintenance`（`maintenance`）启动时触发，
@@ -587,46 +419,6 @@ class SessionRuntime private constructor(
     }
 
     /**
-     * 会话创建时按 `outputStyle` 设置读一次样式文件，快照写进日志（[OutputStyleLoaded]），
-     * 会话内冻结（系统提示只由快照拼；改设置只对新会话生效）。没设、Default、找不到（回 Default 并给 Note）
-     * 都不写事件——三种情况下系统提示与没有样式时逐字相同
-     */
-    private suspend fun loadOutputStyle(snapshot: SettingsSnapshot) {
-        // --safe-mode：输出样式在跳过清单里（CC :125）；--bare 的清单里没有它，照常
-        if (deps.customizations == Customizations.Safe) return
-        val wanted = snapshot.merged.outputStyle ?: return
-        val home = deps.memoryHome ?: return
-        val disk = dev.min.agent.spi.catchingNonCancellation {
-            OutputStyleFiles.load(deps.host.fs, state.value.created.cwd, home, includeUser = !deps.settingsInputs.restricted)
-        }.getOrElse {
-            // 读目录的意外不该让会话建不起来：按找不到处理，给一条说明
-            commit(
-                listOf(Note(NoteLevel.Warning, "读 output styles 失败（${it.message?.lineSequence()?.firstOrNull() ?: it::class.simpleName}），本会话按 Default。")),
-                Durability.Batched,
-            )
-            return
-        }
-        val def = OutputStyleFiles.resolve(disk.styles + plugins()?.styles.orEmpty(), wanted)
-        when {
-            def == null -> commit(
-                listOf(Note(NoteLevel.Warning, "settings 里的 outputStyle \"$wanted\" 找不到（用户 / 项目 / managed 目录与内置样式里都没有），本会话按 Default。名字大小写敏感。")),
-                Durability.Batched,
-            )
-            // Default 不改系统提示：不写事件，系统提示与没设样式时逐字相同
-            def.body.isBlank() && !def.keepCodingInstructions -> Unit
-            else -> commit(
-                listOf(
-                    OutputStyleLoaded(
-                        name = def.name, body = def.body, keepCodingInstructions = def.keepCodingInstructions,
-                        description = def.description, notes = disk.notes,
-                    ),
-                ),
-                Durability.Sync,
-            )
-        }
-    }
-
-    /**
      * 这个会话的模型限制（`availableModels` / `deniedModels` / `availableModelsMatch` / `enforceAvailableModels`，[ModelPolicy]）：
      * 根会话读设置时算（创建、续接、换目录），子会话跟随根会话。只在内存里：和 [KernelDeps.modelAllowed] 一样是运行时判断，
      * 每次启动从设置重算，不进日志。两个宿主都经它管住切模型、子 agent、顾问、审查——Android 的设置在 rootfs 里，宿主自己读不到
@@ -652,47 +444,6 @@ class SessionRuntime private constructor(
         val policy = modelPolicy ?: state.value.origin?.root?.let { hub?.get(it)?.modelPolicy } ?: return true
         val concrete = dev.min.agent.spi.catchingNonCancellation { deps.models.resolve(ref).profile.ref.modelId }.getOrNull() ?: ref.modelId
         return policy.allows(concrete)
-    }
-
-    /** [cwd]：按哪个目录算信任与相对规则（创建时是会话起点，ConfigChange 重读时是当前目录）；[force]：重读时即使什么都没有也要写，才能把删掉的规则撤掉 */
-    private suspend fun loadPermissionRules(snapshot: SettingsSnapshot, cwd: GuestPath = state.value.created.cwd, force: Boolean = false) {
-        if (state.value.origin == null) modelPolicy = snapshot.merged.modelPolicy()
-        val trustProject = deps.trustProjectHooks(cwd)
-        val trustedLocal = trustedLocalSettings(deps, snapshot, cwd, trustProject || state.value.created.headless)
-        val notes = snapshot.notes.toMutableList()
-        if (!trustProject && snapshot.merged.layers.any { (it.source == dev.min.agent.ext.config.ConfigSource.Project ||
-                it.source == dev.min.agent.ext.config.ConfigSource.Local && it.path !in trustedLocal) &&
-                (it.permissions.allow.isNotEmpty() || it.permissions.additionalDirectories.isNotEmpty()) }) {
-            // 放宽能力的仓库声明需要用户信任；限制能力的 ask / deny 始终保留。
-            notes += "this workspace has not been trusted：项目 permissions.allow / additionalDirectories 暂不生效"
-        }
-        val rules = snapshot.merged.ruleSpecs(trustProject, trustedLocal).map { spec ->
-            RuleEntry(
-                kind = when (spec.kind) {
-                    RuleSpecKind.Allow -> RuleKindData.Allow
-                    RuleSpecKind.Ask -> RuleKindData.Ask
-                    RuleSpecKind.Deny -> RuleKindData.Deny
-                },
-                text = spec.text, source = spec.source, baseDir = spec.baseDir,
-            )
-        }
-        // `--add-dir`（CC）：与 permissions.additionalDirectories 同一口径，授予文件访问
-        val directories = (snapshot.merged.fileAccessDirectories(cwd, deps.memoryHome ?: GuestPath("/root"), trustProject, trustedLocal) + deps.settingsInputs.addDirs).distinct()
-        if (!force && rules.isEmpty() && notes.isEmpty() && directories.isEmpty()) return
-        commit(listOf(PermissionRulesLoaded(rules, notes, directories)), Durability.Sync)
-    }
-
-    /**
-     * 会话创建时读一次 skills / commands 清单，快照写进日志（[dev.min.agent.spi.SkillsLoaded]），会话内冻结（与记忆同理）。
-     * 没有主目录就不读；什么都没读到、也没有说明时不写事件。
-     */
-    private suspend fun loadSkills() {
-        val home = deps.memoryHome ?: return
-        // --safe-mode：skills 与自定义命令（含托管层的）都不加载（CC :125）。--bare：只加载 --add-dir 目录里的（CC :72、CLI reference）
-        if (deps.customizations == Customizations.Safe) return
-        val bare = deps.customizations == Customizations.Bare
-        val snapshot = SkillSnapshots.load(deps.host.fs, state.value.created.cwd, home, if (bare) null else plugins(), inputs = deps.settingsInputs, addDirsOnly = bare) ?: return
-        commit(listOf(snapshot), Durability.Sync)
     }
 
     /** 会话自己的后台协程作用域：加目录的 hook、文件监视这类「不等它、也不挂在某个回合上」的活跑在这里（随会话卸下一起取消） */
@@ -733,7 +484,7 @@ class SessionRuntime private constructor(
         true
     }
 
-    /** 撤回还没送达模型的输入（Min 现有的「按 Esc 退回输入框」）。已送达的撤不回，返回 false */
+    /** 撤回还没送达模型的输入（界面的「按 Esc 退回输入框」）。已送达的撤不回，返回 false */
     suspend fun withdraw(clientMsgId: ClientMsgId): Boolean {
         return commitIf(listOf(InputWithdrawn(clientMsgId)), Durability.Sync) { s ->
             s.inbox.any { it.clientMsgId == clientMsgId }
@@ -925,9 +676,21 @@ class SessionRuntime private constructor(
      * 只看 state.turn 不够：回合 Job 已经起了、TurnStarted 还没落盘的空档里 state.turn 仍为 null（见 [whileIdle] 的同款处理）
      */
     internal fun isQuiescent(): Boolean = synchronized(turnLock) {
-        !closing && turnJob?.isActive != true && maintenanceJob?.isActive != true &&
-            _state.value.turn == null && _state.value.inbox.isEmpty()
+        isIdleLocked() && _state.value.inbox.isEmpty()
     }
+
+    /**
+     * 「有活在做」：回合 Job 在跑、维护 Job 在跑（[whileIdle]），或日志里还有没收尾的回合（`state.turn`）。
+     * 三项都要看：回合 Job 已起、TurnStarted 还没落盘的空档里 `state.turn` 仍为 null。**必须在 [turnLock] 里调**
+     */
+    private fun hasActiveWorkLocked(): Boolean =
+        turnJob?.isActive == true || maintenanceJob?.isActive == true || _state.value.turn != null
+
+    /**
+     * 「空闲」：没关门（[closing]）、也没有活在做（[hasActiveWorkLocked]）。收件箱里有无输入不属于空闲的定义，
+     * 各调用点按需要另加（[isQuiescent] 要空、[isParked] 要有）。**必须在 [turnLock] 里调**
+     */
+    private fun isIdleLocked(): Boolean = !closing && !hasActiveWorkLocked()
 
     /**
      * 没有回合、没有维护、也没有正要开的回合，收件箱里却有输入：没有任何东西会自己把它们接走。
@@ -938,14 +701,11 @@ class SessionRuntime private constructor(
      * 先看状态、最后看 [startsInFlight]：看到了提交进来的输入，就一定看得到它之前加上的计数
      */
     internal fun isParked(): Boolean = synchronized(turnLock) {
-        !closing && turnJob?.isActive != true && maintenanceJob?.isActive != true &&
-            _state.value.turn == null && _state.value.inbox.isNotEmpty() && startsInFlight.get() == 0
+        isIdleLocked() && _state.value.inbox.isNotEmpty() && startsInFlight.get() == 0
     }
 
     /** 此刻没有回合在跑（含启动中的），收件箱有无输入不论——团队调度判断「成员是否空闲」用 */
-    internal fun isTurnIdle(): Boolean = synchronized(turnLock) {
-        !closing && turnJob?.isActive != true && maintenanceJob?.isActive != true && _state.value.turn == null
-    }
+    internal fun isTurnIdle(): Boolean = synchronized(turnLock) { isIdleLocked() }
 
     @Volatile
     private var compactInstructions: String? = null
@@ -1083,7 +843,7 @@ class SessionRuntime private constructor(
      */
     private suspend fun <T> whileIdle(block: suspend () -> T): T? {
         val job = synchronized(turnLock) {
-            if (closing || turnJob?.isActive == true || maintenanceJob?.isActive == true || _state.value.turn != null) return null
+            if (!isIdleLocked()) return null
             // 在锁里就启动：启动之前它的 isActive 是假的，startTurnIfIdle 会从这个空档里溜进去
             scope.async { block() }.also { maintenanceJob = it }
         }
@@ -1107,19 +867,15 @@ class SessionRuntime private constructor(
     }
 
     /**
-     * 一个回合 Job 里可能连着跑几个回合：一回合正常结束后，回合期间排队的输入接着开下一回合。
-     * 放在同一个 Job 里而不是结束回调里再开，是为了让「Job 结束 = 空闲」没有空隙。
-     * 被中断或失败的回合不自动开下一回合（学 Claude Code：中断后排队的话退回输入框由人决定）。
-     */
-    /**
      * 卸下前「关门」：没有回合（含正在启动、还没写 TurnStarted 的）、也没有维护在跑时关门并返回 true。
      * 关门之后不再开回合、不再做维护，但还能写（卸下前要跑 SessionEnd、写它的运行记录）；随后 [sealWrites] 封住写入。
      * 封住之后任何写入都直接拒绝（不落盘）——卸下之后这个对象可能还被别的协程拿着（例如正要交付报告的），
      * 而再次打开会话会建一个新的运行时写同一份日志，两个写者会把日志写坏。被拒的子 agent 报告不会丢：
-     * 重新打开时 Hub 会补交没交付的报告
+     * 重新打开时 Hub 会补交没交付的报告。
+     * 关门是幂等的：已经关着门再关一次也成功（只看 [hasActiveWorkLocked]、不看 [closing]），所以不能用 [isIdleLocked]
      */
     internal fun sealIfIdle(): Boolean = synchronized(turnLock) {
-        if (turnJob?.isActive == true || maintenanceJob?.isActive == true || _state.value.turn != null) return false
+        if (hasActiveWorkLocked()) return false
         closing = true
         true
     }
@@ -1145,11 +901,15 @@ class SessionRuntime private constructor(
     @Volatile
     private var sealed = false
 
+    /**
+     * 空闲时开一个回合 Job。一个回合 Job 里可能连着跑几个回合：一回合正常结束后，回合期间排队的输入接着开下一回合。
+     * 放在同一个 Job 里而不是结束回调里再开，是为了让「Job 结束 = 空闲」没有空隙。
+     * 被中断或失败的回合不自动开下一回合（学 Claude Code：中断后排队的话退回输入框由人决定）。
+     */
     private fun startTurnIfIdle(trigger: TurnTrigger) {
         synchronized(turnLock) {
-            if (closing || turnJob?.isActive == true || maintenanceJob?.isActive == true) return
+            if (!isIdleLocked()) return
             val s = _state.value
-            if (s.turn != null) return
             // 会话已由模型结束（EndConversation）：任何来源都不再开回合。send 之外还有子 agent 的报告、后台任务的通知、
             // hook 唤醒、定时任务、界面的「继续」与压缩，只在 send 里拦的话它们照样把模型叫起来。输入照常进收件箱（日志里看得到）
             if (s.ended) return
@@ -1203,12 +963,12 @@ class SessionRuntime private constructor(
                 // 各层 settings 只读一次：权限 / hooks 与自动记忆的开关、目录用同一份快照
                 val settings = if (loadMemory || loadSettings) SettingsLoader.load(deps.host.fs, created.cwd, home, inputs = runtime.deps.settingsInputs) else null
                 runtime.checkpointsBySettings = settings?.let(::checkpointsEnabledIn)
-                if (loadMemory) runtime.loadMemory(settings)
+                if (loadMemory) runtime.loaders.loadMemory(settings)
                 if (loadSettings) {
-                    runtime.loadSettings(requireNotNull(settings))
-                    runtime.loadOutputStyle(requireNotNull(settings))
+                    runtime.loaders.loadSettings(requireNotNull(settings))
+                    runtime.loaders.loadOutputStyle(requireNotNull(settings))
                 }
-                // InstructionsLoaded（hooks.md :1278）：eager 载入的记忆文件逐文件发。放在 loadSettings 之后，
+                // InstructionsLoaded：eager 载入的记忆文件逐文件发。放在 loadSettings 之后，
                 // settings 层的 hooks 快照到那一刻才进状态；子会话的组件 hooks 已随 initial 折叠
                 if (loadMemory) runtime.fireInstructionsLoaded(runtime.state.value.memory, ::eagerLoadReason)
             }
@@ -1219,7 +979,7 @@ class SessionRuntime private constructor(
                 // 子会话不重读 settings，但冻结的托管锁仍须在第一个回合前兑现。
                 runtime.commit(listOf(SettingsChanged(mode = PermissionMode.Default), Note(NoteLevel.Warning, "这次启动禁用了 $currentMode（托管策略，或 --restricted），使用 Default 模式")), Durability.Sync)
             }
-            if (loadSkills) runtime.loadSkills()
+            if (loadSkills) runtime.loaders.loadSkills()
             if (runStartHooks && runtime.state.value.origin == null) {
                 setupTriggers.forEach { runtime.runSetup(it) }
                 runtime.runSessionStart("startup")
@@ -1285,14 +1045,14 @@ internal fun isTruthyEnv(value: String?): Boolean = value?.trim()?.lowercase() i
 internal class AsyncHookTimings(
     var pollMs: Long = 500,
     var livenessMs: Long = 5_000,
-    /** 退回探测要起进程，比句柄探活稀得多（N3） */
+    /** 退回探测要起进程，比句柄探活稀得多 */
     var fallbackLivenessMs: Long = 30_000,
 )
 
 /**
  * 排队的输入接续下一回合时记哪种触发，与这类输入在空闲时送达的口径一致：子 agent 的报告 / 消息、后台任务的通知
  * 记 Notification（空闲时 [SessionHub.deliver] 也是这么开回合的），asyncRewake hook 记 Hook，定时任务记 Cron。
- * 以前除 hook 外一律记 User：报告若在上一回合收尾前到达，接续回合就被记成「用户发起」，同一件事因时序不同记成两样
+ * 不能一律记 User：报告若在上一回合收尾前到达，接续回合就被记成「用户发起」，同一件事因时序不同记成两样
  */
 internal fun continuationTrigger(origin: InputOrigin): TurnTrigger = when (origin) {
     is InputOrigin.Hook -> TurnTrigger.Hook

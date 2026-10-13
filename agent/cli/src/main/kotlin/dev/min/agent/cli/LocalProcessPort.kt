@@ -6,9 +6,11 @@ import dev.min.agent.host.ProcessEnv
 import dev.min.agent.host.ProcessReaper
 import dev.min.agent.host.spawnLive
 import dev.min.agent.spi.GuestPath
+import dev.min.agent.spi.HostOs
 import dev.min.agent.spi.LiveProcess
 import dev.min.agent.spi.ProcessPort
 import dev.min.agent.spi.ProcessSpec
+import dev.min.agent.spi.ShellQuote
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
@@ -31,7 +33,7 @@ class LocalProcessPort(
     private val hostDirOf: (GuestPath) -> Path,
     private val launchDir: Path,
     private val secretEnvNames: Set<String>,
-    private val windows: Boolean = System.getProperty("os.name").orEmpty().startsWith("Windows"),
+    private val windows: Boolean = HostOs.isWindows,
     private val shell: List<String> = listOf("bash", "-l"),
     private val readEnv: (String) -> String? = System::getenv,
     /** 每个进程一个回收器；参数是启动脚本记下 msys pid 的文件（只有 Windows 用得上，见 [MsysProcesses]） */
@@ -83,8 +85,8 @@ class LocalProcessPort(
      * 回收时靠它认回 fork 出来的、Windows 眼里没有父进程的孙进程。
      */
     private fun launcherScript(argv: List<String>, pidFile: Path): String {
-        val record = if (windows) "echo \$\$ > ${posixQuote(bashPath(pidFile))}\n" else ""
-        return record + "exec " + argv.joinToString(" ") { posixQuote(it) } + "\n"
+        val record = if (windows) "echo \$\$ > ${ShellQuote.posix(bashPath(pidFile))}\n" else ""
+        return record + "exec " + argv.joinToString(" ") { ShellQuote.posix(it) } + "\n"
     }
 
     private companion object {

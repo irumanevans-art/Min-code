@@ -212,7 +212,7 @@ internal class Worktrees(private val rt: SessionRuntime) : WorktreePort {
 
     // 固定 Git 控制变量放进脚本，Android Exec 继续拒绝任意环境变量，不能为 Git 放开凭证边界。
     private suspend fun rawGitResult(cwd: GuestPath, args: Array<out String>): ExecResult.Exited {
-        val result = deps.host.exec.run(ShellCommand("GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 git -c core.hooksPath=/dev/null -c core.fsmonitor=false " + args.joinToString(" ") { quote(it) } + " 2>/dev/null", cwd), ExecOptions(30_000, maxOutputChars = 100_000))
+        val result = deps.host.exec.run(ShellCommand("GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 git -c core.hooksPath=/dev/null -c core.fsmonitor=false " + args.joinToString(" ") { ShellQuote.posix(it) } + " 2>/dev/null", cwd), ExecOptions(30_000, maxOutputChars = 100_000))
         if (result is ExecResult.Backgrounded) deps.host.exec.kill(result.handle)
         return result as? ExecResult.Exited ?: error("git 操作超时或意外转后台。")
     }
@@ -224,7 +224,6 @@ internal class Worktrees(private val rt: SessionRuntime) : WorktreePort {
 
     companion object {
         fun under(path: GuestPath, root: GuestPath): Boolean = path == root || path.value.startsWith(root.value.trimEnd('/') + "/")
-        fun quote(raw: String): String = "'" + raw.replace("'", "'\\''") + "'"
         fun stripAnsi(raw: String): String = raw.replace(Regex("\u001B\\[[0-?]*[ -/]*[@-~]"), "")
         fun resolved(raw: String, cwd: GuestPath): GuestPath {
             var text = raw.replace('\\', '/')

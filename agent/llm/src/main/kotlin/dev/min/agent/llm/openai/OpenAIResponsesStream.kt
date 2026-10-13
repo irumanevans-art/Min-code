@@ -1,8 +1,10 @@
 package dev.min.agent.llm.openai
 
 import dev.min.agent.llm.ModelException
+import dev.min.agent.llm.OverflowMatcher
 import dev.min.agent.llm.ModelProfile
 import dev.min.agent.llm.ModelStreamEvent
+import dev.min.agent.llm.INVALID_JSON_KEY
 import dev.min.agent.protocol.AgentJson
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.OpaquePart
@@ -109,7 +111,7 @@ internal class OpenAIResponsesStreamParser(private val profile: ModelProfile, pr
                     val arguments = if (custom) item.str("input").orEmpty() else item.str("arguments").orEmpty()
                     val parsed = try { AgentJson.parseToJsonElement(arguments.ifEmpty { "{}" }) as? JsonObject }
                         catch (_: IllegalArgumentException) { null }
-                    parts += ToolCallPart(CallId(id), name, if (custom) JsonObject(mapOf("input" to JsonPrimitive(arguments))) else parsed ?: JsonObject(mapOf("__invalid_json" to JsonPrimitive(arguments))))
+                    parts += ToolCallPart(CallId(id), name, if (custom) JsonObject(mapOf("input" to JsonPrimitive(arguments))) else parsed ?: JsonObject(mapOf(INVALID_JSON_KEY to JsonPrimitive(arguments))))
                     parts += OpaquePart(profile.ref, item)
                 }
                 else -> throw protocolError("不支持的 Responses output item：${item.str("type")}")

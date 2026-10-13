@@ -97,6 +97,10 @@ interface PeerTransport {
  * - 每个会话一个收件目录，只有它自己的进程取、删；别的进程只往里面放新文件，所以不用锁，不丢（取了不确认就不删）、不重（去重在收件方）。
  * - 目录 0700、文件 0600（POSIX）；Windows 上把 ACL 收成只有当前用户，不留给 Everyone / Users。
  * - 会话 id 只许字母数字下划线连字符：它要拼进路径，允许 `..` 就能写到用户目录之外。
+ *
+ * 真实文件 IO，本应在 `:agent:host`；没搬是因为 [PeerTransport] 与它用的 [PeerEntry] / [PeerEnvelope] / [TakenPeer] 都在内核里，
+ * host 不能依赖 kernel。要搬：先把这几个类型与接口搬进 spi（kernel 的 PeerMail / SessionHub 与测试改 import），
+ * 再把本类与 FilePeerTransportTest 搬进 host，最后改 cli 的 `DesktopApp` 与两个 cli 测试的 import。
  */
 class FilePeerTransport(
     private val root: Path,

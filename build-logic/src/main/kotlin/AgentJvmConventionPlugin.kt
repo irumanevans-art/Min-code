@@ -30,11 +30,7 @@ class AgentJvmConventionPlugin : Plugin<Project> {
 
             afterEvaluate { AgentModuleRules.verify(this) }
 
-            val sourceCheck = tasks.register<AgentSourceCheck>("agentSourceCheck") {
-                sources.from(fileTree("src/main/kotlin") { include("**/*.kt") })
-                report.set(layout.buildDirectory.file("agentSourceCheck/ok.txt"))
-            }
-            tasks.named("check") { dependsOn(sourceCheck) }
+            registerAgentSourceCheck()
         }
     }
 }

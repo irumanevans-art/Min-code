@@ -29,7 +29,7 @@ class OpenAIResponsesClient(
     private val transport: HttpTransport,
     private val secrets: Secrets,
 ) : ModelClient {
-    private val overflow = OverflowMatcher(provider.quirks.overflowPatterns)
+    private val overflow = openAiOverflowMatcher(provider.quirks.overflowPatterns)
 
     override fun stream(request: ModelRequest): Flow<ModelStreamEvent> = flow {
         val body = AgentJson.encodeToString(JsonObject.serializer(), buildResponsesBody(request))

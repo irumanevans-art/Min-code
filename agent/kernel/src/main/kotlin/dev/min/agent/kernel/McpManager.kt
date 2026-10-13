@@ -38,7 +38,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.intOrNull
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
@@ -83,6 +82,10 @@ internal class McpManager(
         @Volatile var restarts = 0
         /** 最近一次掉线 / 失败时 stdio 的 stderr 尾巴：面板在连接已经没了时还能看到「为什么」 */
         @Volatile var lastStderr: List<String> = emptyList()
+        /**
+         * 引用它的会话数。**所有写入（++ / --）都在 [lock] 里**（acquire / attachInherited / release，调用方都持锁），所以自增本身不需要原子；
+         * @Volatile 只为 [interact] 的无锁读（决定要不要对共享连接加锁）能看到最新值。linger 同样只在 [lock] 里改
+         */
         @Volatile var refs = 0
         var linger: Job? = null
         /** 没人要了、已从表里摘掉：还在途中的连接（慢启动、重启）连上之后要自己收掉，不然就是没人管的孤儿进程 */
@@ -293,21 +296,21 @@ internal class McpManager(
                 var connection: McpConnection? = null
                 try {
                     // helper 的认证头到请求时才知道；不要为预检多跑一次 helper，或替配置的认证刷新 OAuth。
-                    if (entry.spec is McpServerSpec.Remote && oauth != null && entry.spec.headersHelper==null && entry.spec.headers.keys.none { it.equals("Authorization",true) }) {
-                        val saved=oauth.store.load(tokenKey(entry))
-                        if(saved?.accessToken!=null && saved.expiresAtMs?.let { it<=nowMs() }==true) {
-                            oauth.refresh(tokenKey(entry)); entry.authRefreshed=true; audit(entry,"refresh","success")
+                    if (oauth != null && usesOAuthStore(entry.spec)) {
+                        val saved = oauth.store.load(tokenKey(entry))
+                        if (saved?.accessToken != null && saved.expiresAtMs?.let { it <= nowMs() } == true) {
+                            oauth.refresh(tokenKey(entry)); entry.authRefreshed = true; audit(entry, "refresh", "success")
                         }
                     }
                     connection = try { connectEntry(entry) }
-                        catch (e: Exception) { if(e is CancellationException) throw e; if(needsAuth(e) && entry.spec is McpServerSpec.Remote) recover(entry,null,e) else throw e }
+                        catch (e: Exception) { if (e is CancellationException) throw e; if (needsAuth(e) && entry.spec is McpServerSpec.Remote) recover(entry, null, e) else throw e }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     // 握手成了但工具表没列出来：这条连接没法用，关掉（否则状态是失败、进程却还活着，调用还会走进去）
                     entry.connection = null
                     connection?.let { withContext(NonCancellable) { dev.min.agent.spi.catchingNonCancellation { it.close() } } }
-                    failed(entry,e)
+                    failed(entry, e)
                 }
             }
             entry.settled.complete(Unit)
@@ -317,116 +320,120 @@ internal class McpManager(
 
     private suspend fun connectEntry(entry: Entry): McpConnection {
         // 配置认证与 OAuth 仓库无关，不能为了刷新归并的标记读取不需要的凭证仓库。
-        val usedAccessToken=if(entry.spec is McpServerSpec.Remote && entry.spec.headersHelper==null && entry.spec.headers.keys.none {it.equals("Authorization",true)}) oauth?.store?.load(tokenKey(entry))?.accessToken else null
-        val connection=connector.connectWithInteraction(entry.spec,entry.projectRoot,scope,{ rootsFor(entry.projectRoot) }) { params ->
-            val active=entry.activeCalls.values.singleOrNull()
-            val rt=active?.let { sessionLookup(it.sessionId) ?: bindings[it.sessionId]?.rt } ?: entry.inputOwner
-                ?: bindings.values.filter { it.entries.values.any { e -> e===entry } }.sortedWith(compareByDescending<Binding> { it.rt.lastMcpActivity }.thenBy { it.rt.sessionId.value }).firstOrNull()?.rt
-            rt?.handleMcpElicitation(entry.spec.name,params,active?.callId) ?: kotlinx.serialization.json.buildJsonObject { put("action",JsonPrimitive("decline")) }
+        val usedAccessToken = if (usesOAuthStore(entry.spec)) oauth?.store?.load(tokenKey(entry))?.accessToken else null
+        val connection = connector.connectWithInteraction(entry.spec, entry.projectRoot, scope, { rootsFor(entry.projectRoot) }) { params ->
+            val active = entry.activeCalls.values.singleOrNull()
+            val rt = active?.let { sessionLookup(it.sessionId) ?: bindings[it.sessionId]?.rt } ?: entry.inputOwner
+                ?: bindings.values.filter { it.entries.values.any { e -> e === entry } }.sortedWith(compareByDescending<Binding> { it.rt.lastMcpActivity }.thenBy { it.rt.sessionId.value }).firstOrNull()?.rt
+            rt?.handleMcpElicitation(entry.spec.name, params, active?.callId) ?: kotlinx.serialization.json.buildJsonObject { put("action", JsonPrimitive("decline")) }
         }
         try {
-            if(entry.retired) throw CancellationException("MCP 连接已卸下。")
-            entry.tools=connection.listTools(); entry.instructions=connection.instructions
-            entry.connection=connection; entry.status=CONNECTED; entry.reason=null; entry.lastStderr=emptyList()
-            entry.challenge=null
-            entry.usedAccessToken=usedAccessToken
-            watch(entry,connection)
+            if (entry.retired) throw CancellationException("MCP 连接已卸下。")
+            entry.tools = connection.listTools(); entry.instructions = connection.instructions
+            entry.connection = connection; entry.status = CONNECTED; entry.reason = null; entry.lastStderr = emptyList()
+            entry.challenge = null
+            entry.usedAccessToken = usedAccessToken
+            watch(entry, connection)
             watchChannel(entry, connection)
             return connection
-        } catch(e: Exception) { withContext(NonCancellable) { dev.min.agent.spi.catchingNonCancellation { connection.close() } }; throw e }
+        } catch (e: Exception) { withContext(NonCancellable) { dev.min.agent.spi.catchingNonCancellation { connection.close() } }; throw e }
     }
 
-    private fun tokenKey(entry: Entry) = dev.min.agent.spi.McpTokenKey(entry.spec.name,(entry.spec as McpServerSpec.Remote).url)
-    private fun challenge(e: Exception) = when(e) {
+    /** 没有配置自己的认证（headersHelper / Authorization 头）的远程服务器才走 OAuth 仓库 */
+    private fun usesOAuthStore(spec: McpServerSpec): Boolean =
+        spec is McpServerSpec.Remote && spec.headersHelper == null && spec.headers.keys.none { it.equals("Authorization", true) }
+
+    private fun tokenKey(entry: Entry) = dev.min.agent.spi.McpTokenKey(entry.spec.name, (entry.spec as McpServerSpec.Remote).url)
+    private fun challenge(e: Exception) = when (e) {
         is McpHttpException -> e.authChallenge
         is McpTransportClosed -> e.authChallenge
         else -> null
     }
     private class LoginRequired(val scope: String? = null) : Exception("MCP 需要登录（needs-auth）。")
-    private fun failed(entry: Entry,e: Exception) {
+    private fun failed(entry: Entry, e: Exception) {
         (e as? McpTransportClosed)?.stderrTail?.takeIf { it.isNotEmpty() }?.let { entry.lastStderr = it }
-        entry.challenge=challenge(e) ?: entry.challenge
-        entry.status=if(needsAuth(e) || e is LoginRequired || (e is dev.min.agent.mcp.McpOAuthException && e.kind==dev.min.agent.mcp.McpOAuthException.Kind.RefreshRejected)) NEEDS_AUTH else FAILED
-        entry.reason=if(e is LoginRequired) {
-            val missing=e.scope.orEmpty().split(' ').filter { it.matches(Regex("[A-Za-z0-9:_./*\\-]{1,80}")) }.take(12).joinToString(" ")
-            if(missing.isEmpty()) "需要登录（needs-auth）。" else "需要额外权限（needs-auth），缺少 scope：$missing。请登录；使用 pinned scopes 时先更新配置。"
-        } else if(e is dev.min.agent.mcp.McpOAuthException || e is McpHttpException || e is McpTransportClosed) e.message else "MCP 连接失败。"
-        val old=entry.connection; entry.connection=null
+        entry.challenge = challenge(e) ?: entry.challenge
+        entry.status = if (needsAuth(e) || e is LoginRequired || (e is dev.min.agent.mcp.McpOAuthException && e.kind == dev.min.agent.mcp.McpOAuthException.Kind.RefreshRejected)) NEEDS_AUTH else FAILED
+        entry.reason = if (e is LoginRequired) {
+            val missing = e.scope.orEmpty().split(' ').filter { it.matches(Regex("[A-Za-z0-9:_./*\\-]{1,80}")) }.take(12).joinToString(" ")
+            if (missing.isEmpty()) "需要登录（needs-auth）。" else "需要额外权限（needs-auth），缺少 scope：$missing。请登录；使用 pinned scopes 时先更新配置。"
+        } else if (e is dev.min.agent.mcp.McpOAuthException || e is McpHttpException || e is McpTransportClosed) e.message else "MCP 连接失败。"
+        val old = entry.connection; entry.connection = null
         old?.let { scope.launch { dev.min.agent.spi.catchingNonCancellation { it.close() } } }
         changed(entry)
     }
-    private suspend fun recover(entry: Entry,old: McpConnection?,e: Exception): McpConnection = entry.authLock.withLock {
-        if(old!=null && entry.connection!==old) return@withLock entry.connection ?: throw LoginRequired()
-        entry.challenge=challenge(e) ?: entry.challenge
-        if(entry.challenge?.error=="insufficient_scope") throw LoginRequired(entry.challenge?.scope)
-        val client=oauth ?: throw LoginRequired()
-        if(client.store.load(tokenKey(entry))?.accessToken==null) throw LoginRequired()
-        entry.connection=null
+    private suspend fun recover(entry: Entry, old: McpConnection?, e: Exception): McpConnection = entry.authLock.withLock {
+        if (old != null && entry.connection !== old) return@withLock entry.connection ?: throw LoginRequired()
+        entry.challenge = challenge(e) ?: entry.challenge
+        if (entry.challenge?.error == "insufficient_scope") throw LoginRequired(entry.challenge?.scope)
+        val client = oauth ?: throw LoginRequired()
+        if (client.store.load(tokenKey(entry))?.accessToken == null) throw LoginRequired()
+        entry.connection = null
         old?.let { withContext(NonCancellable) { dev.min.agent.spi.catchingNonCancellation { it.close() } } }
-        try { client.refresh(tokenKey(entry),entry.usedAccessToken); entry.authRefreshed=true; audit(entry,"refresh","success") }
-        catch(e: CancellationException) { throw e }
-        catch(e: Exception) { audit(entry,"refresh","failed"); throw e }
+        try { client.refresh(tokenKey(entry), entry.usedAccessToken); entry.authRefreshed = true; audit(entry, "refresh", "success") }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { audit(entry, "refresh", "failed"); throw e }
         connectEntry(entry)
     }
-    private suspend fun <T> authenticated(entry: Entry,block: suspend (McpConnection) -> T): T {
-        if(entry.status==NEEDS_AUTH) throw LoginRequired(entry.challenge?.takeIf { it.error=="insufficient_scope" }?.scope)
-        val initial=entry.connection ?: throw LoginRequired()
-        try { return block(initial).also { entry.authRefreshed=false } }
-        catch(e: CancellationException) { throw e }
-        catch(e: Exception) {
-            if(entry.spec !is McpServerSpec.Remote || !needsAuth(e)) throw e
+    private suspend fun <T> authenticated(entry: Entry, block: suspend (McpConnection) -> T): T {
+        if (entry.status == NEEDS_AUTH) throw LoginRequired(entry.challenge?.takeIf { it.error == "insufficient_scope" }?.scope)
+        val initial = entry.connection ?: throw LoginRequired()
+        try { return block(initial).also { entry.authRefreshed = false } }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) {
+            if (entry.spec !is McpServerSpec.Remote || !needsAuth(e)) throw e
             try {
-                val connected=recover(entry,initial,e)
-                return block(connected).also { entry.authRefreshed=false }
-            } catch(retry: CancellationException) { throw retry }
-            catch(retry: Exception) { failed(entry,retry); throw if(entry.status==NEEDS_AUTH) LoginRequired(entry.challenge?.takeIf { it.error=="insufficient_scope" }?.scope) else retry }
+                val connected = recover(entry, initial, e)
+                return block(connected).also { entry.authRefreshed = false }
+            } catch (retry: CancellationException) { throw retry }
+            catch (retry: Exception) { failed(entry, retry); throw if (entry.status == NEEDS_AUTH) LoginRequired(entry.challenge?.takeIf { it.error == "insufficient_scope" }?.scope) else retry }
         }
     }
-    private suspend fun audit(entry: Entry,action: String,outcome: String,rt: SessionRuntime? = null) {
-        val actor=rt ?: entry.activeCalls.values.firstOrNull()?.let { sessionLookup(it.sessionId) ?: bindings[it.sessionId]?.rt }
-            ?: entry.inputOwner ?: bindings.values.filter { it.entries.values.any { e -> e===entry } }.maxByOrNull { it.rt.lastMcpActivity }?.rt
-        actor?.commit(listOf(dev.min.agent.spi.McpAuthentication(entry.spec.name,action,outcome)),dev.min.agent.spi.Durability.Sync)
+    private suspend fun audit(entry: Entry, action: String, outcome: String, rt: SessionRuntime? = null) {
+        val actor = rt ?: entry.activeCalls.values.firstOrNull()?.let { sessionLookup(it.sessionId) ?: bindings[it.sessionId]?.rt }
+            ?: entry.inputOwner ?: bindings.values.filter { it.entries.values.any { e -> e === entry } }.maxByOrNull { it.rt.lastMcpActivity }?.rt
+        actor?.commit(listOf(dev.min.agent.spi.McpAuthentication(entry.spec.name, action, outcome)), dev.min.agent.spi.Durability.Sync)
     }
-    private fun target(server: String,sessionId: SessionId?): Pair<Entry,SessionRuntime> {
-        val matches=bindings.values.filter { sessionId==null || it.rt.sessionId==sessionId }.mapNotNull { b -> b.entries[server]?.let { it to b.rt } }
-        if(matches.isEmpty() || matches.map { it.first.key.endpoint }.distinct().size!=1) throw IllegalArgumentException("MCP 服务器不可用或存在多个不同端点，请指定会话。")
-        return matches.first().also { if(it.first.spec !is McpServerSpec.Remote) throw IllegalArgumentException("只有远程 MCP 服务器支持 OAuth。") }
+    private fun target(server: String, sessionId: SessionId?): Pair<Entry, SessionRuntime> {
+        val matches = bindings.values.filter { sessionId == null || it.rt.sessionId == sessionId }.mapNotNull { b -> b.entries[server]?.let { it to b.rt } }
+        if (matches.isEmpty() || matches.map { it.first.key.endpoint }.distinct().size != 1) throw IllegalArgumentException("MCP 服务器不可用或存在多个不同端点，请指定会话。")
+        return matches.first().also { if (it.first.spec !is McpServerSpec.Remote) throw IllegalArgumentException("只有远程 MCP 服务器支持 OAuth。") }
     }
-    suspend fun login(server: String,sessionId: SessionId? = null) {
-        val (entry,rt)=target(server,sessionId)
-        val client=oauth ?: throw IllegalStateException("这个宿主不支持 MCP OAuth。")
-        val spec=entry.spec as McpServerSpec.Remote
+    suspend fun login(server: String, sessionId: SessionId? = null) {
+        val (entry, rt) = target(server, sessionId)
+        val client = oauth ?: throw IllegalStateException("这个宿主不支持 MCP OAuth。")
+        val spec = entry.spec as McpServerSpec.Remote
         entry.authLock.withLock {
-            if(connector.configuredAuthorization(spec,entry.projectRoot)) throw IllegalStateException("服务器使用配置的 Authorization，请修正 headers 或 headersHelper。")
+            if (connector.configuredAuthorization(spec, entry.projectRoot)) throw IllegalStateException("服务器使用配置的 Authorization，请修正 headers 或 headersHelper。")
             try {
-                val c=spec.oauth
-                client.login(tokenKey(entry),dev.min.agent.mcp.McpOAuthSettings(c?.clientId,c?.clientSecret,c?.callbackPort,c?.authServerMetadataUrl,c?.scopes),entry.challenge)
-                entry.challenge=null
-                val old=entry.connection
+                val c = spec.oauth
+                client.login(tokenKey(entry), dev.min.agent.mcp.McpOAuthSettings(c?.clientId, c?.clientSecret, c?.callbackPort, c?.authServerMetadataUrl, c?.scopes), entry.challenge)
+                entry.challenge = null
+                val old = entry.connection
                 // 登录返回后用户可能马上发下一回合，必须先完成入队，再报告成功。
-                val connected=connectEntry(entry)
-                if(old!==connected) old?.close()
-                stageChanged(entry); audit(entry,"login","success",rt)
-            } catch(e: CancellationException) { withContext(NonCancellable) { audit(entry,"login","cancelled",rt) }; throw e }
-            catch(e: Exception) {
+                val connected = connectEntry(entry)
+                if (old !== connected) old?.close()
+                stageChanged(entry); audit(entry, "login", "success", rt)
+            } catch (e: CancellationException) { withContext(NonCancellable) { audit(entry, "login", "cancelled", rt) }; throw e }
+            catch (e: Exception) {
                 // 扩大 scope 的尝试不能毁掉原本可用的连接；新连接就绪后才替换旧连接。
-                if(entry.status!=CONNECTED || entry.connection==null) failed(entry,e)
-                audit(entry,"login","failed",rt)
-                throw IllegalStateException(if(e is dev.min.agent.mcp.McpOAuthException) e.message else "MCP 登录失败。")
+                if (entry.status != CONNECTED || entry.connection == null) failed(entry, e)
+                audit(entry, "login", "failed", rt)
+                throw IllegalStateException(if (e is dev.min.agent.mcp.McpOAuthException) e.message else "MCP 登录失败。")
             }
         }
     }
-    suspend fun logout(server: String,sessionId: SessionId? = null) {
-        val (entry,rt)=target(server,sessionId)
-        val client=oauth ?: throw IllegalStateException("这个宿主不支持 MCP OAuth。")
-        val affected=entries.values.filter { it.spec is McpServerSpec.Remote && tokenKey(it)==tokenKey(entry) }
+    suspend fun logout(server: String, sessionId: SessionId? = null) {
+        val (entry, rt) = target(server, sessionId)
+        val client = oauth ?: throw IllegalStateException("这个宿主不支持 MCP OAuth。")
+        val affected = entries.values.filter { it.spec is McpServerSpec.Remote && tokenKey(it) == tokenKey(entry) }
         entry.authLock.withLock {
             client.store.delete(tokenKey(entry))
-            for(other in affected) {
-                other.starting?.cancelAndJoin(); val old=other.connection; other.connection=null; old?.close()
-                other.status=NEEDS_AUTH; other.reason="已退出登录，需要登录（needs-auth）。"; changed(other)
+            for (other in affected) {
+                other.starting?.cancelAndJoin(); val old = other.connection; other.connection = null; old?.close()
+                other.status = NEEDS_AUTH; other.reason = "已退出登录，需要登录（needs-auth）。"; changed(other)
             }
-            audit(entry,"logout","success",rt)
+            audit(entry, "logout", "success", rt)
         }
     }
 
@@ -674,29 +681,9 @@ internal class McpManager(
      */
     private fun snapshotOf(binding: Binding, previous: McpToolsSnapshot?): Pair<McpServersLoaded, McpToolsSnapshot> {
         val notes = ArrayList(binding.config.notes)
-        val shaped = ArrayList<Triple<Entry, McpToolDef, McpShaping.Shaped.Ok>>()
         // 连上过的都算（掉线了也保留最后一次的工具，见 watch）；从没连上的没有工具
         val ready = binding.entries.values.filter { it.tools != null }
-        for (entry in ready) for (def in entry.tools.orEmpty()) {
-            when (val s = McpShaping.shape(def.inputSchema)) {
-                is McpShaping.Shaped.Ok -> shaped += Triple(entry, def, s)
-                is McpShaping.Shaped.Excluded -> notes += "MCP 服务器 ${entry.spec.name} 的工具 ${def.name} 没有加载：${s.reason}"
-            }
-        }
-        val names = McpNames.assign(shaped.map { (e, d, _) -> e.spec.name to d.name })
-        val live = shaped.map { (e, d, s) ->
-            McpToolEntry(
-                name = names.getValue(e.spec.name to d.name),
-                server = e.spec.name,
-                tool = d.name,
-                description = McpShaping.truncate(listOfNotNull(s.descriptionPrefix, d.description ?: d.title).joinToString("\n")),
-                inputSchema = s.schema,
-                readOnlyHint = d.annotations?.readOnlyHint == true,
-                requiresUserInteraction = (d.meta?.get(META_REQUIRES_INTERACTION) as? JsonPrimitive)?.booleanOrNull == true,
-                maxResultChars = (d.meta?.get(META_MAX_RESULT_CHARS) as? JsonPrimitive)?.intOrNull,
-                alwaysLoad = e.spec.alwaysLoad || (d.meta?.get("anthropic/alwaysLoad") as? JsonPrimitive)?.booleanOrNull == true,
-            )
-        }
+        val live = shapeListedTools(ready.map { ListedTools(it.spec.name, it.spec.alwaysLoad, it.tools.orEmpty()) }, notes)
         val unconnected = binding.entries.values.filter { it.tools == null }.map { it.spec.name }.toSet()
         // 按配置里的服务器顺序摆：沿用的工具待在它原来的位置，工具表的前缀不因此变
         val order = binding.config.servers.map { it.spec.name }
@@ -728,7 +715,7 @@ internal class McpManager(
     private fun callerFor(binding: Binding) = object : McpCaller {
         override suspend fun listPrompts(): List<dev.min.agent.ext.mcp.McpPromptCommand> {
             withTimeoutOrNull(startupWaitMs) { binding.entries.values.forEach { it.settled.await() } }
-            val definitions = binding.entries.values.filter { it.spec.name != "anthropic-skills" }.flatMap { entry ->
+            val definitions = binding.entries.values.filter { it.spec.name != SKILLS_SERVER }.flatMap { entry ->
                 val connection = entry.connection?.takeIf { it.capabilities.containsKey("prompts") } ?: return@flatMap emptyList()
                 val listed = try { authenticated(entry) { it.listPrompts() } }
                 catch (e: CancellationException) { throw e }
@@ -787,31 +774,35 @@ internal class McpManager(
         )
 
         override suspend fun call(request: McpCallRequest): ToolResult {
-        val entry = binding.entries[request.server]
-            ?: return unavailable("MCP 服务器 ${request.server} 不在这个会话的配置里了。")
-        // 还在连（刚创建、刚重启）：等一小会儿再说（CC：恢复的会话对还在连的服务器最多等 10 秒）
-        if (entry.connection == null && entry.status == PENDING) withTimeoutOrNull(CALL_WAIT_MS) { while (entry.connection == null && entry.status == PENDING) delay(50) }
-        val connection = entry.connection
-            ?: return unavailable("MCP 服务器 ${request.server} 现在不可用" + (entry.reason?.let { "：$it" } ?: "。"))
-        return entry.interact {
-        val key = request.sessionId to request.callId
-        entry.activeCalls[key] = request
-        try {
-            // 追踪开着时 HTTP MCP 请求带这次工具执行 span 的 traceparent（原文：「the same way」，同一个开关管）；放进协程上下文，HTTP 传输发 POST 时取
-            val trace = request.traceparent?.let { dev.min.agent.mcp.McpTraceContext(it) } ?: kotlin.coroutines.EmptyCoroutineContext
-            val result = withContext(trace) { authenticated(entry) { connection -> if (request.resourceUri != null) connection.readResource(request.resourceUri) else connection.call(
-                request.tool, request.arguments,
-                onProgress = { p -> request.progress(p.message ?: p.total?.let { "${p.progress.toLong()} / ${it.toLong()}" } ?: "进度 ${p.progress}") },
-                idleTimeoutMs = if (entry.spec is McpServerSpec.Stdio) STDIO_IDLE_TIMEOUT_MS else REMOTE_IDLE_TIMEOUT_MS,
-                hardTimeoutMs = entry.spec.timeoutMs,
-            ) } }
-            McpResults.toToolResult(request.server, request.tool, request.callId.value, result, request.artifacts)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            McpResults.failure(request.server, e)
-        } finally { entry.activeCalls.remove(key) }
-        }
+            val entry = binding.entries[request.server]
+                ?: return unavailable("MCP 服务器 ${request.server} 不在这个会话的配置里了。")
+            // 还在连（刚创建、刚重启）：等一小会儿再说（CC：恢复的会话对还在连的服务器最多等 10 秒）
+            if (entry.connection == null && entry.status == PENDING) withTimeoutOrNull(CALL_WAIT_MS) { while (entry.connection == null && entry.status == PENDING) delay(50) }
+            // 没连上：直接说不可用
+            if (entry.connection == null) return unavailable("MCP 服务器 ${request.server} 现在不可用" + (entry.reason?.let { "：$it" } ?: "。"))
+            return entry.interact {
+                val key = request.sessionId to request.callId
+                entry.activeCalls[key] = request
+                try {
+                    // 追踪开着时 HTTP MCP 请求带这次工具执行 span 的 traceparent（原文：「the same way」，同一个开关管）；放进协程上下文，HTTP 传输发 POST 时取
+                    val trace = request.traceparent?.let { dev.min.agent.mcp.McpTraceContext(it) } ?: kotlin.coroutines.EmptyCoroutineContext
+                    val result = withContext(trace) {
+                        authenticated(entry) { connection ->
+                            if (request.resourceUri != null) connection.readResource(request.resourceUri) else connection.call(
+                                request.tool, request.arguments,
+                                onProgress = { p -> request.progress(p.message ?: p.total?.let { "${p.progress.toLong()} / ${it.toLong()}" } ?: "进度 ${p.progress}") },
+                                idleTimeoutMs = if (entry.spec is McpServerSpec.Stdio) STDIO_IDLE_TIMEOUT_MS else REMOTE_IDLE_TIMEOUT_MS,
+                                hardTimeoutMs = entry.spec.timeoutMs,
+                            )
+                        }
+                    }
+                    McpResults.toToolResult(request.server, request.tool, request.callId.value, result, request.artifacts)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    McpResults.failure(request.server, e)
+                } finally { entry.activeCalls.remove(key) }
+            }
         }
     }
 
@@ -831,8 +822,8 @@ internal class McpManager(
         const val FAILED = "failed"
         const val NEEDS_AUTH = "needs-auth"
 
-        private const val META_REQUIRES_INTERACTION = "anthropic/requiresUserInteraction"
-        private const val META_MAX_RESULT_CHARS = "anthropic/maxResultSizeChars"
+        /** CC 文档的保留服务器名：它的 prompts 不列成斜杠命令（与 McpConfigLoader 的保留名同一条规则），连接本身照常 */
+        private const val SKILLS_SERVER = "anthropic-skills"
 
         private fun gateState(gate: McpGate): String = when (gate) {
             McpGate.Enabled -> PENDING

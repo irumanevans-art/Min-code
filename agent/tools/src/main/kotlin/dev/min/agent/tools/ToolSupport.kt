@@ -4,6 +4,7 @@ import dev.min.agent.protocol.TextPart
 import dev.min.agent.spi.ContentId
 import dev.min.agent.spi.ToolContext
 import dev.min.agent.spi.FileEdit
+import dev.min.agent.spi.FileStat
 import dev.min.agent.spi.FileStamp
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.ToolInput
@@ -160,3 +161,23 @@ internal const val ENOENT = "Error:ENOENT"
 internal fun doneFlow(block: suspend () -> ToolResult): Flow<ToolProgress> = flow { emit(ToolProgress.Done(block())) }
 
 internal fun String.clip(max: Int): String = if (length <= max) this else take(max) + "…"
+
+// ---- 写文件类工具共用的「先读后写」判据与大小上限 ----
+
+/** Edit / NotebookEdit / ApplyPatch 一次最多处理这么多字节的已有文件（含内嵌图片的 notebook 常有几 MB） */
+internal const val MAX_EDITABLE_FILE_BYTES = 10L * 1024 * 1024
+
+/**
+ * 修改已有文件前的「先读后写」检查：[ToolContext.lastSeen]（日志里的 touched）没有记录，或记录的大小 / mtime 与 [current]
+ * 对不上（读过之后被别人改了），返回给模型看的错误话，否则 null。各工具对模型的措辞不同，由调用方传 [unreadMessage] / [staleMessage]。
+ */
+internal fun staleReadProblem(
+    ctx: ToolContext,
+    path: GuestPath,
+    current: FileStat,
+    unreadMessage: String = "修改 $path 之前先用 Read 读一遍。",
+    staleMessage: String = "$path 在你读过之后被改过，先重新 Read 再改。",
+): String? {
+    val seen = ctx.lastSeen(path) ?: return unreadMessage
+    return if (seen.size != current.size || seen.modifiedMs != current.modifiedMs) staleMessage else null
+}

@@ -10,7 +10,7 @@ internal fun SessionState.reviewUserTexts(): List<String> = inheritedAutoUserCon
 internal suspend fun SessionRuntime.refreshAutoUserContext() {
     val parentId = state.value.origin?.parent ?: return
     val parent = hub?.open(parentId) ?: return
-    val context = ToolExecutor(parent, HookDriver(parent)).policyContext()
+    val context = PolicyContextFactory(parent).context()
     val users = AutoReviewer(parent).trustedUserTexts(parent.state.value, context)
     if (users != state.value.inheritedAutoUserContext) commit(listOf(AutoUserContextInherited(users)), Durability.Sync)
 }

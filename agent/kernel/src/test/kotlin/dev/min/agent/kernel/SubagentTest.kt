@@ -12,6 +12,7 @@ import dev.min.agent.protocol.StopReason
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.ToolResultPart
+import dev.min.agent.protocol.TurnId
 import dev.min.agent.spi.AgentInputKind
 import dev.min.agent.spi.Clock
 import dev.min.agent.spi.DelegateRequest
@@ -56,6 +57,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
@@ -624,6 +626,54 @@ class SubagentTest {
         parent.state.first { it.turn == null && it.lastTurn != null }
         assertTrue(h.shutdown(parent.sessionId))
         assertEquals(0, h.quietReportCount())
+    }
+
+    /** 前台结果交出的记录只管本进程内的空档；会话卸下后没人再读它，留着就是随运行时间只增不减 */
+    @Test
+    fun `unloading a session clears its foreground-consumed entries`() = run {
+        val model = RoutingModel { req ->
+            when {
+                req.last() == "查" -> reply(TextPart("查完了"))
+                req.messages.size == 1 -> reply(
+                    agentCall("c1", "subagent_type" to "Explore", "prompt" to "查", "run_in_background" to false),
+                    stop = StopReason.ToolUse,
+                )
+                else -> reply(TextPart("好"))
+            }
+        }
+        val h = hub(model, listOf(agentTool))
+        val parent = parentOf(h)
+        parent.send(msg(), text("开始"))
+        parent.state.first { it.turn == null && it.lastTurn != null }
+        assertEquals("前台子回合交出去之后登记了一条", 1, h.consumedInForegroundCount())
+        assertTrue(h.shutdown(parent.sessionId))
+        assertEquals(0, h.consumedInForegroundCount())
+    }
+
+    /** forget 是按会话登记的记录唯一的收口：盯结局的协程、已盯标记、静音、前台已交都得清；别的会话的不动 */
+    @Test
+    fun `forget clears every per-session entry and leaves other sessions alone`() = run {
+        val state = ChildReportState()
+        val a = SessionId("a")
+        val b = SessionId("b")
+        val job = newScope().launch { awaitCancellation() }
+        assertTrue(state.claimWatch(a))
+        assertFalse("同一个子会话只盯一次", state.claimWatch(a))
+        state.trackWatch(a, job)
+        state.quiet(a, TurnId("t1")); state.quiet(a, TurnId("t2")); state.quiet(b, TurnId("t1"))
+        state.consume(a, TurnId("t1")); state.consume(b, TurnId("t1"))
+        state.claimWatch(b)
+
+        state.forget(a)
+
+        assertTrue("盯结局的协程被取消", job.isCancelled)
+        assertEquals(1, state.quietCount())
+        assertEquals(1, state.consumedCount())
+        assertEquals(1, state.watchCount())
+        assertEquals(0, state.watchJobCount())
+        assertFalse(state.takeQuiet(a, TurnId("t1")))
+        assertTrue("别的会话的静音记录还在", state.takeQuiet(b, TurnId("t1")))
+        assertTrue("重开后能重新盯", state.claimWatch(a))
     }
 
     @Test

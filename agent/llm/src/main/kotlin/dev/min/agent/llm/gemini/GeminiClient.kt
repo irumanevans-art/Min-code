@@ -18,7 +18,7 @@ class GeminiClient(
     private val transport: HttpTransport,
     private val secrets: Secrets,
 ) : ModelClient {
-    private val overflow = GeminiOverflowMatcher(provider.quirks.overflowPatterns)
+    private val overflow = geminiOverflowMatcher(provider.quirks.overflowPatterns)
 
     override fun stream(request: ModelRequest): Flow<ModelStreamEvent> = flow {
         val body = AgentJson.encodeToString(JsonObject.serializer(), buildGeminiBody(request))

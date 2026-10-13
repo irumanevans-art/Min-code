@@ -21,7 +21,11 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven("https://jitpack.io")
+        // JitPack 只负责这几类坐标（com.github.* 的库、Termux 的 terminal-view）：不加过滤的话，别的坐标也会被它兜底解析，供应链面就大了。
+        // 新增走 JitPack 的依赖时，要把它的 group 加进来，否则解析会失败
+        maven("https://jitpack.io") {
+            content { includeGroupByRegex("com\\.github\\..*|com\\.termux\\..*") }
+        }
         // 不挂 mavenLocal()：~/.m2 里的东西随手一个 `publishToMavenLocal` 就能变，
         // 而且它排在最前面会先于 google()/mavenCentral() 命中 —— 本机能编、别人机器上
         // 编不出来，或者更糟：两边编出来的不是同一个东西。本仓库没有任何依赖来自它

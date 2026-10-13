@@ -7,5 +7,3 @@ internal fun bashPath(path: Path): String {
     val s = path.toAbsolutePath().toString().replace('\\', '/')
     return if (s.length > 2 && s[1] == ':') "/" + s[0].lowercaseChar() + s.substring(2) else s
 }
-
-internal fun posixQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"

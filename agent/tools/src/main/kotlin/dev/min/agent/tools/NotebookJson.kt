@@ -17,8 +17,8 @@ import kotlinx.serialization.json.intOrNull
  * 改动只替换 / 插入 / 删除目标单元那一段，其余字符原样不动。
  */
 
-/** notebook 一次最多处理这么多字节（含内嵌图片的 notebook 常有几 MB；与 Edit 的上限同量级） */
-internal const val MAX_NOTEBOOK_BYTES = 10L * 1024 * 1024
+/** notebook 一次最多处理这么多字节（含内嵌图片的 notebook 常有几 MB；与 Edit 共用一个上限） */
+internal const val MAX_NOTEBOOK_BYTES = MAX_EDITABLE_FILE_BYTES
 
 internal fun GuestPath.isNotebook(): Boolean = value.endsWith(".ipynb", ignoreCase = true)
 

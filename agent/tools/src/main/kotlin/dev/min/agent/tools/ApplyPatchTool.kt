@@ -43,10 +43,9 @@ object ApplyPatchTool : Tool<V4aPatch> {
             if (stat != null && stat.kind != FileKind.File) throw BadArg("$path 不是普通文件。")
             if (op.kind == PatchKind.Add && stat != null) throw BadArg("Add File 的目标已存在：$path")
             if (op.kind != PatchKind.Add && stat == null) throw BadArg("文件不存在：$path")
-            if (stat != null && stat.size > MAX_BYTES) throw BadArg("$path 超过补丁的 10 MiB 文件上限。")
+            if (stat != null && stat.size > MAX_EDITABLE_FILE_BYTES) throw BadArg("$path 超过补丁的 10 MiB 文件上限。")
             if (stat != null) {
-                val seen = ctx.lastSeen(path) ?: throw BadArg("修改 $path 之前先用 Read 读一遍。")
-                if (seen.size != stat.size || seen.modifiedMs != stat.modifiedMs) throw BadArg("$path 在你读过之后被改过，先重新 Read。")
+                staleReadProblem(ctx, path, stat, staleMessage = "$path 在你读过之后被改过，先重新 Read。")?.let { throw BadArg(it) }
             }
             val before = stat?.let { ctx.fs.read(path, 0, it.size.toInt()) }
             if (before != null && before.any { it == 0.toByte() }) throw BadArg("不能对二进制文件应用文本补丁：$path")
@@ -106,6 +105,4 @@ object ApplyPatchTool : Tool<V4aPatch> {
         }
         return okResult("补丁已应用：${edits.joinToString { it.path.value }}", stamps, edits, diagnostics)
     }
-
-    private const val MAX_BYTES = 10L * 1024 * 1024
 }

@@ -18,10 +18,10 @@ object ShellCwdProbe {
      * Windows 的 Git Bash 要 `command pwd -W`，见 `DesktopPaths.guestOfShell`
      */
     fun wrap(script: String, shellFile: String, pwdCommand: String = "command pwd"): String =
-        "eval ${quote(script)}\n" +
+        "eval ${ShellQuote.posix(script)}\n" +
             "__min_rc=\$?\n" +
             // `>|` 不受 noclobber 影响；写失败（目录没了、shell 不认 -W）静默，只是这次没有目录可报
-            "{ $pwdCommand >| ${quote(shellFile)}; } 2>/dev/null\n" +
+            "{ $pwdCommand >| ${ShellQuote.posix(shellFile)}; } 2>/dev/null\n" +
             "exit \$__min_rc\n"
 
     /**
@@ -35,7 +35,6 @@ object ShellCwdProbe {
         return line
     }
 
-    private fun quote(value: String) = "'" + value.replace("'", "'\\''") + "'"
 
     private const val MAX_PATH_CHARS = 4096
     private val DRIVE = Regex("^[A-Za-z]:[/\\\\]")
@@ -51,10 +50,9 @@ object ShellCwdProbe {
 object ShellPreamble {
     /** [files] 是 shell 里看得见的路径，按给定顺序逐个 source；没有文件时返回 null */
     fun forFiles(files: List<String>): String? =
-        files.takeIf { it.isNotEmpty() }?.joinToString("\n") { "if [ -f ${quote(it)} ]; then . ${quote(it)}; fi" }
+        files.takeIf { it.isNotEmpty() }?.joinToString("\n") { "if [ -f ${ShellQuote.posix(it)} ]; then . ${ShellQuote.posix(it)}; fi" }
 
     /** 前导接在脚本前面（没有前导时原样） */
     fun apply(preamble: String?, script: String): String = if (preamble.isNullOrEmpty()) script else preamble + "\n" + script
 
-    private fun quote(value: String) = "'" + value.replace("'", "'\''") + "'"
 }

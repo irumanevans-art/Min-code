@@ -34,7 +34,7 @@ class AnthropicMessagesClient(
     private val secrets: Secrets,
 ) : ModelClient {
     private val quirks = provider.quirks.anthropic
-    private val overflow = OverflowMatcher(provider.quirks.overflowPatterns)
+    private val overflow = anthropicOverflowMatcher(provider.quirks.overflowPatterns)
     private val firstParty = provider.isAnthropicFirstParty()
 
     // `x-client-request-id` 与 `traceparent` 只发给 Anthropic 本家：第三方 /anthropic 兼容中转可能拒绝不认识的头，
@@ -109,10 +109,5 @@ class AnthropicMessagesClient(
         }
         is IOException -> networkFailure("网络中断：${e.message ?: e::class.simpleName}", parser.seen == 0, e)
         else -> e
-    }
-
-    private companion object {
-        /** 流式请求的整体超时：长思考可能几分钟才出第一个 token，取宽松值，真卡死由内核的取消兜底 */
-        const val REQUEST_TIMEOUT_MS = 600_000L
     }
 }

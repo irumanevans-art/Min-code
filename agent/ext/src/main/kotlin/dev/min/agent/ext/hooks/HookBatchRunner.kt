@@ -7,6 +7,7 @@ import dev.min.agent.spi.ExecResult
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.IdGenerator
 import dev.min.agent.spi.ShellCommand
+import dev.min.agent.spi.ShellQuote
 import dev.min.agent.spi.WorkspaceFs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -115,23 +116,23 @@ class HookBatchRunner(
         val script = buildString {
             append("# Min hooks batch\n")
             env.forEach { (name, value) ->
-                if (Regex("[A-Za-z_][A-Za-z0-9_]*").matches(name)) append("export $name=${quote(value)}\n")
+                if (Regex("[A-Za-z_][A-Za-z0-9_]*").matches(name)) append("export $name=${ShellQuote.posix(value)}\n")
                 else notes += "hook 环境变量名不合法，已跳过：$name"
             }
             // timeout 不在 PATH 时仍执行，整批的 Exec 超时兜底；不能把门禁无声地当成通过。
             append("if command -v timeout >/dev/null 2>&1; then min_hook_timeout=1; else min_hook_timeout=0; ")
-            append("printf 'missing' > ${quote(shellPathOf(child(dir, "timeout.missing")))}; fi\n")
+            append("printf 'missing' > ${ShellQuote.posix(shellPathOf(child(dir, "timeout.missing")))}; fi\n")
             handlers.forEachIndexed { i, h ->
                 require(h.executable)
                 val invocation = if (h.args != null) {
                     val argv = if (h.command != null) listOf(h.command) + h.args else h.args
                     require(argv.isNotEmpty())
                     argv.mapIndexed { ai, arg -> if (h.source == dev.min.agent.ext.config.ConfigSource.Plugin)
-                        "\"\${MIN_PLUGIN_${i}_ARG_$ai}\"" else quote(arg) }.joinToString(" ")
-                } else "sh -c ${quote(requireNotNull(h.command))}"
-                val input = quote(shellPathOf(child(dir, "in.json")))
-                val out = quote(shellPathOf(child(dir, "out.$i")))
-                val err = quote(shellPathOf(child(dir, "err.$i")))
+                        "\"\${MIN_PLUGIN_${i}_ARG_$ai}\"" else ShellQuote.posix(arg) }.joinToString(" ")
+                } else "sh -c ${ShellQuote.posix(requireNotNull(h.command))}"
+                val input = ShellQuote.posix(shellPathOf(child(dir, "in.json")))
+                val out = ShellQuote.posix(shellPathOf(child(dir, "out.$i")))
+                val err = ShellQuote.posix(shellPathOf(child(dir, "err.$i")))
                 append("(\n")
                 h.pluginEnv.keys.forEachIndexed { ei, key -> if (Regex("[A-Za-z_][A-Za-z0-9_]*").matches(key)) append("export $key=\"\${MIN_PLUGIN_${i}_ENV_$ei}\"\n") }
                 append("min_hook_start=\$(date +%s%3N 2>/dev/null)\n")
@@ -139,10 +140,10 @@ class HookBatchRunner(
                 append("timeout -k 2 ${timeouts[i]} $invocation < $input > $out 2> $err\n")
                 append("else\n$invocation < $input > $out 2> $err\nfi\n")
                 append("min_hook_code=\$?\n")
-                append("printf '%s\\n' \"\$min_hook_code\" > ${quote(shellPathOf(child(dir, "code.$i")))}\n")
+                append("printf '%s\\n' \"\$min_hook_code\" > ${ShellQuote.posix(shellPathOf(child(dir, "code.$i")))}\n")
                 append("min_hook_end=\$(date +%s%3N 2>/dev/null)\n")
                 append("case \"\$min_hook_start:\$min_hook_end\" in *[!0-9:]*|:*|*:) ;; *) ")
-                append("printf '%s\\n' \"\$((min_hook_end - min_hook_start))\" > ${quote(shellPathOf(child(dir, "duration.$i")))} ;; esac\n")
+                append("printf '%s\\n' \"\$((min_hook_end - min_hook_start))\" > ${ShellQuote.posix(shellPathOf(child(dir, "duration.$i")))} ;; esac\n")
                 append(") &\n")
             }
             append("wait\n")
@@ -159,7 +160,6 @@ class HookBatchRunner(
 }
 
 private fun child(dir: GuestPath, name: String) = GuestPath("${dir.value}/$name")
-private fun quote(text: String): String = "'" + text.replace("'", "'\"'\"'") + "'"
 private fun commandQuote(text: String): String = "'" + text.replace("'", "'\\''") + "'"
 
 /**

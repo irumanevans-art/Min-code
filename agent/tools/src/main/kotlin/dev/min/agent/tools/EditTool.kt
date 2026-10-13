@@ -70,11 +70,8 @@ object EditTool : Tool<EditInput> {
             return write(ctx, path, null, TextFile(bom = false, crlf = false, text = ""), input.newString, 1, null, created = true)
         }
         if (stat.kind == FileKind.Directory) return failResult("$path 是目录，不能编辑。")
-        if (stat.size > MAX_EDIT_BYTES) return failResult("$path 有 ${stat.size} 字节，超过 Edit 能处理的 $MAX_EDIT_BYTES 字节上限。")
-        val seen = ctx.lastSeen(path) ?: return failResult("修改 $path 之前先用 Read 读一遍。")
-        if (seen.size != stat.size || seen.modifiedMs != stat.modifiedMs) {
-            return failResult("$path 在你读过之后被改过，先重新 Read 再改。")
-        }
+        if (stat.size > MAX_EDITABLE_FILE_BYTES) return failResult("$path 有 ${stat.size} 字节，超过 Edit 能处理的 $MAX_EDITABLE_FILE_BYTES 字节上限。")
+        staleReadProblem(ctx, path, stat)?.let { return failResult(it) }
 
         val bytes = ctx.fs.read(path, 0, stat.size.toInt())
         if (bytes.take(BINARY_PROBE_BYTES).any { it == 0.toByte() }) return failResult("$path 是二进制文件，不能按文本编辑。")
@@ -181,7 +178,6 @@ object EditTool : Tool<EditInput> {
     }
 
     private const val BOM = "\uFEFF"
-    private const val MAX_EDIT_BYTES = 10L * 1024 * 1024
     private const val BINARY_PROBE_BYTES = 8 * 1024
     private const val SNIPPET_CONTEXT = 4
     private const val SNIPPET_MAX_LINES = 40

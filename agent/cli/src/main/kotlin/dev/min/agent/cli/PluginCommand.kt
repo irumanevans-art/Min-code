@@ -4,6 +4,7 @@ import dev.min.agent.ext.plugins.*
 import dev.min.agent.host.FilePluginSources
 import dev.min.agent.host.PrivatePluginProcess
 import dev.min.agent.spi.GuestPath
+import dev.min.agent.spi.HostOs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -24,7 +25,7 @@ internal fun desktopMarketplace(cwd: Path, trust: Boolean, userHome: Path = Path
 
 internal fun desktopPluginProcess(paths: DesktopPaths, environment: () -> Map<String, String> = System::getenv) = PrivatePluginProcess(
     launch = { script, cwd, env ->
-        val shell = if (System.getProperty("os.name").startsWith("Windows")) listOf("cmd.exe", "/d", "/s", "/c") else listOf("sh", "-c")
+        val shell = if (HostOs.isWindows) listOf("cmd.exe", "/d", "/s", "/c") else listOf("sh", "-c")
         ProcessBuilder(shell + script).directory(paths.hostOf(cwd).toFile()).apply { this.environment().clear(); this.environment().putAll(env) }.start()
     }, reap = { process -> process.toHandle().descendants().toList().asReversed().forEach { it.destroyForcibly() }; process.destroyForcibly(); Unit }, environment = environment)
 

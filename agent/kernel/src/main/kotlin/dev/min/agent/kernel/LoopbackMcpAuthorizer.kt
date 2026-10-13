@@ -11,7 +11,13 @@ import java.net.URI
 import java.net.URLDecoder
 import java.security.MessageDigest
 
-/** 两个宿主共享回调收取；浏览器和终端输入仍由各自宿主提供。 */
+/**
+ * 两个宿主共享回调收取；浏览器和终端输入仍由各自宿主提供。
+ *
+ * 这是内核里仅存的真实 socket（docs/agent/07 第 2 条本应只放宿主）。没搬去 `:agent:host`：它要抛 `McpOAuthException`
+ * （`:agent:mcp`），而 host 的依赖表只有 protocol / spi。要搬就得先把这个异常（或一个窄的登录失败端口）放进 spi，
+ * 并改 02 §2 与 `AgentModuleRules` 之外的两处装配（cli 的 `DesktopMcpAuthorizer`、app 的 `AndroidMcpOAuth`）。
+ */
 class LoopbackMcpAuthorizer(
     private val openPage: suspend (String) -> Boolean,
     private val manualUrl: (String) -> Unit = {},

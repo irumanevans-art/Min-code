@@ -5,6 +5,7 @@ import dev.min.agent.spi.ExecHandle
 import dev.min.agent.spi.ExecOptions
 import dev.min.agent.spi.ExecResult
 import dev.min.agent.spi.GuestPath
+import dev.min.agent.spi.HostOs
 import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.ShellCwdProbe
 import dev.min.agent.spi.ShellPreamble
@@ -43,7 +44,7 @@ class LocalExec(
     private val guestOfShell: (String) -> GuestPath? = { if (it.startsWith("/")) GuestPath(it) else null },
 ) : Exec {
 
-    private val windows = System.getProperty("os.name").orEmpty().startsWith("Windows")
+    private val windows = HostOs.isWindows
 
     /** 还在跑的进程；进程结束（无论前台后台）由等待线程摘除 */
     private val running = ConcurrentHashMap<String, Pair<Process, LocalExecLaunch>>()

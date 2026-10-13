@@ -1,9 +1,12 @@
 package dev.min.agent.llm.openai
 
 import dev.min.agent.llm.ModelException
+import dev.min.agent.llm.OverflowMatcher
 import dev.min.agent.llm.ModelProfile
 import dev.min.agent.llm.ModelStreamEvent
+import dev.min.agent.llm.INVALID_JSON_KEY
 import dev.min.agent.llm.OpenAiChatQuirks
+import dev.min.agent.llm.bodyPreview
 import dev.min.agent.protocol.AgentJson
 import dev.min.agent.protocol.CallId
 import dev.min.agent.protocol.OpaquePart
@@ -171,7 +174,7 @@ private fun parseObject(raw: String): JsonObject? = try {
 
 private fun parseArguments(raw: String): JsonObject {
     if (raw.isEmpty()) return JsonObject(emptyMap())
-    return parseObject(raw) ?: JsonObject(mapOf("__invalid_json" to JsonPrimitive(raw)))
+    return parseObject(raw) ?: JsonObject(mapOf(INVALID_JSON_KEY to JsonPrimitive(raw)))
 }
 
 private fun mapStop(raw: String?): StopReason = when (raw) {

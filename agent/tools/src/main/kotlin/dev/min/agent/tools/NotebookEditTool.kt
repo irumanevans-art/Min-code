@@ -106,10 +106,7 @@ object NotebookEditTool : Tool<NotebookEditInput> {
             ?: return failResult("$path 不存在。NotebookEdit 只能改已有的 notebook；新建请用 Write 写入一个 notebook 的 JSON。", ENOENT)
         if (stat.kind == FileKind.Directory) return failResult("$path 是目录，不能编辑。")
         if (stat.size > MAX_NOTEBOOK_BYTES) return failResult("$path 有 ${stat.size} 字节，超过 NotebookEdit 能处理的 $MAX_NOTEBOOK_BYTES 字节上限。")
-        val seen = ctx.lastSeen(path) ?: return failResult("修改 $path 之前先用 Read 读一遍。")
-        if (seen.size != stat.size || seen.modifiedMs != stat.modifiedMs) {
-            return failResult("$path 在你读过之后被改过，先重新 Read 再改。")
-        }
+        staleReadProblem(ctx, path, stat)?.let { return failResult(it) }
 
         val originalBytes = ctx.fs.read(path, 0, stat.size.toInt())
         val raw = originalBytes.decodeToString()

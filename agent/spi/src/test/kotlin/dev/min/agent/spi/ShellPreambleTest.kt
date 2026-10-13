@@ -21,7 +21,8 @@ class ShellPreambleTest {
 
     @Test fun `a path with quotes and spaces stays one word`() {
         val p = ShellPreamble.forFiles(listOf("/a b/it's.sh"))!!
-        assertTrue(p, p.contains("'/a b/it'\''s.sh'"))
+        // 期望是 shell 的 '\'' 四个字符；Kotlin 字面量里反斜杠要写两个，写成 '\'' 会得到三个连续单引号（坏的 shell）
+        assertTrue(p, p.contains("'/a b/it'\\''s.sh'"))
         assertTrue("不留下没转义的单引号把 shell 拆开：$p", !p.contains("it's.sh'"))
     }
 }

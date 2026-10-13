@@ -220,7 +220,7 @@ private suspend fun evalInput(runtime: SessionRuntime, prompt: String): InputAct
 }
 
 private fun copyEvalManagedPolicy(root: Path) {
-    if (System.getProperty("os.name").startsWith("Windows")) return
+    if (HostOs.isWindows) return
     val directory = Path.of("/etc/claude-code")
     if (!Files.isDirectory(directory)) return
     val paths = mutableListOf(directory.resolve("managed-settings.json"))

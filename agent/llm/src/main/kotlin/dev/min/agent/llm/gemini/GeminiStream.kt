@@ -8,7 +8,7 @@ import kotlinx.serialization.json.*
 /** 原生流没有内容块下标或 DONE；parts 是顺序片段，functionCall 则是完整对象。 */
 internal class GeminiStreamParser(
     private val profile: ModelProfile,
-    private val overflow: GeminiOverflowMatcher,
+    private val overflow: OverflowMatcher,
     private val requestFingerprint: String,
 ) {
     var seen = 0
@@ -82,7 +82,7 @@ internal class GeminiStreamParser(
                 val input = when (args) {
                     null -> JsonObject(emptyMap())
                     is JsonObject -> args
-                    else -> JsonObject(mapOf("__invalid_json" to JsonPrimitive(args.toString())))
+                    else -> JsonObject(mapOf(INVALID_JSON_KEY to JsonPrimitive(args.toString())))
                 }
                 parts += ToolCallPart(CallId(id), name, input)
                 out += ModelStreamEvent.ToolCallStarted(ordinal, id, name)

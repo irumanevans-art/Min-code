@@ -64,11 +64,11 @@ object WriteTool : Tool<WriteInput> {
         val existing = ctx.fs.stat(path)
         if (existing?.kind == FileKind.Directory) return failResult("$path 是目录，不能当文件写。")
         if (existing != null) {
-            val seen = ctx.lastSeen(path)
-                ?: return failResult("$path 已存在，修改已有文件前先用 Read 读一遍。")
-            if (seen.size != existing.size || seen.modifiedMs != existing.modifiedMs) {
-                return failResult("$path 在你读过之后被改过，先重新 Read。")
-            }
+            staleReadProblem(
+                ctx, path, existing,
+                unreadMessage = "$path 已存在，修改已有文件前先用 Read 读一遍。",
+                staleMessage = "$path 在你读过之后被改过，先重新 Read。",
+            )?.let { return failResult(it) }
         }
         // 覆盖之前的原文：存编辑记录（检查点能撤回）与算 diff 用。新建文件的原文就是空串（diff 全是 + 行）；
         // 读失败（或文件太大）就不存、不给 diff，不影响写入本身

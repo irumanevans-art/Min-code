@@ -1,11 +1,7 @@
 plugins { id("min.android.library") }
 
 afterEvaluate { AgentModuleRules.verify(this) }
-val agentSourceCheck by tasks.registering(AgentSourceCheck::class) {
-    sources.from(fileTree("src/main/kotlin") { include("**/*.kt") })
-    report.set(layout.buildDirectory.file("agentSourceCheck/ok.txt"))
-}
-tasks.named("check") { dependsOn(agentSourceCheck) }
+registerAgentSourceCheck()
 
 android {
     namespace = "dev.min.agent.workflow"

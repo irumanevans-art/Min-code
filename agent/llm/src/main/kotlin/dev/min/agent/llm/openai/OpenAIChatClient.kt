@@ -30,7 +30,7 @@ class OpenAIChatClient(
     private val secrets: Secrets,
 ) : ModelClient {
     private val quirks = provider.quirks.openAiChat
-    private val overflow = OverflowMatcher(provider.quirks.overflowPatterns)
+    private val overflow = openAiOverflowMatcher(provider.quirks.overflowPatterns)
 
     override fun stream(request: ModelRequest): Flow<ModelStreamEvent> = flow {
         // 模型数据错误应先暴露，不能被缺凭证的错误盖住。
@@ -80,10 +80,5 @@ class OpenAIChatClient(
         provider.extraHeaders.forEach { (name, value) -> put(name, value) }
         put("user-agent", "min-agent")
         return headers.values.toList()
-    }
-
-    private companion object {
-        // 与 Anthropic 编解码器一致；细粒度超时没有请求接口，由内核取消兜底。
-        const val REQUEST_TIMEOUT_MS = 600_000L
     }
 }

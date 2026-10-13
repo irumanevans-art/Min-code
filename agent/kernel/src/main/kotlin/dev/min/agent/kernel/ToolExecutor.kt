@@ -45,7 +45,6 @@ import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.PermissionAsk
 import dev.min.agent.spi.QuestionOutcome
 import dev.min.agent.spi.ResumePolicy
-import dev.min.agent.spi.RuleEntry
 import dev.min.agent.spi.Search
 import dev.min.agent.spi.SessionEffect
 import dev.min.agent.spi.SessionEvent
@@ -80,6 +79,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     private val taskHooks = TaskHooks(hooks)
 
     private val deps = rt.deps
+    private val policyFactory = PolicyContextFactory(rt)
     /** 现在能用的工具。MCP 快照会在回合开头变（[SessionRuntime.applyStagedMcp]），所以每批调用前重算一次 */
     @Volatile
     private var registry: Map<String, Tool<*>> = currentTools()
@@ -150,7 +150,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     }
 
     /**
-     * PostToolBatch（hooks.md :2142）：一批调用全部有了结果、下一次模型请求之前，整批只跑一次——放在 [attachMemory] 之后，
+     * PostToolBatch：一批调用全部有了结果、下一次模型请求之前，整批只跑一次——放在 [attachMemory] 之后，
      * 即使 hook 叫停，这一批该落的记忆也已经落了。additionalContext 挂在发起这批调用的助手消息的工具结果后面（与 PostToolUse
      * 同一个挂靠点）；`decision: block` / exit 2 / `continue: false` 都是「下一次请求前停下 agentic loop」，
      * 拦截理由留在对话里（原文：「it stays in the conversation, so Claude sees it when the conversation continues」）
@@ -236,7 +236,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             val durability = if (found.files.isNotEmpty()) Durability.Sync else Durability.Batched
             rt.commit(listOf(MemoryAttached(anchor, found.files, found.notes, found.covered)), durability)
         }
-        // InstructionsLoaded 的懒加载面（hooks.md :1284）：真的注入了文件才算载入，说明与 covered 不发
+        // InstructionsLoaded 的懒加载面：真的注入了文件才算载入，说明与 covered 不发
         if (found.files.isNotEmpty()) rt.fireInstructionsLoaded(found.files, ::lazyLoadReason)
     }
 
@@ -259,9 +259,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             if (hooks.has(HookEvent.PreToolUse, p.call.name)) break
             if (rt.state.value.settings.mode == PermissionMode.Auto && rt.state.value.autoReviewSettings.unavailable) break
             // 自然语言 hard_deny 需要分类器匹配，不能从只读并行快路绕过去。
-            if (rt.state.value.settings.mode == PermissionMode.Auto && rt.state.value.autoReviewSettings.config.hardDeny.any {
-                PermissionRule.parse(dev.min.agent.policy.RuleKind.Deny, it, "autoMode.hard_deny") == null
-            }) break
+            if (rt.state.value.settings.mode == PermissionMode.Auto && hasProseHardDeny()) break
             if (verdictFor(p) !is Verdict.Allow) break
             batch += p
         }
@@ -289,54 +287,9 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     }
 
     private val networkApprovedCalls = mutableSetOf<CallId>()
-    private var parsedFromRules: List<RuleEntry>? = null
-    private var parsedFromSession: List<RuleEntry>? = null
-    private var parsedRules: List<PermissionRule> = emptyList()
 
-    /**
-     * 判定用的上下文：日志里的规则快照 + 本会话「总是允许」的规则、当前模式与 cwd、宿主按**解析后**路径给的分级。
-     * 规则列表只在快照或会话规则变了时重新解析：折叠只在变化时换掉这两个列表，所以比引用就够；解析不了的规则跳过（读取时已记过说明）。
-     */
-    internal fun policyContext(): PolicyContext {
-        val s = rt.state.value
-        if (s.rules !== parsedFromRules || s.sessionRules !== parsedFromSession) {
-            parsedRules = (s.rules + s.sessionRules).mapNotNull(PermissionRule::from)
-            parsedFromRules = s.rules
-            parsedFromSession = s.sessionRules
-        }
-        return PolicyContext(
-            mode = s.settings.mode,
-            classifyAllShell = s.autoReviewSettings.config.classifyAllShell,
-            // 本轮 skill 的 allowed-tools 放行（照文档：到用户下一条消息为止）；拒绝与询问规则仍在它之上（PolicyEngine 先看拒绝、再看询问）
-            rules = parsedRules + s.skillGrants.mapNotNull { PermissionRule.parse(dev.min.agent.policy.RuleKind.Allow, it, "skill") },
-            cwd = s.settings.cwd,
-            // 命令里的相对路径按 shell 当前目录解析（规则与工作区范围仍按 cwd）
-            shellCwd = s.shellCwd,
-            home = deps.memoryHome ?: DEFAULT_HOME,
-            scopeOf = { path ->
-                val actual = deps.canonicalPath(path)
-                val hostScope = deps.host.fs.scopeOf(actual)
-                when {
-                    hostScope == dev.min.agent.spi.PathScope.Device -> hostScope
-                    Worktrees.under(actual, deps.canonicalPath(s.settings.cwd)) -> dev.min.agent.spi.PathScope.Workspace
-                    hostScope == dev.min.agent.spi.PathScope.Workspace -> dev.min.agent.spi.PathScope.Rootfs
-                    else -> hostScope
-                }
-            },
-            // 自动记忆目录：acceptEdits 下对它的写入与工作区同等放行（设计 §2.4）
-            autoMemoryDir = s.autoMemory?.directory,
-            additionalDirectories = s.additionalDirectories,
-            credentialPaths = deps.credentialPaths,
-            canonicalPath = deps.canonicalPath,
-            worktreeRoot = s.worktree?.path,
-            autoHardDeny = s.autoReviewSettings.config.hardDeny,
-            // --restricted（CC :123）：内置文件工具限制在工作目录内（PolicyEngine 里排在允许规则之前）
-            confineToWorkingDirectories = deps.settingsInputs.restricted,
-            guestIsolation = deps.host.exec.guestIsolation,
-            // 会话的 CLAUDE_ENV_FILE 目录：里面的脚本会在后续每条 Bash 命令前执行，模型不能自己写它（安全底线，见 SessionEnvFile.kt）
-            shellEnvDir = rt.envFiles.dir(),
-        )
-    }
+    /** 判定用的上下文（见 [PolicyContextFactory]）；规则解析结果缓存在本执行器持有的工厂里 */
+    internal fun policyContext(): PolicyContext = policyFactory.context()
 
     private suspend fun runOne(turnId: TurnId, p: Prepared) {
         if (p.call.name == "Bash") rt.refreshNetworkSettings()
@@ -351,30 +304,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
             is PreToolUse.Proceed -> pre.ready to pre.decision
         }
         val ask = askFor(ready)
-        val policy = verdictFor(ready, ask)
-        val initial = merge(ready, ask, hook)
-        val hardDenied = policy is Verdict.Deny && (policy.by as? DecidedBy.Rule)?.source == "autoMode.hard_deny"
-        val proseHardDeny = rt.state.value.autoReviewSettings.config.hardDeny.any {
-            PermissionRule.parse(dev.min.agent.policy.RuleKind.Deny, it, "autoMode.hard_deny") == null
-        }
-        val verdict = if (rt.state.value.settings.mode == PermissionMode.Auto && rt.state.value.autoReviewSettings.unavailable && policy !is Verdict.Deny) Verdict.Ask
-        else if (PolicyEngine.askRuleHit(ask, policyContext()) != null && policy !is Verdict.Deny) Verdict.Ask
-        else if (ready.tool is SubagentHandbackTool && policy !is Verdict.Deny) initial
-        else if (ready.tool is WorkflowTool && hook == HookOutcome.Decision.Allow && !hardDenied && !proseHardDeny && policy !is Verdict.Deny) initial
-        else if ((policy == Verdict.Ask || hardDenied || policy is Verdict.Allow && proseHardDeny) && rt.state.value.settings.mode == PermissionMode.Auto) {
-            val reviewed = AutoReviewer(rt).review(turnId, ready.call.copy(input = ready.raw), ask, policyContext(), ready.tool.traits.alwaysAsk)
-            // PreToolUse 的明确询问仍是一道人类门禁；它的 allow 也不能跳过本应发生的审查。
-            if (rt.state.value.settings.mode != PermissionMode.Auto) {
-                val context = policyContext()
-                val currentAsk = askFor(ready)
-                // 切到 Plan 是停止执行的明确意图，恢复的宽 allow 不能替刚返回的分类器放行写操作。
-                val planVerdict = PolicyEngine.evaluate(currentAsk, ready.tool.traits.readOnly,
-                    context.copy(rules = context.rules.filter { it.kind != dev.min.agent.policy.RuleKind.Allow }))
-                if (context.mode == PermissionMode.Plan && planVerdict !is Verdict.Allow) Verdict.Ask
-                else merge(ready, currentAsk, hook)
-            }
-            else if (reviewed is Verdict.Allow && hook == HookOutcome.Decision.Ask) Verdict.Ask else reviewed
-        } else initial
+        val verdict = decideVerdict(turnId, ready, ask, verdictFor(ready, ask), hook)
         if (verdict == Verdict.Ask) rt.headlessClassifierError(ready.call.callId)?.let { throw TurnAbort(it) }
         when (verdict) {
             is Verdict.Deny -> {
@@ -416,6 +346,55 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
                 PermissionAnswer.None -> requestApproval(turnId, ready)
             }
         }
+    }
+
+    /** autoMode.hard_deny 里有自然语言写的条目（解析不成规则的）：只有分类器能判，不能被放行结论或只读并行快路绕过去 */
+    private fun hasProseHardDeny(): Boolean = rt.state.value.autoReviewSettings.config.hardDeny.any {
+        PermissionRule.parse(dev.min.agent.policy.RuleKind.Deny, it, "autoMode.hard_deny") == null
+    }
+
+    /**
+     * 一次调用的最终判定：权限引擎的结论 [policy]、PreToolUse hook 的结论 [hook]、Auto 档的分类器审查合在一起（hooks设计 §7 合流图）。
+     * 下面各条**按顺序**判，前面的先中（顺序就是优先级）：
+     * 1. Auto 档的审查器不可用 → 问人（已被拒绝的除外）
+     * 2. 命中 ask 规则 → 问人（已被拒绝的除外）
+     * 3. 子 agent 交还（[SubagentHandbackTool]）→ 照 [merge] 的结论
+     * 4. 工作流（[WorkflowTool]）、hook 明确允许、没碰 hard_deny → 照 [merge] 的结论
+     * 5. Auto 档下本该问人 / 撞了 hard_deny / 放行但有自然语言的 hard_deny → 交分类器审查（[reviewInAuto]）
+     * 6. 其余照 [merge] 的结论
+     * 「已被拒绝」= [policy] 是 Deny：权限引擎的拒绝任何一条都推翻不了
+     */
+    private suspend fun decideVerdict(turnId: TurnId, ready: Prepared.Ready, ask: PermissionAsk, policy: Verdict, hook: HookOutcome.Decision): Verdict {
+        val initial = merge(ready, ask, hook)
+        val denied = policy is Verdict.Deny
+        val hardDenied = policy is Verdict.Deny && (policy.by as? DecidedBy.Rule)?.source == "autoMode.hard_deny"
+        val proseHardDeny = hasProseHardDeny()
+        // 每次现读：审查期间用户可能切了模式
+        fun inAutoMode() = rt.state.value.settings.mode == PermissionMode.Auto
+        return when {
+            inAutoMode() && rt.state.value.autoReviewSettings.unavailable && !denied -> Verdict.Ask
+            PolicyEngine.askRuleHit(ask, policyContext()) != null && !denied -> Verdict.Ask
+            ready.tool is SubagentHandbackTool && !denied -> initial
+            ready.tool is WorkflowTool && hook == HookOutcome.Decision.Allow && !hardDenied && !proseHardDeny && !denied -> initial
+            (policy == Verdict.Ask || hardDenied || policy is Verdict.Allow && proseHardDeny) && inAutoMode() -> reviewInAuto(turnId, ready, ask, hook)
+            else -> initial
+        }
+    }
+
+    /** Auto 档的分类器审查，以及审查期间模式变了的处理（见各分支的说明） */
+    private suspend fun reviewInAuto(turnId: TurnId, ready: Prepared.Ready, ask: PermissionAsk, hook: HookOutcome.Decision): Verdict {
+        val reviewed = AutoReviewer(rt).review(turnId, ready.call.copy(input = ready.raw), ask, policyContext(), ready.tool.traits.alwaysAsk)
+        if (rt.state.value.settings.mode != PermissionMode.Auto) {
+            val context = policyContext()
+            val currentAsk = askFor(ready)
+            // 切到 Plan 是停止执行的明确意图，恢复的宽 allow 不能替刚返回的分类器放行写操作。
+            val planVerdict = PolicyEngine.evaluate(currentAsk, ready.tool.traits.readOnly,
+                context.copy(rules = context.rules.filter { it.kind != dev.min.agent.policy.RuleKind.Allow }))
+            return if (context.mode == PermissionMode.Plan && planVerdict !is Verdict.Allow) Verdict.Ask
+            else merge(ready, currentAsk, hook)
+        }
+        // PreToolUse 的明确询问仍是一道人类门禁；它的 allow 也不能跳过本应发生的审查。
+        return if (reviewed is Verdict.Allow && hook == HookOutcome.Decision.Ask) Verdict.Ask else reviewed
     }
 
     /** hook 替人答复 PermissionRequest 的结果 */
@@ -647,7 +626,7 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     }
 
     /**
-     * TaskCreated / TaskCompleted（hooks.md :2445–2468）：任务清单的状态变化是工具**声明**的副作用（[SessionEffect]），与结果同一次提交，
+     * TaskCreated / TaskCompleted：任务清单的状态变化是工具**声明**的副作用（[SessionEffect]），与结果同一次提交，
      * 所以拦截只能在提交之前做：把被拒的那条从声明里拿掉，结果换成给模型的错误反馈（原文：exit 2「the task is not marked as
      * completed and the stderr message is fed back to the model」）。`continue: false` 被忽略（原文），因此只认 Block，不认 Stop。
      * 已经是完成状态的任务再标一次不算「正在完成」，不跑 hook。团队清单不走这里（它不是副作用），见 [TeamCoordinator]。
@@ -699,6 +678,10 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         rt.commit(listOf(ToolOutcome(turnId, callId, result)) + result.effectEvents(rt.state.value, rt.deps.clock.nowMs()) + extra, Durability.Sync)
     }
 
+    /** 只有回合里才有意义的端口：[turnId] 为 null（只在算权限声明时）给 [unavailable]，否则按回合号现建 */
+    private inline fun <T> inTurn(turnId: TurnId?, unavailable: T, available: (TurnId) -> T): T =
+        if (turnId == null) unavailable else available(turnId)
+
     /** [turnId] 为 null 只在算权限声明时：那时不该委派任何东西，端口给不可用的 */
     private fun context(turnId: TurnId?, callId: CallId): ToolContext = object : ToolContext {
         override val sessionId = rt.sessionId
@@ -722,23 +705,24 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
         override fun lastSeen(path: GuestPath): FileStamp? = rt.state.value.lastSeen(path)
         override fun canonicalPath(path: GuestPath): GuestPath = deps.canonicalPath(path)
         override val agents: AgentPort = turnId?.let { rt.hub?.portFor(rt, it, callId) } ?: AgentPort.Unavailable
-        override val worktrees: dev.min.agent.spi.WorktreePort = if (turnId == null) dev.min.agent.spi.WorktreePort.Unavailable else rt.worktrees
-        override val background: dev.min.agent.spi.BackgroundPort = if (turnId == null) dev.min.agent.spi.BackgroundPort.Unavailable else rt.background.portFor(callId)
-        override val skills: SkillPort = turnId?.let { KernelSkillPort(rt, deps.host.fs, it, callId) } ?: SkillPort.Unavailable
+        override val worktrees: dev.min.agent.spi.WorktreePort = inTurn(turnId, dev.min.agent.spi.WorktreePort.Unavailable) { rt.worktrees }
+        override val background: dev.min.agent.spi.BackgroundPort = inTurn(turnId, dev.min.agent.spi.BackgroundPort.Unavailable) { rt.background.portFor(callId) }
+        override val skills: SkillPort = inTurn(turnId, SkillPort.Unavailable) { KernelSkillPort(rt, deps.host.fs, it, callId) }
         override val lsp: dev.min.agent.spi.LspPort get() = rt.lsp
-        override val web = if (turnId == null) dev.min.agent.spi.WebPort.Unavailable else deps.host.web
-        override val webSearch = if (turnId == null) dev.min.agent.spi.WebSearchPort.Unavailable else
+        override val web: dev.min.agent.spi.WebPort = inTurn(turnId, dev.min.agent.spi.WebPort.Unavailable) { deps.host.web }
+        override val webSearch: dev.min.agent.spi.WebSearchPort = inTurn(turnId, dev.min.agent.spi.WebSearchPort.Unavailable) {
             dev.min.agent.spi.WebSearchPort { query, allowed, blocked, limit ->
                 searchWeb(rt, callId, query, allowed, blocked, limit)
             }
+        }
         override suspend fun extract(content: String, prompt: String): ToolResult =
-            if (turnId == null) errorResult("提取端口不可用。") else extractWeb(rt, turnId, callId, content, prompt)
-        override val push: dev.min.agent.spi.PushSink = if (turnId == null) dev.min.agent.spi.PushSink.Unavailable else deps.pushSink
-        override val userFiles: dev.min.agent.spi.UserFileSink = if (turnId == null) dev.min.agent.spi.UserFileSink.Unavailable else deps.userFileSink
-        override val artifactView: dev.min.agent.spi.PreviewSink = if (turnId == null) dev.min.agent.spi.PreviewSink.Unavailable else deps.previewSink
-        override val feedback: dev.min.agent.spi.FeedbackSink = if (turnId == null) dev.min.agent.spi.FeedbackSink.Unavailable else SessionLogFeedbackSink(rt, deps.feedbackSink)
-        override val pdfPages: dev.min.agent.spi.PdfPagePort = if (turnId == null) dev.min.agent.spi.PdfPagePort.Unavailable else deps.pdfPages
-        override val mcpWait: dev.min.agent.spi.McpWaitPort = if (turnId == null) dev.min.agent.spi.McpWaitPort.Unavailable else rt.hub?.mcpWaitFor(rt) ?: dev.min.agent.spi.McpWaitPort.Unavailable
+            inTurn(turnId, errorResult("提取端口不可用。")) { extractWeb(rt, it, callId, content, prompt) }
+        override val push: dev.min.agent.spi.PushSink = inTurn(turnId, dev.min.agent.spi.PushSink.Unavailable) { deps.pushSink }
+        override val userFiles: dev.min.agent.spi.UserFileSink = inTurn(turnId, dev.min.agent.spi.UserFileSink.Unavailable) { deps.userFileSink }
+        override val artifactView: dev.min.agent.spi.PreviewSink = inTurn(turnId, dev.min.agent.spi.PreviewSink.Unavailable) { deps.previewSink }
+        override val feedback: dev.min.agent.spi.FeedbackSink = inTurn(turnId, dev.min.agent.spi.FeedbackSink.Unavailable) { SessionLogFeedbackSink(rt, deps.feedbackSink) }
+        override val pdfPages: dev.min.agent.spi.PdfPagePort = inTurn(turnId, dev.min.agent.spi.PdfPagePort.Unavailable) { deps.pdfPages }
+        override val mcpWait: dev.min.agent.spi.McpWaitPort = inTurn(turnId, dev.min.agent.spi.McpWaitPort.Unavailable) { rt.hub?.mcpWaitFor(rt) ?: dev.min.agent.spi.McpWaitPort.Unavailable }
         override val mode: PermissionMode get() = rt.state.value.settings.mode
         override val modeBeforePlan: PermissionMode? get() = rt.state.value.settings.modeBeforePlan
         override val tasks: TaskBoard get() = rt.visibleTaskBoard()
@@ -749,9 +733,6 @@ internal class ToolExecutor(private val rt: SessionRuntime, private val hooks: H
     }
 
     companion object {
-        /** 宿主没给主目录时（内核测试）规则里 `~/` 相对的目录 */
-        private val DEFAULT_HOME = GuestPath("/root")
-
         const val TRUNCATED_MESSAGE =
             "没有执行：你的回复撞上了输出长度上限，这次工具调用的参数可能不完整。请缩小改动范围或分几次调用后重试。"
 
