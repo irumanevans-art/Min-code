@@ -33,4 +33,4 @@ L2 的按值过滤是内核限制；L1 检查路径、/proc 和代理目标仍�
 & C:\AndroidSDK\platform-tools\adb.exe -s emulator-5554 shell 'chmod 755 /data/local/tmp/isolation-filter-test && /data/local/tmp/isolation-filter-test'
 ```
 
-本轮红测、正常编译的变异断言、实际 APK 组合根验收及完整日志见 `research/tasks/CODEX_REPORT_2026-10-11_isolation.md` 和同目录 `isolation-evidence/`。模拟器 lock 位于 `research/tasks/emulator.lock`。
+本轮红测、正常编译的变异断言、实际 APK 组合根验收及完整日志在仓库外保存，未入库。

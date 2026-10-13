@@ -1,6 +1,12 @@
 # CLAUDE.md
 
-Android app（Kotlin + Compose）。包 `dev.min.code`，四个模块：`app`、`workspace`（proot）、`highlight`、`baselineprofile`（启动性能档案采集，见 settings.gradle.kts）。
+Android app（Kotlin + Compose）。包 `dev.min.code`，模块见 `settings.gradle.kts`：
+
+- Android：`app`（UI、会话协议、安装器、设置）、`workspace`（proot）、`highlight`（语法高亮）、`baselineprofile`（启动性能档案采集）
+- `agent/*`：自研 Min Agent 内核，16 个子模块（`protocol` `spi` `mcp` `lsp` `store` `llm` `policy` `context` `tools` `ext` `host` `otel` `kernel` `testkit` `cli` `workflow`）。
+  除 `cli`（桌面宿主）和 `workflow`（Android 上的 QuickJS 适配）外都是纯 Kotlin/JVM，不认识 Android 与 `dev.min.code`。
+  依赖规则见 `docs/agent/02-总体架构.md` §2，由 `build-logic` 的 `AgentModuleRules` 在构建时强制
+- `build-logic/`：Gradle 约定插件（agent 模块的依赖规则与源码检查）；`tools/`：脚本；`docs/agent/`：agent 设计与工程规范
 
 ## 工作方式
 
@@ -24,6 +30,15 @@ Android app（Kotlin + Compose）。包 `dev.min.code`，四个模块：`app`、
 - 供应商配置（token + 地址 + 自定义 env）的**事实来源只有 DataStore**：rootfs 里的 `settings.json` / `config.toml` 是可关掉的
   单向投影，除了显式导入之外从不读回，见 `core/settings/ProviderSync.kt` 的头注释。无头模式下 CLI 不应用 settings.json 的 `env` 块
 - Rootfs 内的路径常量集中在 `ClaudeCodeInstaller` 的 companion；proot 补丁在 `workspace/.../ProotCompat.kt`
+
+## agent 模块
+
+改 `agent/` 下的东西，先读 `docs/agent/07-工程规范.md`（在下面的总原则之上的额外规矩），设计背景在 `docs/agent/` 其他篇。
+
+- 改完先跑 `./gradlew agentSourceCheck`：禁止 `runCatching`（会吞协程取消，改用 `catchingNonCancellation {}`；非挂起且有理由的在行尾写 `// allow-runCatching: 理由`）；
+  文件行数棘轮：新文件不得超过 800 行，已超限的文件登记在 `agent/file-size-baseline.txt`，只许缩小，缩小后必须把基线里的数字调低（拆到 800 以内就删掉那一行）
+- 单模块测试：`./gradlew :agent:<模块>:test`（`kernel` 约 1 分钟，`cli` 约 15 分钟；CI 跑哪些见 `.github/workflows/ci.yml`）
+- 不要给模块加表外的依赖；要改依赖先改 `docs/agent/02-总体架构.md` §2 和 `AgentModuleRules`
 
 ## 可维护性（总原则）
 

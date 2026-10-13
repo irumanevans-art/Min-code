@@ -1,7 +1,7 @@
 # MCP 客户端设计
 
 > 状态：设计，2026-10-04。上位文档：`04-子系统设计.md` §4.7、`05-对标清单.md` 的 MCP 行。
-> 事实依据：`research/inventory/mcp-client.md`（CC 官方文档、MCP 规范 2025-11-25 与 2026-07-28、Codex / Gemini CLI / opencode 源码、Kotlin / Java SDK 的逐项核对）。实现是自己的。
+> 事实依据：mcp-client 事实表（未入库；CC 官方文档、MCP 规范 2025-11-25 与 2026-07-28、Codex / Gemini CLI / opencode 源码、Kotlin / Java SDK 的逐项核对）。实现是自己的。
 
 ## 0. 一页结论
 
@@ -194,7 +194,7 @@ interface LiveProcess {
 | MCP1a | 协议层 `:agent:mcp`：JSON-RPC、2025-11-25 握手（按「代」分开）、stdio / Streamable HTTP / 旧 SSE 三种传输（含会话 id、SSE 续传）、tools/list 分页、tools/call、取消、进度、ping、list_changed；`HttpTransport` 加原样响应的流式接口；官方参考服务器录真帧做回放测试 | GPT（2026-10-05 派出） |
 | MCP1b | 配置读取与信任 / 批准（§3）：`:agent:ext` 的 `McpConfigLoader`，产出带闸门结论的服务器表；批准写回 `settings.local.json`；兼容样本集（格式两单共用） | GLM 5.3 写加载器、Flash 写样本（2026-10-05 派出） |
 | MCP1c | McpManager（§4）、工具适配器、命名、快照与事件、全量模式（§5.1–5.3 全量部分）、权限与结果（§6–7）、内核与两个宿主接线 | O。**底子已合入（2026-10-05）**：`mcp_servers_loaded` / `mcp_tools_snapshot` 事件与折叠、工具表 = 内置 + 快照（MCP 在后）、系统提示的「MCP 服务器说明」段、变化排到回合开头生效、命名（64 字符 + 哈希）与 schema 整形、工具适配器（默认问人、只读提示只管并行、`requiresUserInteraction` 恒问）、整工具 deny 从工具表去掉、子 agent 按定义里的 `mcp__` 写法筛、分身与子 agent 继承快照；调用经内核内部的 `McpCaller`。**McpManager 已合入（2026-10-06）**：连接按（项目、服务器、端点）共享、无人用后留 2 分钟；新会话不等连接，首份快照在第一回合开头写（最多等到接上后 5 秒）；晚到与 list_changed 排到下一回合；stdio 掉线重启一次；**服务器掉线不改工具表**（保留最后一次的工具与说明，调用时说「现在不可用」——比去掉再加回少两次缓存失效）；结果按 §7 转换并包 `<mcp-result>`；两个宿主接了 HTTP。**端到端验收（2026-10-06，桌面 Sonnet）**：桌面 CLI + 官方参考服务器全项通过，复核修了 9 处。随后拍板：首份快照等待交互 5 秒、`-p` 30 秒（`KernelDeps.mcpFirstSnapshotWaitMs`）；连接与单次请求超时桌面 30 秒、Android 120 秒（`mcpConnectTimeoutMs`）；模型不收图片时图片在组请求处集中换成文字（`ImageDegrade`，不在 MCP 结果里各自判断）；进度不落日志；headersHelper 遇 401 重跑放 MCP3；配置读取失败落一条只带异常类名的说明。**剩下**：模拟器验收（模拟器无外网、rootfs 无 node，改用纯 bash 的 stdio 桩服务器，已派桌面 Sonnet）、界面面板（随 B7） |
-| MCP2 | resources / prompts（§8）、按需模式与 ToolSearch（§5.3）、elicitation / roots（§9） | GPT，已实现（2026-10-06，`agent/mcp2`）；验收与变异见 CODEX_REPORT_2026-10-06_mcp2.md |
+| MCP2 | resources / prompts（§8）、按需模式与 ToolSearch（§5.3）、elicitation / roots（§9） | GPT，已实现（2026-10-06，`agent/mcp2`）；验收汇报未入库 |
 | MCP3 | OAuth（§10，已拍板做） | 待定 |
 | MCP4 | 2026-07-28 现代协议（discover、MRTR、`subscriptions/listen`、新的请求头）与两代自动探测 | GPT |
 | — | 界面：服务器面板（状态、工具数、stderr、重连、开关）、批准卡片、elicitation 卡片 | 随 M2-B B7 |

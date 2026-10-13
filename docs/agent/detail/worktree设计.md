@@ -1,6 +1,6 @@
 # M5：git worktree 与会话 cwd
 
-依据：公开 Claude Code worktrees 文档与 research/inventory/raw/mcp 中保存的 tools/hooks/sub-agents/CLI 原文；不读取 CC 私有实现。
+依据：公开 Claude Code worktrees 文档与本机保存（未入库）的 tools/hooks/sub-agents/CLI 原文；不读取 CC 私有实现。
 
 ## 执行与路径
 

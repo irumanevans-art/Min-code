@@ -1,7 +1,7 @@
 # 检查点与 rewind 设计
 
 > 状态：设计，2026-10-05。上位文档：`04-子系统设计.md` §4.9、`05-对标清单.md` 的 checkpoint / rewind 行。
-> 事实依据：`research/inventory/checkpoints.md`（CC 官方文档；Gemini CLI、Codex、opencode、Cline 源码；JGit 在 Android 模拟器上的实测）。实现是自己的。
+> 事实依据：checkpoints 事实表（未入库；CC 官方文档；Gemini CLI、Codex、opencode、Cline 源码；JGit 在 Android 模拟器上的实测）。实现是自己的。
 
 ## 0. 一页结论
 

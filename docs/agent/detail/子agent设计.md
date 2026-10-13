@@ -2,7 +2,7 @@
 
 > 状态：设计，2026-10-01。上位文档：`04-子系统设计.md` §4.8、`02-总体架构.md` §4–§5。
 > 对标：Claude Code 的 Agent 工具（`subagent_type`、fork、后台、通知、SendMessage / TaskStop），语义来自公开文档整理
-> （`research/inventory/claude-code/03-extensions.md` §3、`04-sessions-sdk-automation.md`），实现是自己的。
+> （事实表 03-extensions §3、04-sessions-sdk-automation，未入库），实现是自己的。
 
 ## 0. 目标
 

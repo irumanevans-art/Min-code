@@ -1,7 +1,7 @@
 # OpenAI Chat Completions 编解码器实现笔记
 
 依据：`docs/agent/detail/编解码器规范.md` §1、§2、§4、§5，以及
-`D:\kimi\workspace\research\inventory\providers\` 中的逐家事实表（2026-09-28 / 29 快照）。
+逐家事实表（未入库，2026-09-28 / 29 快照）。
 
 ## 文件职责
 

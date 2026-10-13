@@ -1,7 +1,7 @@
 # Hooks 设计
 
 > 状态：H1、H2 已实现（2026-10-03），H3 起待做。上位文档：`04-子系统设计.md` §4.7。
-> 语义来源：Claude Code 公开文档 `hooks.md`（2026-10-02 取）与 `research/inventory/claude-code/02-hooks-settings-env-cli.md`
+> 语义来源：Claude Code 公开文档 `hooks.md`（2026-10-02 取）与 事实表 02-hooks-settings-env-cli（未入库）
 > §1、§2、R1a；JSON 形状已转录在 `agent/ext/src/main/kotlin/dev/min/agent/ext/hooks/`（hooks-shapes）。
 > 2026-10-01 的 HookRunner（分支 `agent/hook-runner`）作废：它在宿主 JVM 里直接起进程，不走 proot，且建立在不存在的规格上。
 
@@ -163,7 +163,7 @@ Ask 时：PermissionRequest hooks → 能替人答；不答才发审批卡
 
 ## 最后五个事件：DirectoryAdded / FileChanged / Setup / ConfigChange / MessageDisplay（2026-10-12，`agent/hooks-final`）
 
-原文出处：<https://code.claude.com/docs/en/hooks>（各事件小节）、<https://code.claude.com/docs/en/permissions>（Working directories、Additional directories grant file access, not configuration）、<https://code.claude.com/docs/en/commands>（`/add-dir`）、<https://code.claude.com/docs/en/cli-reference>（`--init` / `--init-only` / `--maintenance` / `--add-dir`）、<https://code.claude.com/docs/en/settings>（When edits take effect）。端到端用例与变异见 `docs/agent/` 旁的子任务汇报 `research/tasks/SUB_REPORT_2026-10-12_hooks-final.md`。
+原文出处：<https://code.claude.com/docs/en/hooks>（各事件小节）、<https://code.claude.com/docs/en/permissions>（Working directories、Additional directories grant file access, not configuration）、<https://code.claude.com/docs/en/commands>（`/add-dir`）、<https://code.claude.com/docs/en/cli-reference>（`--init` / `--init-only` / `--maintenance` / `--add-dir`）、<https://code.claude.com/docs/en/settings>（When edits take effect）。端到端用例与变异见当时的子任务汇报（未入库）。
 
 - **DirectoryAdded**（`kernel/AddDirectory.kt`）：只有宿主能调 `SessionRuntime.addDirectory`（CLI 的 `/add-dir`、stream-json 的 `register_repo_root`、App 设置里的「添加文件夹」），模型没有入口。权限口径：与 `--add-dir` 同档（读不再问、写按权限模式，折进 `additionalDirectories`），只授予文件访问、不信任目录里的配置，只在本会话有效、不写 settings，日志里的 `directory_added` 让重开会话恢复；已在工作目录里 / 不存在 / 不是目录 / 网络路径 / 手机文件区的不加。加完之后在后台跑 hook（不拦加目录；`slash_command` 的 `systemMessage` 作为上下文交给模型而不是显示给人，`register_repo_root` 的只进日志）。
 - **FileChanged**（`kernel/FileWatch.kt`）：监视清单 = matcher 点名的工作目录字面文件名（按 `|` 切；`HookSet.fileChangedWatchNames`）+ hooks 返回的 `watchPaths`（SessionStart / CwdChanged / FileChanged 输出，整份替换动态清单，落 `cwd_watch_paths_changed`）。用 `WorkspaceFs.stat` 轮询（桌面与 Android 的 proot 映射走同一份代码）：回合开始前、每批工具之后、回合里每 2 秒、回合结束时各比一次；**空闲时不轮询、不保活**，空闲期间的变化推迟到下一个回合开始前补报（与原文 watcher 常驻的差别）。没人点名文件就不起监视。无决策控制。

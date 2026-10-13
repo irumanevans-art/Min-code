@@ -2,7 +2,7 @@
 
 > 状态：设计，2026-10-02。只写文档，未改代码。
 > 上位文档：`detail/M2-接入设计.md` §4（本文是它的细化）、`02-总体架构.md` §5 / §6 / §7、`detail/子agent设计.md`、
-> 调研 `research\reports\min-internal.md` §1 / §3.11 / §8。
+> 调研报告 min-internal §1 / §3.11 / §8（报告未入库）。
 > 目标：把 Min Agent 接进聊天界面，与 Claude Code、Codex 并列成为第三个引擎。按最终架构设计，不做临时旁路：
 > 界面只认引擎无关的会话层；三个引擎各有一个适配器；Codex 也并进同一套会话页。
 
@@ -625,7 +625,7 @@ ChatItem 的头注释要求：加变体前先问 Codex 填得出来吗。下面�
 | 命令 | 调用 |
 |---|---|
 | Send | `sendTurn`（忙时进 `queued`，回合正常完成后放出）→ `turn/start` |
-| Interrupt | **B8 新接** `turn/interrupt {threadId, turnId}`（上游 v2 协议有此方法，见 `research\inventory\protocols\codex-app-server.md:118`；Min 随包 codex 版本是否支持待探针确认）；接上之前 `interruptTurn = false`，停止键仍是停进程 |
+| Interrupt | **B8 新接** `turn/interrupt {threadId, turnId}`（上游 v2 协议有此方法，见 codex-app-server 事实表第 118 行（未入库）；Min 随包 codex 版本是否支持待探针确认）；接上之前 `interruptTurn = false`，停止键仍是停进程 |
 | Resume | §6.5 |
 | WithdrawQueued | `takeQueued` |
 | Answer | `answerApproval(CodexDecision)` |
@@ -862,7 +862,7 @@ data class ResumeOffer(
 
 - **证据**：官方 CLI 有 `CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1`：「previous session ended mid-turn」时在 resume 后自动续跑，「so the model continues without requiring the SDK to re-send the prompt」。
   它发给模型的续跑消息就是 `CLAUDE_CODE_RESUME_PROMPT`，默认 `Continue from where you left off.`；另有 `CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS`。
-  （出处：`research\inventory\claude-code\02-hooks-settings-env-cli.md:417-419`，来自官方 env-vars 文档。）
+  （出处：官方 env-vars 文档；事实表未入库。）
   也就是说，**CLI 的原生续跑本身就是代发一句用户消息**，Min 发同一句，语义与官方一致。
 - **为什么不直接开这个开关**：开了以后，每次 `--resume` 都会自动续跑，包括用户只是想翻看旧会话的时候。这违背 02 §5「不自动续跑」。所以 Min 不设这个环境变量，而是在用户按 ▶ 时自己发这一句。
 - **三种来源**：
@@ -1155,7 +1155,7 @@ K14 里「`Always(rule)` 写进用户选的那一层 settings 文件」属于宿
 - 内核：`min-code-agent` @ `6b26c65`（`SessionHub.kt`、`Delegation.kt`、`SessionRuntime.kt`、`SessionState.kt`、`Fold.kt`、`Recovery.kt`、`TurnRunner.kt`、`LiveUpdate.kt`、
   `spi/SubagentEvents.kt`、`spi/AgentPort.kt`、`spi/Tool.kt`、`spi/Permission.kt`、`host/SubagentTools.kt`、`ext/config/*`、`llm/Provider.kt`），
   `min-code-interact` @ `edb01fd`（`InteractionEvents.kt`、`SessionRuntime` 的 answerQuestion / declineQuestion、`TurnState.pendingQuestions`、`ExitPlanModeTool`）。
-- CC 续跑开关：`research\inventory\claude-code\02-hooks-settings-env-cli.md:417-419`。Codex v2 方法表：`research\inventory\protocols\codex-app-server.md`（上游 `44fe510`）。
+- CC 续跑开关：官方 env-vars 文档（事实表未入库）。Codex v2 方法表：codex-app-server 事实表（未入库；上游 `44fe510`）。
 - 未读或未验证、已在正文标注「待确认」的：
   - Min 随包 codex 版本对 `turn/interrupt` 的支持；
   - rollout 里回合结束事件的确切名字；

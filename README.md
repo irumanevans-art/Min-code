@@ -46,11 +46,35 @@ No root required. Phones and tablets.
 ## 目录
 
 ```
-app/        dev.min.code —— UI、会话协议、安装器、设置、服务
-workspace/  proot 启动、rootfs 安装、假 /proc 与 /dev/shm、pty
-highlight/  语法高亮
-tools/      build_sea_assets.py、uitap.py（模拟器按文字点按钮）
+app/             dev.min.code —— UI、会话协议、安装器、设置、服务
+workspace/       proot 启动、rootfs 安装、假 /proc 与 /dev/shm、pty
+highlight/       语法高亮
+baselineprofile/ 启动性能档案（Baseline Profile）采集
+build-logic/     Gradle 约定插件：agent 模块的依赖规则（AgentModuleRules）与源码检查（agentSourceCheck）
+agent/           Min Agent 自研内核，每个子目录一个 Gradle 模块（依赖规则见 docs/agent/02-总体架构.md §2）
+  protocol/        UI 与内核之间的线协议类型与版本
+  spi/             内核对外部世界的端口接口与共享值类型
+  mcp/             MCP 客户端协议（JSON-RPC、stdio / HTTP / SSE）
+  lsp/             插件语言服务器（stdio LSP）
+  store/           事件日志、快照、索引、会话目录布局
+  llm/             规范消息模型、多套协议编解码、模型目录、用量花费
+  policy/          权限规则、模式、路径分级、命令分析
+  context/         提示装配、记忆发现、压缩、缓存规划
+  tools/           内置工具实现（只经 spi 端口，不碰真实文件系统）
+  ext/             Claude Code 兼容配置加载、hooks、skills、plugins
+  host/            宿主端口的纯 JVM 实现（rootfs 文件系统、搜索），桌面与 Android 共用
+  otel/            从会话日志派生 OpenTelemetry 遥测
+  kernel/          会话 actor、turn 状态机、工具调度、恢复、子 agent、组合根
+  testkit/         测试替身与夹具
+  cli/             桌面宿主（JVM 应用）
+  workflow/        Android 上的 QuickJS 宿主适配（workflow 脚本）
+docs/            设计文档：docs/agent/（agent 设计、工程规范、进度）、docs/screenshots/
+tools/           开发脚本：图标 / 纹理生成（build_*.py）、模拟器按文字点按钮（uitap.py）、
+                 抓帧与探针、变异验证与发布审计脚本等
 ```
+
+CI 见 `.github/workflows/ci.yml`（`agentSourceCheck`、各 agent 模块单测、app 单测与 `assembleDebug`）。
+agent 模块的测试按模块跑：`./gradlew :agent:kernel:test`、`./gradlew :agent:cli:test` 等；源码检查是 `./gradlew agentSourceCheck`。
 
 ## 许可证
 

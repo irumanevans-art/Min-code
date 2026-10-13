@@ -57,7 +57,7 @@
 
 ## 各家兼容端点的 AnthropicQuirks 建议
 
-出处均为 `D:\kimi\workspace\research\inventory\providers\<家>.md` 第 10 节（及第 12 节国内站补录）。
+出处均为逐家事实表（未入库）第 10 节（及第 12 节国内站补录）。
 
 | 端点 | 建议取值 | 依据 |
 |---|---|---|

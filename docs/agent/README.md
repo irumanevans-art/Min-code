@@ -37,5 +37,5 @@ Min 现在在 proot 里跑官方 Claude Code / Codex CLI，从它们的输出流
 
 ## 相关
 
-- 原始调研报告与逐字段事实表（不入库）：`D:\kimi\workspace\research\`
+- 原始调研报告与逐字段事实表（不入库，仅存于作者本机）
 - 仓库总规矩：`CLAUDE.md`；界面规范：`DESIGN.md`

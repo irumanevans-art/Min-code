@@ -13,7 +13,7 @@
 | 上游默认 instructions | 首个直接探针未发送 instructions，但 response.created 回传非空 instructions，usage.attribution 也给该字段用量。这是观测事实，不能据此认定其具体路由或模型实现；客户端 fingerprint 不覆盖中转服务端注入的字段 |
 | 网络波动 | 高思考循环一次本机录制代理的 urllib URLError 返回 502；内核按 Server 重试后完成。不将本机代理生成的错误页误记为供应商报错 |
 
-证据：外部 `D:\kimi\workspace\research\tasks\g5-evidence\` 的 probe、live、cache-long、interrupt 与评测记录；没有请求头或凭证值。
+证据：仓库外保存的 probe、live、cache-long、interrupt 与评测记录；没有请求头或凭证值。
 生产回放夹具 `src/test/resources/openai-responses/lunora-gpt-5.6-luna-ok.sse` 保留真实增量、output、usage；仅删除 response.instructions 与无关路由 / attribution 元数据。
 
 协议来源：

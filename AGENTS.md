@@ -1,4 +1,23 @@
-# 验证约定
+# AGENTS.md
+
+## 这是什么仓库
+
+Min：在 Android 上用 proot 跑官方 Claude Code CLI 的非官方客户端（Kotlin + Compose，包 `dev.min.code`），同时包含自研的 Min Agent 内核（`agent/` 下 16 个纯 Kotlin/JVM 为主的 Gradle 模块）。文档多为中文。
+
+## 从哪里开始
+
+- 工作方式、可维护性原则、agent 模块的工作规则：`CLAUDE.md`
+- agent 内核的设计：`docs/agent/`（模块与依赖规则见 `02-总体架构.md` §2；工程规范见 `07-工程规范.md`；`08-进度与待办.md` 是历史日记，不是当前规则）
+- 界面与动效规范：`DESIGN.md`
+
+## 构建与测试
+
+- App：`./gradlew :app:testDebugUnitTest`，再 `./gradlew :app:assembleDebug`
+- agent 源码检查（禁 `runCatching`、文件行数棘轮）：`./gradlew agentSourceCheck`
+- agent 单模块测试：`./gradlew :agent:<模块>:test`（`kernel` 约 1 分钟，`cli` 约 15 分钟）
+- CI：`.github/workflows/ci.yml`
+
+## 验证约定（测试与变异验证）
 
 - Android proot 的隔离拒绝须贯穿 syscall 入口、出口与 SIGSYS 模拟：外层 seccomp TRAP 和 fake-id0 扩展都可能改写拒绝。用真实 untrusted_app 身份及人工外层 TRAP 验证，不只测独立 BPF。
 - 原生红测仅修改测试自有 fixture；先核对 proot 的 link2symlink 等扩展副作用，红/绿轮之间重建自有文件。可写策略覆盖 fd 元数据与文件型 AF_UNIX bind，代理限制覆盖 IP bind 的反向连接入口。

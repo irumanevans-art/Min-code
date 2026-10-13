@@ -13,7 +13,7 @@
 
 ## 事实出处
 
-任务提供的 `research/inventory/providers/gemini.md` §1、§3–§7、§9–§11 及 `_matrix.md` 是已读基础事实。
+任务提供的 gemini 事实表（§1、§3–§7、§9–§11）及对照矩阵是已读基础事实（均未入库）。
 本次在线复核只读公开文档，没有供应商请求：
 
 1. [GenerateContent API](https://ai.google.dev/api/generate-content)：原生 REST 的请求/响应、FunctionCall/FunctionResponse、
