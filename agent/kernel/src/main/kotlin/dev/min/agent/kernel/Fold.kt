@@ -352,7 +352,7 @@ private fun SessionState.foldTurn(record: EventRecord, e: SessionEvent): Session
         } else started
     }
     is ModelRequestStarted -> updateTurn(e.turnId) {
-        it.copy(openRequest = OpenRequest(e.requestId, e.attempt, messageId = null, segments = emptyList()))
+        it.copy(openRequest = OpenRequest(e.requestId, e.attempt, messageId = null, segments = emptyList(), model = e.model))
     }
     is AssistantSegment -> updateTurn(e.turnId) { t ->
         val open = checkNotNull(t.openRequest) { "没有进行中的请求却收到了片段" }
@@ -362,7 +362,12 @@ private fun SessionState.foldTurn(record: EventRecord, e: SessionEvent): Session
     is AssistantMessageCompleted -> updateTurn(e.turnId) { t ->
         check(t.openRequest?.requestId == e.requestId) { "完成的是 ${e.requestId}，当前请求是 ${t.openRequest?.requestId}" }
         t.copy(openRequest = null, usage = t.usage + e.usage, modelReplied = true)
-    }.copy(history = history + HistoryEntry.Assistant(e.messageId, e.parts, e.requestId), lastRequestUsage = e.usage)
+    }.copy(
+        history = history + HistoryEntry.Assistant(e.messageId, e.parts, e.requestId),
+        lastRequestUsage = e.usage,
+        // 旧日志的 ModelRequestStarted 一样带 model；万一没有就保留上一个
+        lastReplyModel = turn?.openRequest?.model ?: lastReplyModel,
+    )
     is ModelRequestFailed -> updateTurn(e.turnId) { t ->
         check(t.openRequest?.requestId == e.requestId) { "失败的是 ${e.requestId}，当前请求是 ${t.openRequest?.requestId}" }
         t.copy(openRequest = null)
