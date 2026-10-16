@@ -47,11 +47,11 @@ class RulesTest {
 
     @Test
     fun `mcp rules match a whole server or one tool`() {
-        assertTrue(m.matchesTool(rule("mcp__github"), "mcp__github__get_issue"))
-        assertTrue(m.matchesTool(rule("mcp__github__*"), "mcp__github__get_issue"))
-        assertTrue(m.matchesTool(rule("mcp__github__get_issue"), "mcp__github__get_issue"))
-        assertFalse(m.matchesTool(rule("mcp__github__get_issue"), "mcp__github__create_issue"))
-        assertFalse(m.matchesTool(rule("mcp__git"), "mcp__github__get_issue"))
+        assertTrue(m.matchesTool(rule("mcp__github"), "mcp__github__get_issue", "github"))
+        assertTrue(m.matchesTool(rule("mcp__github__*"), "mcp__github__get_issue", "github"))
+        assertTrue(m.matchesTool(rule("mcp__github__get_issue"), "mcp__github__get_issue", "github"))
+        assertFalse(m.matchesTool(rule("mcp__github__get_issue"), "mcp__github__create_issue", "github"))
+        assertFalse(m.matchesTool(rule("mcp__git"), "mcp__github__get_issue", "github"))
     }
 
     @Test

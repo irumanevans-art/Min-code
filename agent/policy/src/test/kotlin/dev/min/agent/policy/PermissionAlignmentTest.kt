@@ -61,7 +61,7 @@ class PermissionAlignmentTest {
 
     @Test fun `r38 allow MCP globs require a literal server but deny and ask can span servers`() {
         for (pattern in listOf("mcp__*", "mcp__git*__get_*", "mcp__?__*")) assertNull(PermissionRule.parse(RuleKind.Allow, pattern, "p"))
-        val ask = PermissionAsk("mcp__github__get_issue", "mcp")
+        val ask = PermissionAsk("mcp__github__get_issue", "mcp", mcpServer = "github")
         assertTrue(eval(ask, context(kind = RuleKind.Allow, rules = arrayOf("mcp__github__get_*"))) is Verdict.Allow)
         assertTrue(eval(ask, context(rules = arrayOf("mcp__*"))) is Verdict.Deny)
         assertTrue(eval(ask, context(rules = arrayOf("mcp__githu?__get_*"))) is Verdict.Deny)

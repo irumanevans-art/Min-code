@@ -320,7 +320,7 @@ class PolicyEngineTest {
         assertTrue(v(bash("make all"), ctx(PermissionMode.Default, RuleKind.Allow to "Bash")) is Verdict.Allow)
         assertTrue(v(fetch("example.com"), ctx(PermissionMode.Default, RuleKind.Allow to "WebFetch")) is Verdict.Allow)
         assertTrue(v(workspaceWrite, ctx(PermissionMode.Default, RuleKind.Allow to "Edit")) is Verdict.Allow)
-        val mcp = PermissionAsk("mcp__github__create_issue", "建 issue")
+        val mcp = PermissionAsk("mcp__github__create_issue", "建 issue", mcpServer = "github")
         assertTrue(v(mcp, ctx(PermissionMode.Default, RuleKind.Allow to "mcp__github")) is Verdict.Allow)
         assertEquals(Verdict.Ask, v(mcp, ctx(PermissionMode.Default, RuleKind.Allow to "mcp__gitlab")))
     }

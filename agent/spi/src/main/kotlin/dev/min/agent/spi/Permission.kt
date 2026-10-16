@@ -57,6 +57,11 @@ data class PermissionAsk(
      * 只有用名字（而不是路径 / 命令 / 域名）区分调用的工具才填
      */
     val specifiers: List<String> = emptyList(),
+    /**
+     * MCP 工具所属服务器的规范化名（[McpNames.sanitize] 之后），其余工具为 null。规则据此判断 `mcp__服务器` 管不管这个工具：
+     * 全名 `mcp__a__b__c` 自己分不清服务器是 `a` 还是 `a__b`，超长名截断加哈希后更看不出（CC 2.1.299 起 `mcp__a` 不再放行服务器 `a__b`）
+     */
+    val mcpServer: String? = null,
 )
 
 /** 人（或规则、hook……）对一次审批给的答复 */

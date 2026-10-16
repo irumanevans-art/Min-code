@@ -164,6 +164,27 @@ class McpSessionTest {
     }
 
     @Test
+    fun `a server allow rule reaches only its own server, judged by the server the tool belongs to`() = run {
+        // 服务器 github__x 的工具全名也以 mcp__github__ 开头：CC 2.1.299 起 mcp__github 不再放行它
+        val model = ScriptedModel(
+            reply(call("c1", "mcp__github__search"), stop = StopReason.ToolUse),
+            reply(call("c2", "mcp__github__x__search"), stop = StopReason.ToolUse),
+            reply(TextPart("好")),
+        )
+        val rt = session(model, PermissionMode.Default)
+        rt.commit(listOf(PermissionRulesLoaded(listOf(RuleEntry(RuleKindData.Allow, "mcp__github", "user", GuestPath("/root"))))), Durability.Sync)
+        rt.loadMcp(servers, snapshot(entry("github", "search"), entry("github__x", "search")))
+        rt.send(ClientMsgId("u1"), listOf(TextPart("搜")))
+        while (rt.state.value.turn?.calls?.values?.none { it.phase is CallPhase.AwaitingApproval } != false) delay(10)
+        assertEquals("规则放行的已经跑了", listOf("github"), calls.map { it.server })
+        val approval = events().filterIsInstance<ApprovalRequested>().single()
+        assertEquals("github__x", approval.ask.mcpServer)
+        rt.interrupt()
+        rt.awaitIdle()
+        assertLogIsTruth(rt)
+    }
+
+    @Test
     fun `a whole-tool deny rule removes the tool from the table`() = run {
         val model = ScriptedModel(reply(TextPart("好")))
         val rt = session(model)

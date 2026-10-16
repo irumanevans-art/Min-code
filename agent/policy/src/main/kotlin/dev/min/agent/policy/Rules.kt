@@ -68,25 +68,24 @@ private val EDIT_FAMILY = setOf("Edit", "Write", "MultiEdit", "NotebookEdit", "a
  * - Bash：尾部 ` *` 匹配「这个前缀，或前缀加空格再跟任意参数」（`ls *` 匹配 `ls` 与 `ls -la`，不匹配 `lsof`）；`:*` 是旧写法，等价尾部 ` *`；其余 `*` 匹配任意字符。
  * - Read / Edit：gitignore 风格路径。`//` 开头是绝对路径，`~/` 是家目录，`/` 开头相对设置文件目录，其余相对 cwd；不含 `/` 的模式匹配任意深度的文件名。
  * - WebFetch：`domain:example.com`；`domain:*.example.com` 匹配任意深度的子域、不含裸域；`domain:*` 全部。
- * - MCP：`mcp__服务器` 匹配该服务器全部工具，`mcp__服务器__*` 同，`mcp__服务器__工具` 精确。
+ * - MCP：`mcp__服务器` 匹配规范化名整个等于「服务器」的那台的全部工具，`mcp__服务器__*` 同，`mcp__服务器__工具` 精确（见 [McpPatterns]）。
  */
 internal class RuleMatcher(private val cwd: GuestPath, private val home: GuestPath) {
 
-    fun matchesTool(rule: PermissionRule, tool: String): Boolean {
+    /** [mcpServer] 是 MCP 工具所属服务器的规范化名（[dev.min.agent.spi.PermissionAsk.mcpServer]），其余工具为 null */
+    fun matchesTool(rule: PermissionRule, tool: String, mcpServer: String? = null): Boolean {
         if (rule.tool == "Bash" && rule.specifier == "*") return tool == "Bash"
         if (rule.specifier != null) return false
         if (rule.kind == RuleKind.Allow && !PermissionRule.validAllowTool(rule.tool)) return false
+        if (rule.tool.startsWith("mcp__") && tool.startsWith("mcp__")) {
+            return McpPatterns.matches(rule.tool, tool, mcpServer, grant = rule.kind == RuleKind.Allow)
+        }
         if (rule.kind != RuleKind.Allow && ('*' in rule.tool || '?' in rule.tool)) {
             return Regex(globToRegex(rule.tool, anyChars = true, questionWildcard = true)).matches(tool)
         }
         if (rule.tool == tool) return true
         if (rule.tool == "Read" && (tool in READ_FAMILY || rule.kind == RuleKind.Deny && tool in setOf("Edit", "Write", "apply_patch"))) return true
         if (rule.tool == "Edit" && tool in EDIT_FAMILY) return true
-        if (rule.tool.startsWith("mcp__") && tool.startsWith("mcp__")) {
-            if ('*' in rule.tool || '?' in rule.tool) return Regex(globToRegex(rule.tool, anyChars = true, questionWildcard = true)).matches(tool)
-            val prefix = rule.tool.removeSuffix("__*")
-            return tool == prefix || tool.startsWith("${prefix}__")
-        }
         return false
     }
 
@@ -179,26 +178,26 @@ internal class RuleMatcher(private val cwd: GuestPath, private val home: GuestPa
         }
         return (if (raw.startsWith('/')) "/" else "") + parts.joinToString("/")
     }
+}
 
-    /**
-     * glob → 正则。[anyChars] 为真时 `*` 匹配任意字符（命令）；为假时 `*` 不跨 `/`、`**` 跨目录（路径）。
-     */
-    private fun globToRegex(glob: String, anyChars: Boolean, questionWildcard: Boolean = !anyChars): String {
-        val sb = StringBuilder()
-        var i = 0
-        while (i < glob.length) {
-            val c = glob[i]
-            when {
-                !anyChars && glob.startsWith("**/", i) -> { sb.append("(.*/)?"); i += 3; continue }
-                !anyChars && glob.startsWith("**", i) -> { sb.append(".*"); i += 2; continue }
-                c == '*' -> sb.append(if (anyChars) ".*" else "[^/]*")
-                c == '?' && questionWildcard -> sb.append(if (anyChars) "." else "[^/]")
-                else -> sb.append(Regex.escape(c.toString()))
-            }
-            i++
+/**
+ * glob → 正则。[anyChars] 为真时 `*` 匹配任意字符（命令）；为假时 `*` 不跨 `/`、`**` 跨目录（路径）。
+ */
+internal fun globToRegex(glob: String, anyChars: Boolean, questionWildcard: Boolean = !anyChars): String {
+    val sb = StringBuilder()
+    var i = 0
+    while (i < glob.length) {
+        val c = glob[i]
+        when {
+            !anyChars && glob.startsWith("**/", i) -> { sb.append("(.*/)?"); i += 3; continue }
+            !anyChars && glob.startsWith("**", i) -> { sb.append(".*"); i += 2; continue }
+            c == '*' -> sb.append(if (anyChars) ".*" else "[^/]*")
+            c == '?' && questionWildcard -> sb.append(if (anyChars) "." else "[^/]")
+            else -> sb.append(Regex.escape(c.toString()))
         }
-        return sb.toString()
+        i++
     }
+    return sb.toString()
 }
 
 /** 去掉 `.`、`..` 与重复的斜杠（`..` 到根为止）。权限判定与按工作区边界检查路径的工具（[dev.min.agent.policy] 之外）共用这一份 */

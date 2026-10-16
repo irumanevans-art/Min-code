@@ -191,9 +191,9 @@ object PolicyEngine {
      * 没带括号的 deny 规则整个禁掉了 [tool]（`mcp__github`、`mcp__github__*`、`mcp__*`……）：这样的工具不进工具表，
      * 模型根本看不到它（与 CC 一致：「deny 的裸名 / 通配会把工具从模型上下文移除」）。现在只用于 MCP 工具
      */
-    fun deniesWholeTool(tool: String, context: PolicyContext): Boolean {
+    fun deniesWholeTool(tool: String, context: PolicyContext, mcpServer: String? = null): Boolean {
         val matcher = RuleMatcher(context.cwd, context.home)
-        return context.rules.any { it.kind == RuleKind.Deny && it.specifier == null && matcher.matchesTool(it, tool) }
+        return context.rules.any { it.kind == RuleKind.Deny && it.specifier == null && matcher.matchesTool(it, tool, mcpServer) }
     }
 
     /**
@@ -246,7 +246,7 @@ object PolicyEngine {
     private fun firstHit(facts: Facts, rules: List<PermissionRule>, m: RuleMatcher): PermissionRule? =
         rules.firstOrNull { rule ->
             !m.isNegation(rule) && (
-                m.matchesTool(rule, facts.tool) ||
+                m.matchesTool(rule, facts.tool, facts.mcpServer) ||
                     facts.commands.any { m.matchesCommand(rule, it) } ||
                     // 看不透的命令也拿原文对一遍拒绝规则：宁可多拦
                     (rule.tool == "Bash" && facts.untrustedRaw.any { raw -> rawMatches(rule, raw) }) ||
@@ -274,7 +274,7 @@ object PolicyEngine {
      */
     private fun covering(facts: Facts, rules: List<PermissionRule>, m: RuleMatcher): PermissionRule? {
         if (facts.untrusted || facts.unresolvedWrites.isNotEmpty()) return null
-        val whole = rules.firstOrNull { m.matchesTool(it, facts.tool) }
+        val whole = rules.firstOrNull { m.matchesTool(it, facts.tool, facts.mcpServer) }
         if (whole != null && !facts.hasOutsideReadRedirect) return whole
         if (facts.commands.isEmpty() && facts.paths.isEmpty() && facts.domains.isEmpty() && facts.specifiers.isEmpty()) return null
         var decisive: PermissionRule? = whole
@@ -355,6 +355,8 @@ object PolicyEngine {
      */
     private class Facts(
         val tool: String,
+        /** MCP 工具所属服务器的规范化名，见 [PermissionAsk.mcpServer] */
+        val mcpServer: String?,
         val commands: List<SimpleCommand>,
         val rawCommands: List<String>,
         /** 分析器看不透的那几条命令的原文 */
@@ -477,6 +479,7 @@ object PolicyEngine {
                 fun inEnvDir(p: String) = listOfNotNull(envDir, envDirReal).any { p == it || p.startsWith(it.trimEnd('/') + "/") }
                 return Facts(
                     tool = ask.tool,
+                    mcpServer = ask.mcpServer,
                     commands = commands,
                     rawCommands = ask.commands.map { it.raw },
                     untrustedRaw = ask.commands.zip(analyses).filter { it.second is ShellAnalysis.Untrusted }.map { it.first.raw },

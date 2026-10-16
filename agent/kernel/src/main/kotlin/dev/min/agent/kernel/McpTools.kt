@@ -1,5 +1,6 @@
 package dev.min.agent.kernel
 
+import dev.min.agent.policy.McpPatterns
 import dev.min.agent.policy.PermissionRule
 import dev.min.agent.policy.PolicyContext
 import dev.min.agent.policy.PolicyEngine
@@ -92,7 +93,7 @@ internal class McpToolAdapter(private val entry: McpToolEntry, private val calle
     override fun parse(raw: JsonObject): ToolInput<JsonObject> = ToolInput.Valid(raw)
 
     override fun permissionAsk(input: JsonObject, ctx: ToolContext): PermissionAsk =
-        PermissionAsk(name, "调用 MCP 服务器 ${entry.server} 的工具 ${entry.tool}")
+        PermissionAsk(name, "调用 MCP 服务器 ${entry.server} 的工具 ${entry.tool}", mcpServer = McpNames.sanitize(entry.server))
 
     override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = channelFlow {
         val result = caller.call(
@@ -107,8 +108,8 @@ internal typealias McpNames = dev.min.agent.spi.McpNames
 
 /** 快照时对服务器给的工具定义做的整形（设计 §5.2，与 CC 同） */
 internal object McpShaping {
-    /** 工具说明与服务器说明的截断长度（CC 同，`CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` 的默认值） */
-    const val MAX_DESCRIPTION = 2048
+    /** 工具说明与服务器说明的截断长度（CC 同，`CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` 的默认值；CC 2.1.296 起从 2048 提到 4096） */
+    const val MAX_DESCRIPTION = 4096
 
     private val PROPERTY_NAME = Regex("^[A-Za-z0-9_.-]{1,64}$")
 
@@ -169,12 +170,12 @@ internal object McpShaping {
         (o["required"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }.orEmpty()
 }
 
-/** 子 agent 定义里的 MCP 写法对着全名匹配：`mcp__*` 全部，`mcp__服务器` 与 `mcp__服务器__*` 整个服务器，否则精确 */
-internal fun matchesMcpPattern(pattern: String, toolName: String): Boolean {
-    if (pattern == "mcp__*") return toolName.startsWith("mcp__")
-    val prefix = pattern.removeSuffix("__*")
-    return toolName == prefix || toolName.startsWith("${prefix}__")
-}
+/**
+ * 子 agent 定义里的 MCP 写法：`mcp__*` 全部，`mcp__服务器` 与 `mcp__服务器__*` 只管规范化名整个等于它的那台服务器，否则精确
+ * （与权限规则同一套，见 [McpPatterns]）。[server] 是原始服务器名；[grant] 为真是 `tools:`（放行），为假是 `disallowedTools:`
+ */
+internal fun matchesMcpPattern(pattern: String, toolName: String, server: String, grant: Boolean): Boolean =
+    McpPatterns.matches(pattern, toolName, McpNames.sanitize(server), grant)
 
 /**
  * 这个会话的模型看得到的 MCP 工具：最后一份快照里的，去掉子 agent 定义不给的、整工具 deny 规则禁掉的（设计 §6）。
@@ -191,8 +192,9 @@ internal fun SessionState.visibleMcpTools(deps: KernelDeps): List<McpToolEntry> 
         home = deps.memoryHome ?: GuestPath("/root"),
     )
     return all.filter { t ->
-        val byAgent = o == null || (o.mcpDenied.none { matchesMcpPattern(it, t.name) } && (o.mcpTools?.any { matchesMcpPattern(it, t.name) } ?: true))
-        byAgent && !PolicyEngine.deniesWholeTool(t.name, policy)
+        val byAgent = o == null || (o.mcpDenied.none { matchesMcpPattern(it, t.name, t.server, grant = false) } &&
+            (o.mcpTools?.any { matchesMcpPattern(it, t.name, t.server, grant = true) } ?: true))
+        byAgent && !PolicyEngine.deniesWholeTool(t.name, policy, McpNames.sanitize(t.server))
     }
 }
 
@@ -201,7 +203,8 @@ internal fun SessionState.visibleMcpResourceServers(deps: KernelDeps): List<Stri
     return mcpTools?.resourceServers.orEmpty().filter { server ->
         val name = "mcp__${McpNames.sanitize(server)}"
         val agent = origin
-        (agent == null || (agent.mcpDenied.none { matchesMcpPattern(it, name) } && (agent.mcpTools?.any { matchesMcpPattern(it, name) } ?: true))) && !PolicyEngine.deniesWholeTool(name, policy)
+        (agent == null || (agent.mcpDenied.none { matchesMcpPattern(it, name, server, grant = false) } && (agent.mcpTools?.any { matchesMcpPattern(it, name, server, grant = true) } ?: true))) &&
+            !PolicyEngine.deniesWholeTool(name, policy, McpNames.sanitize(server))
     }
 }
 
