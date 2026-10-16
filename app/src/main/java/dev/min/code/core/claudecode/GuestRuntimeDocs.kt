@@ -68,51 +68,9 @@ object GuestRuntimeDocs {
         }.getOrDefault(false)
     }
 
-    fun upsertBlock(existing: String, block: String): String {
-        val start = existing.indexOf(BLOCK_START)
-        val end = existing.indexOf(BLOCK_END)
-        val normalizedBlock = block.trimEnd() + "\n"
-        if (start >= 0 && end > start) {
-            val afterEnd = end + BLOCK_END.length
-            val tailStart = if (existing.getOrNull(afterEnd) == '\n') afterEnd + 1 else afterEnd
-            val head = existing.substring(0, start).trimEnd()
-            val tail = existing.substring(tailStart).trimStart()
-            return buildString {
-                if (head.isNotEmpty()) {
-                    append(head)
-                    append("\n\n")
-                }
-                append(normalizedBlock)
-                if (tail.isNotEmpty()) {
-                    append("\n")
-                    append(tail.trimStart())
-                }
-            }
-        }
-        return if (existing.isBlank()) {
-            normalizedBlock
-        } else {
-            existing.trimEnd() + "\n\n" + normalizedBlock
-        }
-    }
+    fun upsertBlock(existing: String, block: String): String = upsertFence(existing, block, BLOCK_START, BLOCK_END)
 
     /** 去掉旧 fence（v1 等），避免双卡并存。 */
-    internal fun stripFence(existing: String, startMark: String, endMark: String): String {
-        var s = existing
-        while (true) {
-            val a = s.indexOf(startMark)
-            if (a < 0) return s
-            val b = s.indexOf(endMark, a)
-            if (b < 0) return s
-            val after = b + endMark.length
-            val cutEnd = if (s.getOrNull(after) == '\n') after + 1 else after
-            val head = s.substring(0, a).trimEnd()
-            val tail = s.substring(cutEnd).trimStart()
-            s = when {
-                head.isEmpty() -> tail
-                tail.isEmpty() -> head
-                else -> "$head\n\n$tail"
-            }
-        }
-    }
+    internal fun stripFence(existing: String, startMark: String, endMark: String): String =
+        dev.min.code.core.claudecode.stripFence(existing, startMark, endMark)
 }
