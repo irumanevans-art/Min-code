@@ -22,6 +22,8 @@ output styles 的读取（`styles` 包：`OutputStyleFiles`，含三个内置样
   每层保留原始 JSON（`SettingsLayer.raw`、`MergedSettings.raw(key)`），hooks 原样保留。
 - **skills / commands / agents**：`SkillDef` / `CommandDef` / `AgentDef`，字段照 CC 文档；同名覆盖的优先级见各 Loader 的注释
   （skills / commands：managed > user > project，skill 胜过 command；agents：managed > project > user）。
+- **名字过滤**（CC 2.1.299）：`config/OfferableName.kt` 的 `isOfferableName` 是 skills / commands（含插件里的）共用的一个判定——文件 / 文件夹名带隐藏、改变方向、看着像空白的字符或 `<` `>`，
+  这个 skill / command 不提供并在 `notes` 记一条；frontmatter `name:` 不合格则忽略、回落到目录名。字符集照 2.1.301 二进制移植，差别（偏严）见该文件注释。
 - **frontmatter**：`FrontmatterParser`，一个够用的 YAML 子集（没有 YAML 库）；不认识的语法不猜，记 note。
 
 ## 模型看到什么
@@ -29,7 +31,8 @@ output styles 的读取（`styles` 包：`OutputStyleFiles`，含三个内置样
 配置读取本身不进模型上下文（`notes` 只给人看）。Skills 运行时（包 `dev.min.agent.ext.skills`，第一期）让 skills / commands 被用上：
 
 - `SkillArguments`：参数替换。`$ARGUMENTS`、`$ARGUMENTS[N]`、`$N`、`$名字`（frontmatter `arguments`），shell 风格引号；越界下标原样留着；
-  没有占位符收到参数时末尾追加 `ARGUMENTS: 原文`；`\$1` 转义；参数值不递归展开。边角取自 Claude Code 2.1.286 二进制（单趟扫描替代它的哨兵字符，结果一致）。
+  没有占位符收到参数时末尾追加 `ARGUMENTS: 原文`；`\$1` 转义；参数值不递归展开。边角取自 Claude Code 2.1.286 / 2.1.301 二进制（单趟扫描替代它的哨兵字符，结果一致）；
+  具名参数只填前 64 个名字、长度超过 64 字符的名字不参与（占位符原样留着），与 2.1.301 一致。
 - `SkillPrompt.render`：skill 前加 `Base directory for this skill: <目录>`，参数替换之后再代入 `${CLAUDE_SKILL_DIR}`、`${CLAUDE_PROJECT_DIR}`、
   `${CLAUDE_SESSION_ID}`、`${CLAUDE_EFFORT}`；command 没有目录头。模型调 Skill 工具与用户敲 `/名字` 共用它。
 - `SlashCommands.expand`：`/名字 参数` → 要发给模型的内容，或 NotACommand（含 `/etc/hosts` 这类路径）/ Unknown / NotInvocable。

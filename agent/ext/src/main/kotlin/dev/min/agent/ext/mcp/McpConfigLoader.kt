@@ -4,6 +4,7 @@ import dev.min.agent.ext.config.ConfigIo
 import dev.min.agent.ext.config.ConfigSource
 import dev.min.agent.ext.config.GuestPaths
 import dev.min.agent.ext.config.MergedSettings
+import dev.min.agent.ext.config.SettingsLayer
 import dev.min.agent.ext.config.SettingsReader
 import dev.min.agent.spi.FileKind
 import dev.min.agent.spi.GuestPath
@@ -124,8 +125,8 @@ object McpConfigLoader {
         // ---- 管控、批准与停用的判定材料 ----
         val policy = McpPolicy.fromLayers(settings.layers, env, notes)
         val trustedLayers = settings.layers.filter { trustProject || it.source == ConfigSource.User || it.source == ConfigSource.Managed }
-        val disabledMcpjson = settings.layers.flatMap { it.raw.stringArrayOf("disabledMcpjsonServers") }.toSet()
-        val enabledMcpjson = trustedLayers.flatMap { it.raw.stringArrayOf("enabledMcpjsonServers") }.toSet()
+        val disabledMcpjson = settings.layers.flatMap { serverNameList(it, "disabledMcpjsonServers", notes) }.toSet()
+        val enabledMcpjson = trustedLayers.flatMap { serverNameList(it, "enabledMcpjsonServers", notes) }.toSet()
         // enableAll：未信任的文件夹里「任何一份可信文件写了 true 就算」；信任了则最高层的值说话（false 能压低层的 true）
         val enableAll = if (trustProject) {
             trustedLayers.lastOrNull { it.raw.boolOf("enableAllProjectMcpServers") != null }?.raw?.boolOf("enableAllProjectMcpServers") == true
@@ -462,6 +463,29 @@ object McpConfigLoader {
         ((this[key] as? JsonArray) ?: return emptyList()).mapNotNull { el ->
             (el as? JsonPrimitive)?.takeIf { it.isString }?.content
         }
+
+    /**
+     * settings 里 `enabledMcpjsonServers` / `disabledMcpjsonServers` 的值。数组照旧（只收字符串元素）；
+     * 单个字符串当成单元素列表——CC 2.1.299 起如此，只认字母 / 数字 / `-` / `_` 组成的单个服务器名（`^[A-Za-z0-9_-]+$`），
+     * 别的字符串形状不收并记 note。
+     * CC 的这步转换跳过 policy 来源（managed 设置，那边整份文件按 schema 严格校验）；这里各层一视同仁地转换——
+     * Min 不整份丢弃坏文件，而「禁用名单被静默当成空表」是危险的那个方向，宁可多认一种写法。
+     * 为什么要认：禁用名单写成 `"foo"` 却被静默当成空表，会让被禁的服务器在 `enableAllProjectMcpServers` 下被放行。
+     * 只用于这两个键；[stringArrayOf] 的其他调用方（如 `disabledMcpServers`）行为不变。
+     */
+    private fun serverNameList(layer: SettingsLayer, key: String, notes: MutableList<String>): List<String> {
+        val value = layer.raw[key]
+        if (value !is JsonPrimitive || !value.isString) return layer.raw.stringArrayOf(key)
+        val name = value.content
+        return when {
+            SERVER_NAME_SHAPE.matches(name) -> listOf(name)
+            else -> emptyList<String>().also {
+                notes += "${layer.path.value} 的 $key 是字符串 \"${name.take(64)}\"，但单个服务器名只能由字母、数字、- 或 _ 组成；已忽略，请写成数组"
+            }
+        }
+    }
+
+    private val SERVER_NAME_SHAPE = Regex("[A-Za-z0-9_-]+")
 
     private fun JsonObject.boolOf(key: String): Boolean? =
         (this[key] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull
