@@ -117,6 +117,8 @@ class ClaudeCodeEngine internal constructor(
         attach(id, manager)
     }
 
+    override fun peek(id: String): AgentSession? = registry.get(id)?.takeIf { it.isLive }?.let { sessionFor(id) }
+
     /** 取或建：同一个 manager 只有一个包装。建的同时丢掉旧注册表已经不认的那些 */
     private fun attach(key: String, manager: ClaudeCodeManager): ClaudeCodeSession = synchronized(sessions) {
         // 旧注册表登记 manager 的同时就把它设成活跃项，[activeSession] 在另一个线程上立刻来取同一个包装，

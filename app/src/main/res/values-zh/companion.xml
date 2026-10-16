@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_group_companion">情感特供</string>
+    <string name="settings_group_companion_sub">跨会话记住你的心情与生活细节</string>
+    <string name="companion_intro">打开后，Min 会悄悄记下你的状态和生活里的细节，每个新会话都能接着上次的你聊。记录由你选的模型在后台单独整理，不经过会话本身，只存在这个 App 里。正在进行的会话不受打扰，新会话读到的是只读副本。</string>
+    <string name="companion_toggle_title">情感特供</string>
+    <string name="companion_toggle_on">开：新会话更温和，也记得你</string>
+    <string name="companion_toggle_off">关：不记录，也不提供给会话（已有记忆保留）</string>
+    <string name="companion_model_title">整理记忆用的模型</string>
+    <string name="companion_model_none">未选择</string>
+    <string name="companion_model_gone">%1$s（所属供应商已删除）</string>
+    <string name="companion_model_missing">选一个模型，Min 才能整理记忆。在那之前，已有的记忆照样提供给新会话。</string>
+    <string name="companion_model_no_profiles">需要一家带 API key 的供应商（Claude 订阅登录在这里用不了）。</string>
+    <string name="companion_model_hint">任何一家供应商都行，不必和聊天用的同一家。会话安静约两分钟或关闭后，整理一次，只发一个小请求。</string>
+    <string name="companion_flush_now">现在整理</string>
+    <string name="companion_memory_title">记忆（%1$d 条）</string>
+    <string name="companion_memory_empty">还没有记忆。打开情感特供聊过之后会出现在这里。</string>
+    <string name="companion_kind_feeling">情绪与支持</string>
+    <string name="companion_kind_life">生活细节</string>
+    <string name="companion_add">添加一条</string>
+    <string name="companion_edit_title">编辑这条记忆</string>
+    <string name="companion_delete">删除这条</string>
+    <string name="companion_clear">全部忘掉</string>
+    <string name="companion_clear_confirm">忘掉</string>
+    <string name="companion_clear_body">删除全部情感记忆？无法撤销。之后也不会回头重读以前的对话。</string>
+</resources>

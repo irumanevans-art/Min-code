@@ -46,6 +46,10 @@ private val KEY_CONTROL_DEVICE = booleanPreferencesKey("control_device")
 private val KEY_TEAM_MAX_CONCURRENT = intPreferencesKey("team_max_concurrent")
 private val KEY_CRON_MAX_BUDGET_USD = doublePreferencesKey("cron_max_budget_usd")
 private val KEY_WORKFLOWS_ENABLED = booleanPreferencesKey("workflows_enabled")
+/** 情感特供：开关 + 后台提取用的供应商档 id 与模型 id，见 [CompanionSettings] */
+private val KEY_COMPANION_ENABLED = booleanPreferencesKey("companion_enabled")
+private val KEY_COMPANION_PROFILE = stringPreferencesKey("companion_profile")
+private val KEY_COMPANION_MODEL = stringPreferencesKey("companion_model")
 /** WebSearch 的后端选择与 key：整块 JSON 经 [TokenCipher] 加密，见 [WebSearchConfig] */
 private val KEY_WEB_SEARCH = stringPreferencesKey("web_search")
 /** 应用内代理：整块 JSON（含账号密码）经 [TokenCipher] 加密，见 [ProxyConfig] */
@@ -312,6 +316,8 @@ data class AppSettings(
      */
     val cronEnabled: Boolean = true,
     val workflowsEnabled: Boolean = true,
+    /** 情感特供（默认关），见 [CompanionSettings] */
+    val companion: CompanionSettings = CompanionSettings(),
     /** Min Agent 的 WebSearch 后端。默认不设：模型看不到 WebSearch，见 [WebSearchConfig] */
     val webSearch: WebSearchConfig = WebSearchConfig(),
     /** 应用内代理（只代理 Min 自己）。默认关 = 直连，见 [ProxyConfig] */
@@ -570,6 +576,11 @@ class SettingsStore internal constructor(
             cronMaxBudgetUsd = p[KEY_CRON_MAX_BUDGET_USD]?.takeIf { it.isFinite() && it > 0 },
             cronEnabled = p[KEY_CRON_ENABLED] ?: true,
             workflowsEnabled = p[KEY_WORKFLOWS_ENABLED] ?: true,
+            companion = CompanionSettings(
+                enabled = p[KEY_COMPANION_ENABLED] ?: false,
+                profileId = p[KEY_COMPANION_PROFILE]?.takeIf { it.isNotBlank() },
+                modelId = p[KEY_COMPANION_MODEL]?.takeIf { it.isNotBlank() },
+            ),
             webSearch = decodeWebSearch(cipher, p[KEY_WEB_SEARCH]),
             proxy = decodeProxy(cipher, p[KEY_PROXY]),
             telemetry = dev.min.code.core.telemetry.TelemetrySettings(
@@ -845,6 +856,17 @@ class SettingsStore internal constructor(
     }
 
     suspend fun setWorkflowsEnabled(enabled: Boolean) = store.edit { it[KEY_WORKFLOWS_ENABLED] = enabled }
+
+    suspend fun setCompanionEnabled(enabled: Boolean) = store.edit { it[KEY_COMPANION_ENABLED] = enabled }
+
+    /** 后台提取用的模型；任一为 null = 清掉选择（提取暂停，直到重新选） */
+    suspend fun setCompanionModel(profileId: String?, modelId: String?) = store.edit {
+        if (profileId.isNullOrBlank() || modelId.isNullOrBlank()) {
+            it.remove(KEY_COMPANION_PROFILE); it.remove(KEY_COMPANION_MODEL)
+        } else {
+            it[KEY_COMPANION_PROFILE] = profileId; it[KEY_COMPANION_MODEL] = modelId
+        }
+    }
 
     /**
      * 改 WebSearch 配置：在 DataStore 的一次 edit 里读—改—写，界面只改自己动的那几项（比如只换后端、不碰已填的 key）。

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_group_companion">Companion</string>
+    <string name="settings_group_companion_sub">Remembers feelings and life details across chats</string>
+    <string name="companion_intro">When on, Min quietly keeps notes about how you are doing and the details of your life, so every new chat can pick up where you left off. Notes are written in the background by a model you choose, separately from the conversation, and are stored only inside this app. Running chats are not interrupted; new chats see a read-only copy.</string>
+    <string name="companion_toggle_title">Companion mode</string>
+    <string name="companion_toggle_on">On: new chats are warmer and remember you</string>
+    <string name="companion_toggle_off">Off: nothing is recorded or shared with chats (saved notes are kept)</string>
+    <string name="companion_model_title">Model for remembering</string>
+    <string name="companion_model_none">Not chosen</string>
+    <string name="companion_model_gone">%1$s (its provider was removed)</string>
+    <string name="companion_model_missing">Choose a model so Min can write notes. Until then, existing notes are still shared with new chats.</string>
+    <string name="companion_model_no_profiles">Needs a provider with an API key (a Claude subscription login cannot be used here).</string>
+    <string name="companion_model_hint">Any provider works, not just the one you chat with. Notes are made about two minutes after a chat goes quiet, or when it closes, in one small request.</string>
+    <string name="companion_flush_now">Remember now</string>
+    <string name="companion_memory_title">Notes (%1$d)</string>
+    <string name="companion_memory_empty">No notes yet. They appear after you chat with companion mode on.</string>
+    <string name="companion_kind_feeling">Feelings and support</string>
+    <string name="companion_kind_life">Life details</string>
+    <string name="companion_add">Add a note</string>
+    <string name="companion_edit_title">Edit note</string>
+    <string name="companion_delete">Delete this note</string>
+    <string name="companion_clear">Forget everything</string>
+    <string name="companion_clear_confirm">Forget</string>
+    <string name="companion_clear_body">Delete all companion notes? This cannot be undone. Past chats are not re-read afterwards.</string>
+</resources>

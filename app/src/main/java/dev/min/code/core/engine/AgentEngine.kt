@@ -35,6 +35,12 @@ interface AgentEngine {
      */
     suspend fun open(id: String): Result<AgentSession>
 
+    /**
+     * 在线会话的只读句柄：不打开、不重启进程、不改回收顺序；不在线返回 null。
+     * 给后台观察者用（情感特供的整理器）——[open] 对 Claude Code 的死进程会重开、对 Min 会把会话钉住不再回收
+     */
+    fun peek(id: String): AgentSession? = null
+
     suspend fun closeAll(reason: CloseReason)
 
     /**

@@ -102,6 +102,8 @@ class CodexEngine internal constructor(
         attach(checkNotNull(settled.threadId))
     }
 
+    override fun peek(id: String): AgentSession? = current.value?.takeIf { !it.isClosed && it.ref.id == id }
+
     override suspend fun open(id: String): Result<AgentSession> = runCatching {
         // 关掉了的会话包装不能再交出去（它的状态流已经停了）：关掉再从抽屉点开同一条，要重新建一个
         current.value?.takeIf { !it.isClosed && it.ref.id == id && manager.state.value.threadId == id }?.let { return@runCatching it }

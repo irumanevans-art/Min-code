@@ -56,6 +56,7 @@ import dev.min.code.ui.session.SessionListVM
 import dev.min.code.ui.session.SessionVM
 import dev.min.code.ui.session.WorkspaceToolsVM
 import dev.min.code.ui.providers.ProvidersVM
+import dev.min.code.ui.settings.CompanionVM
 import dev.min.code.ui.settings.SettingsVM
 import dev.min.code.ui.setup.SetupVM
 import dev.min.code.ui.terminal.WorkspaceTerminalSessionManager
@@ -248,6 +249,22 @@ val appModule = module {
         )
     } bind AgentEngine::class
     single { AgentSessionRegistry(getAll<AgentEngine>(), get<AppScope>()) }
+    // 情感特供：记忆存在 App 私有目录；整理器盯着注册表，和保活一样 createdAtStart
+    single { dev.min.code.core.companion.CompanionStore(File(get<android.content.Context>().filesDir, "companion")) }
+    single(createdAtStart = true) {
+        val registry: AgentSessionRegistry = get()
+        val workspace: WorkspaceRepository = get()
+        dev.min.code.core.companion.CompanionKeeper(
+            scope = get<AppScope>(),
+            live = registry.live,
+            peekItems = { ref -> registry.engine(ref.engine).peek(ref.id)?.state?.value?.items },
+            config = get<SettingsStore>().settings.map { it.companion },
+            rootfsChanges = workspace.workspace,
+            store = get(),
+            model = get<MinAgentEngine>().companionModel,
+            syncBlock = { block -> dev.min.code.core.companion.syncCompanionBlock(workspace, block) },
+        ).also { it.start() }
+    }
     // 订阅登录要 single：登录进行中的状态横跨页面，前台服务也盯着它保活
     single {
         ClaudeSubscription(
@@ -287,6 +304,7 @@ val appModule = module {
     viewModelOf(::ClaudeConfigVM)
     viewModelOf(::SetupVM)
     viewModelOf(::SettingsVM)
+    viewModelOf(::CompanionVM)
     viewModelOf(::ProvidersVM)
     viewModel { WorkspaceDetailVM(context = get(), id = it.get<String>(), repository = get(), terminalSessionManager = get()) }
 }

@@ -616,6 +616,7 @@ enum class SettingsSection(@androidx.annotation.StringRes val title: Int, @andro
     LOOK(R.string.settings_group_look, R.string.settings_group_look_sub),
     EXPERIMENT(R.string.settings_group_experiment, R.string.settings_group_experiment_sub),
     NETWORK(R.string.settings_group_network, R.string.settings_group_network_sub),
+    COMPANION(R.string.settings_group_companion, R.string.settings_group_companion_sub),
 }
 
 /**
@@ -656,6 +657,7 @@ fun SettingsSectionPage(group: SettingsSection, vm: SettingsVM = koinViewModel()
                     SettingsSection.LOOK -> LookSettings(vm, settings)
                     SettingsSection.EXPERIMENT -> ExperimentSettings(vm, settings)
                     SettingsSection.NETWORK -> NetworkSettingsSection(vm)
+                    SettingsSection.COMPANION -> CompanionSettingsPage()
                 }
             }
         }

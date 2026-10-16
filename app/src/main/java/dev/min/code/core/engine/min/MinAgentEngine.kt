@@ -118,6 +118,9 @@ class MinAgentEngine(
     private val store = FileSessionStore(sessionsDir.toPath()) { System.currentTimeMillis() }
     private val catalogData = Catalog.bundled()
     private val resolver = MinModelResolver({ settings.snapshot }, transport, text, catalogData)
+
+    /** 情感特供后台提取用的一次性调用：和会话共用同一个解析器（同一份档案、目录与客户端缓存），见 [MinCompanionModel] */
+    val companionModel: dev.min.code.core.companion.CompanionModel = MinCompanionModel(resolver)
     private val lastUsed = MinLastUsed(File(context.filesDir, "agent/last-used.json"))
     private val index = MinSessionIndex(File(context.filesDir, "agent/index"), sessionsDir)
     // 诊断包草稿落在私有目录，重开 App 还在（见 FeedbackDraftBox）；绑定读的是几个小 JSON 文件
@@ -440,6 +443,8 @@ class MinAgentEngine(
         schedulePluginUpdates(runtime.state.value.created.cwd.value)
         register(runtime, pin = true).also { index.update(runtime.state.value) }
     }
+
+    override fun peek(id: String): AgentSession? = sessions.value[SessionId(id)]
 
     override suspend fun open(id: String): Result<AgentSession> = guarded {
         // 关着时旧通知、旧深链也不能把会话重新拉起来
