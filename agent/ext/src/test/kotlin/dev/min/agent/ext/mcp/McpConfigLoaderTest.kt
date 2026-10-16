@@ -506,6 +506,45 @@ class McpConfigLoaderTest {
         assertTrue(snap.entry("a")!!.reason!!.contains("disabledMcpjsonServers"))
     }
 
+    // CC 2.1.299：这两个键写成单个字符串（字母 / 数字 / - / _）也算数
+    @Test
+    fun `disabledMcpjsonServers as a plain string disables that server even when enableAll is on`() {
+        val snap = load(
+            "$project/.mcp.json" to """{"mcpServers":{"foo":{"command":"srv"},"bar":{"command":"srv"}}}""",
+            "$home/.claude/settings.json" to """{"enableAllProjectMcpServers":true,"disabledMcpjsonServers":"foo"}""",
+        )
+        assertEquals(McpGate.Disabled, snap.entry("foo")!!.gate)
+        assertEquals(McpGate.Enabled, snap.entry("bar")!!.gate)
+        assertTrue(snap.notes.isEmpty())
+    }
+
+    @Test
+    fun `enabledMcpjsonServers as a plain string approves that server only`() {
+        val snap = load(
+            "$project/.mcp.json" to """{"mcpServers":{"a-b_1":{"command":"srv"},"b":{"command":"srv"}}}""",
+            "$project/.claude/settings.local.json" to """{"enabledMcpjsonServers":"a-b_1"}""",
+        )
+        assertEquals(McpGate.Enabled, snap.entry("a-b_1")!!.gate)
+        assertEquals(McpGate.NeedsApproval, snap.entry("b")!!.gate)
+    }
+
+    @Test
+    fun `a string that is not a single plain server name is ignored with a note`() {
+        val snap = load(
+            "$project/.mcp.json" to """{"mcpServers":{"foo":{"command":"srv"},"bar":{"command":"srv"}}}""",
+            "$home/.claude/settings.json" to """{"enableAllProjectMcpServers":true,"disabledMcpjsonServers":"foo,bar"}""",
+            "$project/.claude/settings.local.json" to """{"enabledMcpjsonServers":"a b"}""",
+        )
+        // 形状不对的字符串不当名单用：foo / bar 没被禁
+        assertEquals(McpGate.Enabled, snap.entry("foo")!!.gate)
+        assertEquals(McpGate.Enabled, snap.entry("bar")!!.gate)
+        assertTrue(snap.notes.any { it.contains("disabledMcpjsonServers") && it.contains("foo,bar") })
+        assertTrue(snap.notes.any { it.contains("enabledMcpjsonServers") })
+        // 空串、数字也不是服务器名
+        val empty = load("$home/.claude/settings.json" to """{"disabledMcpjsonServers":""}""")
+        assertTrue(empty.notes.any { it.contains("disabledMcpjsonServers") })
+    }
+
     @Test
     fun `the per-project ui toggle in claude json disables a user-scope server`() {
         val snap = load(

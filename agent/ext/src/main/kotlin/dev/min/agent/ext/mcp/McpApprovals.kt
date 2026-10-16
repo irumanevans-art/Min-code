@@ -7,6 +7,7 @@ import dev.min.agent.spi.WorkspaceFs
 import dev.min.agent.spi.catchingNonCancellation
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -51,8 +52,14 @@ object McpApprovals {
             }
             // 清单里已有的字符串原样保留（含顺序与非字符串的怪元素）；已经是这个决定就不动文件
             fun JsonArray?.has(n: String) = orEmpty().any { it is JsonPrimitive && it.isString && it.content == n }
-            val addList = existing[add] as? JsonArray
-            val removeList = existing[remove] as? JsonArray
+            // 读取端（McpConfigLoader）认单个字符串写法，所以这里也要认：否则往 "foo" 旁边再拒绝一个，就把 foo 从名单里抹掉了
+            fun JsonElement?.asList(): JsonArray? = when {
+                this is JsonArray -> this
+                this is JsonPrimitive && isString -> JsonArray(listOf(this))
+                else -> null
+            }
+            val addList = existing[add].asList()
+            val removeList = existing[remove].asList()
             if (addList.has(name) && !removeList.has(name)) return@catchingNonCancellation
             val out = JsonObject(LinkedHashMap(existing).apply {
                 if (!addList.has(name)) put(add, JsonArray(addList.orEmpty() + JsonPrimitive(name)))

@@ -101,6 +101,14 @@ class McpApprovalsTest {
     }
 
     @Test
+    fun `a single-string list written by hand is kept when another name is added`() = runBlocking {
+        val fs = WritableFs()
+        fs.files["/workspace/.claude/settings.local.json"] = """{"disabledMcpjsonServers": "foo"}""".toByteArray(Charsets.UTF_8)
+        assertTrue(McpApprovals.reject(fs, GuestPath("/workspace"), "bar").isSuccess)
+        assertEquals(listOf("foo", "bar"), writtenJson(fs).getValue("disabledMcpjsonServers").jsonArray.map { it.jsonPrimitive.content })
+    }
+
+    @Test
     fun `a file that is not a valid json object fails and is left untouched`() = runBlocking {
         val fs = WritableFs()
         val original = "this is { not json".toByteArray(Charsets.UTF_8)
