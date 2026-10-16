@@ -79,3 +79,13 @@ data class McpToolSearchConfigured(val enabled: Boolean, val estimatedTokens: In
 @Serializable
 @SerialName("mcp_tools_loaded")
 data class McpToolsLoaded(val names: List<String>) : SessionEvent
+
+/**
+ * API 拒收了这个 MCP 工具的 inputSchema（400 点名了它）。折叠进会话后，之后组请求时该工具改成无参数的空 object，
+ * 说明末尾追加固定一句。不删工具（工程规范第 10 条：改 schema 不从表里拿掉）。
+ * [name] 是给模型的全名；[reason] 是这次 400 的原文摘要，只给人看、不进工具说明（说明用固定常量，重放字节不变）。
+ * 同一工具再来一条忽略（不重复降级）。
+ */
+@Serializable
+@SerialName("mcp_tool_schema_rejected")
+data class McpToolSchemaRejected(val name: String, val reason: String) : SessionEvent

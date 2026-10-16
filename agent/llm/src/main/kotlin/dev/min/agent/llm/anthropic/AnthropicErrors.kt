@@ -2,7 +2,9 @@ package dev.min.agent.llm.anthropic
 
 import dev.min.agent.llm.ModelException
 import dev.min.agent.llm.OverflowMatcher
+import dev.min.agent.llm.RejectedToolRef
 import dev.min.agent.llm.UnavailableModel
+import dev.min.agent.llm.anthropicRejectedTools
 import dev.min.agent.llm.bodyPreview
 import dev.min.agent.llm.retryAfterMs
 import dev.min.agent.spi.ModelFailureKind
@@ -32,21 +34,23 @@ internal fun classifyHttpFailure(
     overflow: OverflowMatcher,
 ): ModelException {
     val text = "HTTP $status：${preview(body)}"
-    fun failure(kind: ModelFailureKind, retryAfterMs: Long? = null) =
-        ModelException(kind, text, httpStatus = status, retryAfterMs = retryAfterMs, beforeFirstByte = true)
+    fun failure(kind: ModelFailureKind, retryAfterMs: Long? = null, rejectedTools: List<RejectedToolRef> = emptyList()) =
+        ModelException(kind, text, httpStatus = status, retryAfterMs = retryAfterMs, beforeFirstByte = true, rejectedTools = rejectedTools)
     return when {
         status == 401 || status == 403 -> failure(ModelFailureKind.Auth)
         status == 429 -> failure(ModelFailureKind.RateLimited, retryAfterMs(headers))
         status == 529 -> failure(ModelFailureKind.Overloaded)
         status in 500..599 -> failure(ModelFailureKind.Server)
         // 超长优先于 BadRequest：它走压缩流水线，不是「改改请求再发」
-        status in 400..499 -> failure(
-            when {
+        status in 400..499 -> {
+            val kind = when {
                 overflow.matches(body) -> ModelFailureKind.ContextOverflow
                 UnavailableModel.matches(status, body) -> ModelFailureKind.ModelUnavailable
                 else -> ModelFailureKind.BadRequest
-            },
-        )
+            }
+            // 只有请求本身有问题才去认「哪个工具的 schema 被拒」：超长 / 模型不可用不是 schema 的事
+            failure(kind, rejectedTools = if (kind == ModelFailureKind.BadRequest) anthropicRejectedTools(body) else emptyList())
+        }
         else -> failure(ModelFailureKind.Other)
     }
 }
@@ -75,5 +79,6 @@ internal fun classifyStreamError(
             else -> ModelFailureKind.BadRequest
         }
     }
-    return ModelException(kind, text, beforeFirstByte = beforeFirstByte)
+    val rejected = if (kind == ModelFailureKind.BadRequest) anthropicRejectedTools(message.orEmpty()) else emptyList()
+    return ModelException(kind, text, beforeFirstByte = beforeFirstByte, rejectedTools = rejected)
 }

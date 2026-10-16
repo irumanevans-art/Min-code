@@ -158,6 +158,15 @@ class OpenAIChatErrorTest {
     }
 
     @Test
+    fun `400 that names Invalid schema for function carries the rejected tool name`() {
+        val body = """{"error":{"message":"Invalid schema for function 'mcp__db__write': schema must have type 'object'","type":"invalid_request_error"}}"""
+        val err = failure(400, body)
+        assertEquals(ModelFailureKind.BadRequest, err.kind)
+        assertEquals(listOf(dev.min.agent.llm.RejectedToolRef.Name("mcp__db__write")), err.rejectedTools)
+        assertTrue(failure(400, """{"error":{"message":"messages.0.content is invalid"}}""").rejectedTools.isEmpty())
+    }
+
+    @Test
     fun `200 HTML JSON completion or invalid JSON in stream is other with body preview`() {
         for (body in listOf("<html>proxy error</html>", "broken {", "[]", "{}",
             """{"id":"non-stream","choices":[{"message":{"role":"assistant","content":"hi"}}]}""")) {

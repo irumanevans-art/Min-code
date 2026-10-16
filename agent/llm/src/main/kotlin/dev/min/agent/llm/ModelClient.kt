@@ -111,6 +111,8 @@ class ModelException(
     /** 失败响应（或中途断流前收到的响应头）里的供应商请求 id 与 `traceresponse`，只给遥测用 */
     val responseId: String? = null,
     val traceResponse: String? = null,
+    /** 400 里点名「schema 被拒收」的工具（[RejectedToolRef]）；内核据此给被点名的 MCP 工具降级后重发。认不出就是空 */
+    val rejectedTools: List<RejectedToolRef> = emptyList(),
 ) : RuntimeException(message, cause) {
     val retryable: Boolean
         get() = kind == ModelFailureKind.Network ||
@@ -122,7 +124,7 @@ class ModelException(
     fun withResponse(responseId: String?, traceResponse: String?, timedOut: Boolean = this.timedOut): ModelException =
         if (responseId == null && traceResponse == null && timedOut == this.timedOut) this else ModelException(
             kind, message ?: kind.name, httpStatus, retryAfterMs, beforeFirstByte, cause, timedOut,
-            this.responseId ?: responseId, this.traceResponse ?: traceResponse,
+            this.responseId ?: responseId, this.traceResponse ?: traceResponse, rejectedTools,
         )
 }
 

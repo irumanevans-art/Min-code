@@ -94,6 +94,15 @@ class AnthropicErrorTest {
     }
 
     @Test
+    fun `400 that names tools-N-custom-input_schema carries the rejected tool index`() {
+        val body = anthropicError("invalid_request_error", "tools.3.custom.input_schema: JSON schema is invalid. It must match JSON Schema draft 2020-12")
+        val err = fail(400, body)
+        assertEquals(ModelFailureKind.BadRequest, err.kind)
+        assertEquals(listOf(dev.min.agent.llm.RejectedToolRef.Index(3)), err.rejectedTools)
+        assertTrue(fail(400, anthropicError("invalid_request_error", "messages.0.content: Input should be a valid list")).rejectedTools.isEmpty())
+    }
+
+    @Test
     fun `other 4xx are bad requests`() {
         for (status in listOf(400, 402, 404, 409, 413, 422)) {
             val err = fail(status, anthropicError("invalid_request_error", "messages.0.content: Input should be a valid list"))

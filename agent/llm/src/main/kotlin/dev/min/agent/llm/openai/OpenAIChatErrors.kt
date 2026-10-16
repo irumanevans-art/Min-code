@@ -4,6 +4,7 @@ import dev.min.agent.llm.ModelException
 import dev.min.agent.llm.OverflowMatcher
 import dev.min.agent.llm.UnavailableModel
 import dev.min.agent.llm.bodyPreview
+import dev.min.agent.llm.openAiRejectedTools
 import dev.min.agent.llm.retryAfterMs
 import dev.min.agent.spi.ModelFailureKind
 
@@ -30,10 +31,12 @@ internal fun classifyHttpFailure(
         status in 400..499 -> ModelFailureKind.BadRequest
         else -> ModelFailureKind.Other
     }
+    val rejected = if (kind == ModelFailureKind.BadRequest) openAiRejectedTools(body) else emptyList()
     return ModelException(
         kind, "HTTP $status：${bodyPreview(body)}", httpStatus = status,
         retryAfterMs = if (status == 429) retryAfterMs(headers) else null,
         beforeFirstByte = true,
+        rejectedTools = rejected,
     )
 }
 
@@ -50,5 +53,6 @@ internal fun classifyStreamError(type: String?, body: String, overflow: Overflow
             else -> ModelFailureKind.BadRequest
         }
     }
-    return ModelException(kind, "流中错误 ${type ?: "unknown"}：${bodyPreview(body)}", beforeFirstByte = before)
+    val rejected = if (kind == ModelFailureKind.BadRequest) openAiRejectedTools(body) else emptyList()
+    return ModelException(kind, "流中错误 ${type ?: "unknown"}：${bodyPreview(body)}", beforeFirstByte = before, rejectedTools = rejected)
 }
