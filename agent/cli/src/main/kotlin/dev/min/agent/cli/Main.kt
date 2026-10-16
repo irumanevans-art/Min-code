@@ -147,7 +147,8 @@ internal suspend fun interact(
         // 在本会话登记（每次调用都重新登记全量），余下回合生效。模型调 Skill 工具的路在内核（KernelSkillPort），两条路同一套登记
         // 插件的 on-skill-invoke monitor 也在这里起：用户用斜杠调用 skill 也算「第一次被调用」（App 斜杠入口同一个函数）
         runtime.userInvokedSkills(entries, (action as? InputAction.Send)?.names.orEmpty())
-        runtime.send(ClientMsgId(UUID.randomUUID().toString()), parts, scanMcpMentions = action is InputAction.Send && action.humanInput)
+        val screened = (action as? InputAction.Send)?.submitContexts ?: (action as? InputAction.Prompt)?.submitContexts
+        runtime.send(ClientMsgId(UUID.randomUUID().toString()), parts, scanMcpMentions = action is InputAction.Send && action.humanInput, submitScreened = screened)
         if (args.prompt == null && !pluginUpdatesStarted && dev.min.agent.ext.plugins.pluginAutoUpdatesEnabled(System.getenv())) {
             pluginUpdatesStarted = true
             scope.launch {

@@ -4,9 +4,11 @@ import dev.min.agent.ext.config.CommandDef
 import dev.min.agent.ext.config.SkillDef
 import dev.min.agent.ext.skills.SkillRunPort
 import dev.min.agent.ext.skills.SlashGate
+import dev.min.agent.ext.skills.SlashSubmitGate
 import dev.min.agent.ext.skills.SkillVars
 import dev.min.agent.ext.skills.SlashCommands
 import dev.min.agent.ext.skills.SlashResult
+import dev.min.agent.kernel.promptSubmitHooks
 import dev.min.agent.kernel.savedWorkflows
 import dev.min.agent.kernel.slashDefs
 import dev.min.agent.kernel.userSkillRunPort
@@ -17,12 +19,13 @@ internal sealed interface InputAction {
      * 把 [text] 当用户消息发给模型（普通输入原样，斜杠命令是展开后的内容）。
      * [names] 是这次展开用到的 skill / command 名：宿主据此登记它们的 frontmatter hooks（按调用生效）。
      * [humanInput] = 人直接打的字（不是展开出来的）：只有它才扫 `@server:uri` 引用（MCP2 复核 H2）
+     * [submitContexts] 非 null = 展开之前已对用户敲的原文跑过 UserPromptSubmit（放行），随 `runtime.send(submitScreened = …)` 交回内核，内核不再重跑
      */
-    data class Send(val text: String, val names: List<String> = emptyList(), val humanInput: Boolean = false) : InputAction
+    data class Send(val text: String, val names: List<String> = emptyList(), val humanInput: Boolean = false, val submitContexts: List<String>? = null) : InputAction
 
     /** 不发给模型，只在终端提示一句（未知命令、不能用斜杠调用的 skill、预执行被拒、分身已在后台启动） */
     data class Notice(val message: String) : InputAction
-    data class Prompt(val command: dev.min.agent.ext.mcp.McpPromptCommand, val arguments: kotlinx.serialization.json.JsonObject) : InputAction
+    data class Prompt(val command: dev.min.agent.ext.mcp.McpPromptCommand, val arguments: kotlinx.serialization.json.JsonObject, val submitContexts: List<String>? = null) : InputAction
 }
 
 /**
@@ -41,9 +44,15 @@ internal suspend fun interpretInputRun(
     vars: SkillVars,
     port: SkillRunPort,
     prompts: List<dev.min.agent.ext.mcp.McpPromptCommand> = emptyList(),
-    /** UserPromptExpansion hooks 的闸：先于任何预执行命令与分身 */
+    /** UserPromptExpansion hooks 的闸：先于任何预执行命令与分身，晚于 [submitGate] */
     gate: SlashGate? = null,
-): InputAction = translate(SlashCommands.expandRun(line, skills, commands, vars, port, prompts, gate), line)
+    /** UserPromptSubmit hooks 的闸：对用户敲的原文、最先跑（CC 2.1.299），拦下就连预执行也不跑 */
+    submitGate: SlashSubmitGate? = null,
+): InputAction = translate(SlashCommands.expandRun(line, skills, commands, vars, port, prompts, gate, submitGate), line)
+
+/** UserPromptSubmit hooks 作为展开前最先的一道闸（见 [SlashSubmitGate]）；内核的 `promptSubmitHooks` 同时负责 hooks_ran 落日志 */
+internal fun submitGate(runtime: dev.min.agent.kernel.SessionRuntime): SlashSubmitGate =
+    SlashSubmitGate { prompt -> runtime.promptSubmitHooks(prompt) }
 
 /** UserPromptExpansion hooks 作为展开前的闸：先于任何预执行命令与分身（见 SlashGate） */
 internal fun slashGate(runtime: dev.min.agent.kernel.SessionRuntime): SlashGate =
@@ -51,10 +60,10 @@ internal fun slashGate(runtime: dev.min.agent.kernel.SessionRuntime): SlashGate 
 
 private fun translate(r: SlashResult, line: String): InputAction = when (r) {
     SlashResult.NotACommand -> InputAction.Send(line, humanInput = true)
-    is SlashResult.Expanded -> InputAction.Send(r.text, r.names)
+    is SlashResult.Expanded -> InputAction.Send(r.text, r.names, submitContexts = r.submitContexts)
     is SlashResult.Unknown -> InputAction.Notice("没有名为 /${r.name} 的 skill 或命令。")
     is SlashResult.NotInvocable -> InputAction.Notice("/${r.name} 设置了 user-invocable: false，只有模型能调用它。")
-    is SlashResult.McpPrompt -> InputAction.Prompt(r.command, r.arguments)
+    is SlashResult.McpPrompt -> InputAction.Prompt(r.command, r.arguments, r.submitContexts)
     is SlashResult.InvalidArguments -> InputAction.Notice(r.message)
     is SlashResult.Forked -> InputAction.Notice(r.text)
     is SlashResult.Refused -> InputAction.Notice(r.message)
@@ -92,5 +101,5 @@ internal suspend fun interpretSlashLine(
     val defs = runtime.slashDefs(line)
     val first = line.trim().split(Regex("\\s+"), limit = 2).firstOrNull().orEmpty().removePrefix("/")
     if (line.trimStart().startsWith("/") && first in defs.unreadable) return InputAction.Notice("skill「$first」的文件现在读不了（可能在会话开始后被删除或改动）。")
-    return interpretInputRun(line, defs.skills, defs.commands, vars, runtime.userSkillRunPort(), prompts, slashGate(runtime))
+    return interpretInputRun(line, defs.skills, defs.commands, vars, runtime.userSkillRunPort(), prompts, slashGate(runtime), submitGate(runtime))
 }

@@ -124,6 +124,11 @@ data class InputReceived(
     val delivery: Delivery,
     /** 谁送来的；默认是用户（默认值不落盘，旧日志读出来就是用户输入） */
     val origin: InputOrigin = InputOrigin.User,
+    /**
+     * 非 null = 宿主已在斜杠命令展开**之前**对用户敲的原文跑过 UserPromptSubmit hooks（放行），内容是它们带来的 additionalContext；
+     * 内核提升这条输入时不再对（已展开的）正文重跑，只把这些上下文挂到消息上。null（默认，不落盘）= 没跑过，提升时照常跑
+     */
+    val submitScreened: List<String>? = null,
 ) : SessionEvent
 
 @Serializable

@@ -14,6 +14,24 @@ data class SlashGateInfo(val name: String, val args: String, val source: String?
 fun interface SlashGate {
     suspend fun check(info: SlashGateInfo): String?
 }
+
+/** UserPromptSubmit 对用户敲的原文的结论（见 [SlashSubmitGate]） */
+sealed interface PromptSubmitVerdict {
+    /** 放行；[contexts] 是 hook 的 additionalContext，要随最终发出的那条消息一起交回内核（`SessionRuntime.send` 的 `submitScreened`） */
+    data class Pass(val contexts: List<String>) : PromptSubmitVerdict
+
+    /** 拦下（block / `continue:false`）：[reason] 给人看，整条输入作罢——不展开、不跑预执行、不发送 */
+    data class Blocked(val reason: String) : PromptSubmitVerdict
+}
+
+/**
+ * UserPromptSubmit hooks 作为**最先**的一道闸：对用户敲的原文（`/名字 参数`，未展开）跑，先于 [SlashGate]（UserPromptExpansion）与任何预执行命令。
+ * 只在这行确实会被展开（skill / command / MCP prompt）时才问；普通输入、未知命令、路径不问——普通输入由内核提升时照常跑。
+ */
+fun interface SlashSubmitGate {
+    suspend fun check(prompt: String): PromptSubmitVerdict
+}
+
 /** 用户输入按斜杠命令解释的结果 */
 sealed interface SlashResult {
     /** 不是命令：没有以 `/` 开头，或 `/` 后面不像命令名（`/etc/hosts` 这种路径、单独一个 `/`）。原样当普通输入发给模型 */
@@ -27,9 +45,10 @@ sealed interface SlashResult {
 
     /**
      * 展开成功。[text] 是要发给模型的内容；[names] 是被展开的名字（按出现顺序，叠放时不止一个）。
+     * [submitContexts] 非 null = [SlashSubmitGate] 已对原文放行（内容是它带来的上下文），发送时要一并交回内核，内核不再对展开后的正文重跑 UserPromptSubmit。
      */
-    data class Expanded(val text: String, val names: List<String>) : SlashResult
-    data class McpPrompt(val command: dev.min.agent.ext.mcp.McpPromptCommand, val arguments: kotlinx.serialization.json.JsonObject) : SlashResult
+    data class Expanded(val text: String, val names: List<String>, val submitContexts: List<String>? = null) : SlashResult
+    data class McpPrompt(val command: dev.min.agent.ext.mcp.McpPromptCommand, val arguments: kotlinx.serialization.json.JsonObject, val submitContexts: List<String>? = null) : SlashResult
     data class InvalidArguments(val message: String) : SlashResult
 
     /** `context: fork` 的 skill 在分身里跑了（[text] 是子 agent 的报告，或后台启动的说明）：这次输入不再发给模型 */
@@ -73,7 +92,10 @@ object SlashCommands {
         is Plan.Run -> SlashResult.Expanded(p.chosen.joinToString("\n\n") { it.render(p.args, vars) }, p.chosen.map { it.name })
     }
 
-    /** 真正的展开：预执行命令逐条经 [port] 执行，fork 的 skill 经 [port] 在分身里跑。任何一步 Refused 就整次 Refused */
+    /**
+     * 真正的展开：预执行命令逐条经 [port] 执行，fork 的 skill 经 [port] 在分身里跑。任何一步 Refused 就整次 Refused。
+     * 先后顺序（每一道闸都先于后面的副作用）：认名字（纯）→ [submitGate]（UserPromptSubmit，对用户敲的原文）→ [gate]（UserPromptExpansion）→ 预执行 / 分身
+     */
     suspend fun expandRun(
         input: String,
         skills: List<SkillDef>,
@@ -82,10 +104,23 @@ object SlashCommands {
         port: SkillRunPort,
         prompts: List<dev.min.agent.ext.mcp.McpPromptCommand> = emptyList(),
         gate: SlashGate? = null,
+        submitGate: SlashSubmitGate? = null,
     ): SlashResult = when (val p = plan(input, skills, commands, prompts)) {
-        is Plan.Done -> p.result
+        is Plan.Done -> when (val r = p.result) {
+            // MCP prompt 的正文由服务器给、宿主随后才去取：同样先过 UserPromptSubmit（看到的是用户敲的那一行）
+            is SlashResult.McpPrompt -> when (val v = submitGate?.check(input.trim())) {
+                null -> r
+                is PromptSubmitVerdict.Pass -> r.copy(submitContexts = v.contexts)
+                is PromptSubmitVerdict.Blocked -> SlashResult.Refused(v.reason)
+            }
+            else -> r
+        }
         is Plan.Run -> {
             val first = p.chosen.first()
+            // UserPromptSubmit 最先：hook 拦下，正文里的命令一条都不跑（CC 2.1.299）；放行后才轮到 UserPromptExpansion 的闸
+            val submitted = submitGate?.check(input.trim())
+            if (submitted is PromptSubmitVerdict.Blocked) return SlashResult.Refused(submitted.reason)
+            val submitContexts = (submitted as? PromptSubmitVerdict.Pass)?.contexts
             // 闸先于一切副作用：拦下就不跑任何预执行命令、不起分身（安全口径，见 SlashGate）
             gate?.check(SlashGateInfo(first.name, p.args, first.source, input.trim()))?.let { return SlashResult.Refused(it) }
             if (first.fork) {
@@ -102,7 +137,7 @@ object SlashCommands {
                         is RunResult.Ok -> parts += r.text
                     }
                 }
-                SlashResult.Expanded(parts.joinToString("\n\n"), p.chosen.map { it.name })
+                SlashResult.Expanded(parts.joinToString("\n\n"), p.chosen.map { it.name }, submitContexts)
             }
         }
     }

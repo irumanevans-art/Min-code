@@ -92,13 +92,27 @@ CC 文档没写冲突怎么合；Min 的规则（取更安全的一侧，确定�
 | 事件 | 接在哪 | 结论怎么落日志 |
 |---|---|---|
 | SessionStart | 会话创建（记忆之后）与打开（source = resume） | 上下文 → `HookContext` 事件，折叠成下一条用户消息前的 `<system-reminder>` 段 |
-| UserPromptSubmit | 输入提升为正式消息之前 | 阻断 → `InputBlocked(clientMsgId, 理由)`（输入不进历史，界面退回输入框并显示理由）；上下文 → 随这条消息落盘 |
+| UserPromptSubmit | **斜杠命令 / skill / MCP prompt**：宿主在展开**之前**对用户敲的原文调 `SessionRuntime.promptSubmitHooks`（CC 2.1.299：拦下就连正文里的 `` !`命令` `` 也不跑；hook 看到的是原文）。放行的 additionalContext 随随后的 `input_received.submitScreened` 落盘，内核提升时不再重跑。拦下时输入还没进收件箱，只记 `hooks_ran`，理由由宿主呈现（CLI 打印、App `CommandResult.Rejected`）。**普通消息**：仍在输入提升为正式消息之前由 `TurnRunner.screen` 跑。 | 斜杠拦下：只 `hooks_ran`。斜杠放行：`hooks_ran` + `input_received.submitScreened`，提升时挂到消息上。普通消息拦下 → `InputBlocked(clientMsgId, 理由)`（输入不进历史，界面退回输入框并显示理由）；上下文 → 随这条消息落盘 |
 | PreToolUse | 权限判定之前 | 见下；改写的入参 → `ToolInputRewritten(callId, 新入参, 来源)`，之后的权限判定与执行都用新入参 |
 | PermissionRequest | 判定结果是 Ask、发审批卡之前 | allow / deny → 视同人的答复，`ApprovalResolved(by = Hook(名字))` |
 | PostToolUse / PostToolUseFailure | ToolOutcome 之后 | `decision: block` / 上下文 → `HookContext`（贴在该工具结果旁） |
 | Stop / SubagentStop | 模型不再调工具、回合要结束时 | block → 把理由作为用户侧提示追加，回合继续；没 block、只给 `hookSpecificOutput.additionalContext` 时同样继续（上下文作为 hook 来源的输入交给模型，界面标成「Stop hook feedback」而不是错误）；`stop_hook_active` 置真；**同一回合内累计让模型继续 8 次（被拦与只给上下文合计，回合结束清零）就放行**并给 Note（防死循环）。上限与 CC 一致，可由 `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`（经 `KernelDeps.env`，非正整数忽略）覆盖 |
 | SubagentStart | SessionHub 委派之后 | 上下文 → 子会话的 `HookContext` |
 | Notification | 宿主发系统通知时（审批、提问、完成） | 只执行，不改变内核状态 |
+| UserPromptExpansion | 斜杠命令认完名字之后、预执行 / 分身之前（`SlashGate`，晚于 UserPromptSubmit） | 阻断 → 宿主不展开、不发送，理由给人看；上下文 → `HookContextAdded(NextUserMessage)`，挂到随后发出的那条人发的消息上 |
+
+**斜杠命令 / skill 的先后（CC 2.1.299）**
+
+用户敲 `/名字 参数`（或 MCP prompt）时，两道闸都先于副作用，且同一条 prompt 的 UserPromptSubmit **只跑一次**：
+
+1. 认名字（纯，无副作用）——未知命令、路径、`user-invocable: false` 在这里就停，不问 hook。
+2. **UserPromptSubmit**（`SlashSubmitGate` → `promptSubmitHooks`）：对用户敲的**原文**。拦下（block / exit 2 / `continue: false`）→ 整条作罢，正文里的 `` !`shell` `` **不能跑**，模型收不到请求。
+3. **UserPromptExpansion**（`SlashGate` → `promptExpansionHooks`）：对同一个原文（`command_name` / `command_args` / `prompt` 都是用户敲的那一行）。拦下同样不跑预执行。
+4. 预执行 `` !`命令` `` / 分身。
+5. 登记这次调用的 skill frontmatter hooks 与 `on-skill-invoke` monitor（`userInvokedSkills`）。skill 自己的 UserPromptSubmit **不对调用它的那一条生效**（登记发生在本条已经跑过 UserPromptSubmit 之后，且本条带着 `submitScreened` 进内核，提升时不重跑），从用户下一条 prompt 起跑。
+6. `send`（展开后的文字；`submitScreened` 把第 2 步的 additionalContext 一并交回）。
+
+普通（非斜杠）消息跳过 1–5，直接 `send`，由回合提升时跑 UserPromptSubmit，行为与改之前相同。
 
 **PreToolUse 与权限引擎的合流**（`docs/agent/04` §4.4 的顺序在这里落地）：
 

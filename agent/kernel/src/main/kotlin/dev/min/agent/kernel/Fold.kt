@@ -305,7 +305,7 @@ private fun SessionState.foldInputs(record: EventRecord, e: SessionEvent): Sessi
         // `/goal` 送来的（origin 标 [GOAL_ORIGIN]）不算：它有自己的防空转与 check-in 计数，不该耗掉用户 Stop hook 的次数
         val stopHook = e.origin is InputOrigin.Hook && (e.origin as InputOrigin.Hook).event != GOAL_ORIGIN
         copy(
-            inbox = inbox + PendingInput(e.clientMsgId, e.parts, e.delivery, e.origin),
+            inbox = inbox + PendingInput(e.clientMsgId, e.parts, e.delivery, e.origin, e.submitScreened),
             seenInputs = seenInputs + e.clientMsgId,
             children = reported(e.origin),
             turn = if (stopHook && turn != null) turn.copy(stopHookBlocks = turn.stopHookBlocks + 1) else turn,

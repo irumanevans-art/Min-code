@@ -282,3 +282,7 @@ suspend fun TestKernel.newRoot(model: ModelRef = T_MODEL, mode: PermissionMode =
 /** 宿主端口里只换 http hook 的发送端（其余同 [TestKernel] 默认：谁碰文件与进程谁失败）：测 hook 的用例用 */
 fun hostPortsWithHttpHooks(client: dev.min.agent.spi.HttpHookClient): HostPorts =
     HostPorts(Unused, Unused, Unused, { _: SessionId -> NoArtifacts }, httpHooks = client)
+
+/** 宿主端口里文件系统、进程、http hook 各给替身（其余同默认：谁碰谁失败）：斜杠命令的预执行遇上 hook 的用例用 */
+fun hostPortsWith(fs: WorkspaceFs, exec: Exec, client: dev.min.agent.spi.HttpHookClient): HostPorts =
+    HostPorts(fs, Unused, exec, { _: SessionId -> NoArtifacts }, httpHooks = client)

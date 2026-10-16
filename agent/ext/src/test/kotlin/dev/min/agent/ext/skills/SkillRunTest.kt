@@ -234,6 +234,74 @@ class SkillRunTest {
         }
         assertEquals(SlashGateInfo("ship", "now  please", "project", "/ship  now  please"), seen)
     }
+
+    // ---- UserPromptSubmit 先于展开（CC 2.1.299） ----
+
+    @Test
+    fun `a blocking submit gate stops the invocation before the expansion gate, any command or fork`() {
+        val s = skill("ship", "go !`touch marker`")
+        val port = FakePort()
+        val calls = mutableListOf<String>()
+        val r = runBlocking {
+            SlashCommands.expandRun(
+                "/ship now", listOf(s), emptyList(), SkillVars(projectDir = "/workspace"), port,
+                gate = SlashGate { calls += "expansion"; null },
+                submitGate = SlashSubmitGate { calls += "submit:$it"; PromptSubmitVerdict.Blocked("no secrets") },
+            )
+        }
+        assertEquals(SlashResult.Refused("no secrets"), r)
+        assertEquals("the expansion gate must not even be asked", listOf("submit:/ship now"), calls)
+        assertTrue("nothing may run before the hook says yes: ${port.log}", port.log.isEmpty())
+    }
+
+    @Test
+    fun `a passing submit gate runs first with the raw line, then the expansion gate, then the commands`() {
+        val s = skill("ship", "go !`make`")
+        val order = mutableListOf<String>()
+        val port = object : SkillRunPort {
+            override suspend fun shell(owner: SkillRunOwner, command: String): RunResult { order += "shell"; return RunResult.Ok("done") }
+            override suspend fun fork(owner: SkillRunOwner, prompt: String) = RunResult.Ok("")
+        }
+        val r = runBlocking {
+            SlashCommands.expandRun(
+                "  /ship  now  ", listOf(s), emptyList(), SkillVars(projectDir = "/workspace"), port,
+                gate = SlashGate { order += "expansion:${it.prompt}"; null },
+                submitGate = SlashSubmitGate { order += "submit:$it"; PromptSubmitVerdict.Pass(listOf("ctx")) },
+            )
+        } as SlashResult.Expanded
+        assertEquals(listOf("submit:/ship  now", "expansion:/ship  now", "shell"), order)
+        assertEquals("the contexts ride along so the kernel does not run the hook again", listOf("ctx"), r.submitContexts)
+    }
+
+    @Test
+    fun `without a submit gate nothing is marked as screened, and plain input never reaches the gate`() {
+        val s = skill("ship", "x")
+        assertNull((expandRunRaw("/ship", s) as SlashResult.Expanded).submitContexts)
+        var asked = 0
+        val gate = SlashSubmitGate { asked++; PromptSubmitVerdict.Pass(emptyList()) }
+        runBlocking {
+            SlashCommands.expandRun("hello", listOf(s), emptyList(), SkillVars(), FakePort(), submitGate = gate)
+            SlashCommands.expandRun("/etc/hosts", listOf(s), emptyList(), SkillVars(), FakePort(), submitGate = gate)
+            SlashCommands.expandRun("/nope", listOf(s), emptyList(), SkillVars(), FakePort(), submitGate = gate)
+        }
+        assertEquals("not a command / unknown: the kernel screens plain text itself", 0, asked)
+    }
+
+    @Test
+    fun `an MCP prompt is screened on the typed line too, and a block refuses it`() {
+        val p = dev.min.agent.ext.mcp.McpPromptCommand("mcp__s__p", "s", "p", listOf(dev.min.agent.ext.mcp.McpPromptArgument("arg", true)))
+        val passed = runBlocking {
+            SlashCommands.expandRun("/mcp__s__p hi", emptyList(), emptyList(), SkillVars(), FakePort(), listOf(p), submitGate = SlashSubmitGate { PromptSubmitVerdict.Pass(listOf("c")) })
+        }
+        assertEquals(listOf("c"), (passed as SlashResult.McpPrompt).submitContexts)
+        val blocked = runBlocking {
+            SlashCommands.expandRun("/mcp__s__p hi", emptyList(), emptyList(), SkillVars(), FakePort(), listOf(p), submitGate = SlashSubmitGate { PromptSubmitVerdict.Blocked("nope") })
+        }
+        assertEquals(SlashResult.Refused("nope"), blocked)
+    }
+
+    private fun expandRunRaw(input: String, s: SkillDef) =
+        runBlocking { SlashCommands.expandRun(input, listOf(s), emptyList(), SkillVars(projectDir = "/workspace"), FakePort()) }
     @Test
     fun `the allowed tools reach the port with the owner`() {
         val s = skill("ship", "x", allowed = listOf("Bash(make build)"))

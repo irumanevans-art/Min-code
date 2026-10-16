@@ -11,6 +11,7 @@ import dev.min.agent.kernel.clearGoal
 import dev.min.agent.kernel.goalArgumentOf
 import dev.min.agent.kernel.parseGoalCommand
 import dev.min.agent.kernel.setGoal
+import dev.min.agent.kernel.promptSubmitHooks
 import dev.min.agent.kernel.userInvokedSkills
 import dev.min.agent.kernel.savedWorkflows
 import dev.min.agent.kernel.userSkillRunPort
@@ -21,6 +22,7 @@ import dev.min.agent.ext.skills.SkillVars
 import dev.min.agent.ext.skills.SlashCommands
 import dev.min.agent.ext.skills.SlashGate
 import dev.min.agent.ext.skills.SlashResult
+import dev.min.agent.ext.skills.SlashSubmitGate
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.protocol.ImagePart
 import dev.min.agent.protocol.ImageSource
@@ -231,13 +233,15 @@ class MinCommandHandler(
         // 分身已经接下这次输入（子 agent 的报告或后台启动的说明）：是成功，不是拒绝——输入框不该把原文退回去
         if (expanded is SlashInput.Handled) return notice(expanded.text)
         val input = if (expanded is SlashInput.Expanded) command.input.copy(text = expanded.body) else command.input
-        val accepted = runtime.send(ClientMsgId(command.commandId), partsOf(input), delivery, scanMcpMentions = expanded is SlashInput.Plain)
+        // 展开之前已对用户敲的原文跑过 UserPromptSubmit 的（斜杠展开出来的）带着结论交给内核，内核不再对展开后的正文重跑
+        val accepted = runtime.send(ClientMsgId(command.commandId), partsOf(input), delivery, scanMcpMentions = expanded is SlashInput.Plain,
+            submitScreened = (expanded as? SlashInput.Expanded)?.submitContexts)
         return if (accepted) CommandResult.Accepted else CommandResult.Duplicate
     }
 
     private sealed interface SlashInput {
         data object Plain : SlashInput
-        data class Expanded(val body: String) : SlashInput
+        data class Expanded(val body: String, val submitContexts: List<String>? = null) : SlashInput
         data class Refused(val reason: String) : SlashInput
         /** 斜杠命令自己处理完了这次输入（分身），[text] 作为说明显示 */
         data class Handled(val text: String) : SlashInput
@@ -261,6 +265,9 @@ class MinCommandHandler(
         ), runtime.userSkillRunPort(), gate = SlashGate { info ->
             // UserPromptExpansion hooks 先于任何预执行命令与分身（拦截必须先于副作用）；来源取冻结清单里的标签
             runtime.promptExpansionHooks("slash_command", info.name, info.args, entries.firstOrNull { it.name == info.name }?.source ?: info.source ?: "user", info.prompt)
+        }, submitGate = SlashSubmitGate { prompt ->
+            // UserPromptSubmit 对用户敲的原文，最先：拦下就连预执行命令也不跑（CC 2.1.299）；先后顺序见 SlashCommands.expandRun
+            runtime.promptSubmitHooks(prompt)
         })
         return when (result) {
             SlashResult.NotACommand -> SlashInput.Plain
@@ -281,7 +288,7 @@ class MinCommandHandler(
                 // 展开的文件内容不是人的引用：不扫描 MCP 提及；组件 hooks 只在调用确实获准后登记。
                 // 插件的 on-skill-invoke monitor 与桌面终端同一个入口起（userInvokedSkills），两个宿主不各写一份
                 runtime.userInvokedSkills(entries, result.names)
-                SlashInput.Expanded(result.text)
+                SlashInput.Expanded(result.text, result.submitContexts)
             }
         }
     }

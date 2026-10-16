@@ -10,8 +10,9 @@ import kotlinx.serialization.json.jsonObject
 
 /**
  * UserPromptExpansion（hooks.md :1385）：用户直接敲的 `/名字 参数`（或 MCP prompt）展开成提示词、送给模型之前。
- * 斜杠展开在宿主（cli 的 interpretInput / app），内核不知道用户敲了什么，所以由宿主在展开之后、发送之前调
- * [SessionRuntime.promptExpansionHooks]——和 Notification 一样「何时算触发由宿主决定，怎么处理在内核」。
+ * 斜杠展开在宿主（cli 的 interpretInputRun / app 的 expandSlash），内核不知道用户敲了什么，所以由宿主在认完名字之后、
+ * 预执行之前调 [SessionRuntime.promptExpansionHooks]——和 Notification 一样「何时算触发由宿主决定，怎么处理在内核」。
+ * 它晚于 UserPromptSubmit（[SessionRuntime.promptSubmitHooks]，对同一行原文、先跑；见 SlashCommands.expandRun）。
  *
  * 返回 null = 放行；否则是拦下的理由，宿主不要发这条消息、把理由给人看（原文：`reason` 展示给用户）。
  * additionalContext 在这里直接落成 [HookContextAdded]，挂到随后发出的那条人发的消息上（「alongside the expanded prompt」）。

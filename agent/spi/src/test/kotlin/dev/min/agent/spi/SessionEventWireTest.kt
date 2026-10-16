@@ -105,6 +105,10 @@ class SessionEventWireTest {
             InputWithdrawn(ClientMsgId("cm_1")),
             """{"type":"input_withdrawn","clientMsgId":"cm_1"}""",
         )
+        assertEventWire(
+            InputReceived(ClientMsgId("cm_3"), listOf(TextPart("expanded")), Delivery.Queue, submitScreened = listOf("ctx")),
+            """{"type":"input_received","clientMsgId":"cm_3","parts":[{"type":"text","text":"expanded"}],"delivery":"queue","submitScreened":["ctx"]}""",
+        )
     }
 
     // ---- 回合与模型请求事件 ----
