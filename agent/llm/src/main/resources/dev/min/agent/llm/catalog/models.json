@@ -107,8 +107,8 @@
       "outputPerMTok": 10.0,
       "cacheWritePerMTok": 2.5,
       "cacheWrite1hPerMTok": 4.0,
-      "cacheReadPerMTok": 0.2,
-      "asOf": "2026-10-07"
+      "cacheReadPerMTok": 0.1,
+      "asOf": "2026-10-16"
     },
     "family": "claude",
     "contextWindow": 1000000,

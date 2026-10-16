@@ -147,7 +147,7 @@ should be）编解码器已内置（`OpenAIChatErrors.kt`），不再重复写 `
 | claude-fable-5-1 | USD：入 10 / 出 50 / 写 12.5（1h 20）/ 读 0.25 | inventory anthropic.md §2/§6 + platform.claude.com/docs/en/about-claude/pricing.md | 2026-10-07 |
 | claude-opus-5-5 | USD：入 4 / 出 20 / 写 5（1h 8）/ 读 0.2 | 同上 | 2026-10-07 |
 | claude-sonnet-5 | USD：入 2 / 出 10 / 写 2.5（1h 4）/ 读 0.2 | 同上 | 2026-10-07 |
-| claude-sonnet-5-5 | USD：入 2 / 出 10 / 写 2.5（1h 4）/ 读 0.2 | Claude API 参考（claude-api skill 模型表，缓存于 2026-09-25：「same prices ($2 / $10 per MTok, cache reads $0.20)」；写入按 Anthropic 统一的 1.25× / 2× 输入价） | 2026-10-07 |
+| claude-sonnet-5-5 | USD：入 2 / 出 10 / 写 2.5（1h 4）/ 读 0.1 | platform.claude.com/docs/en/about-claude/pricing.md（读价为输入价的 0.05×，与 Opus 5.5 同档）；Claude Code 2.1.296 起内置目录同样改成 0.1（`tier_2_10_cache_read_0_10`，此前 0.2）。旧值 0.2 来自 2026-09-25 缓存的 claude-api skill 模型表 | 2026-10-16 |
 | claude-haiku-4-5-20251001 | USD：入 1 / 出 5 / 写 1.25（1h 2）/ 读 0.1 | 同上 | 2026-10-07 |
 | claude-haiku-5-5 | USD：≤10 万输入 token：入 0.1 / 出 0.5 / 写 0.125（1h 0.2）/ 读 0.01；>10 万：入 0.5 / 出 2.5 / 写 0.625（1h 1）/ 读 0.05 | 官方模型页 Pricing 表（同上，2026-10-08） | 2026-10-08 |
 | glm-5.3（zhipu / zhipu-openai） | CNY：入 8 / 出 28 / 读 2；无写价（隐式缓存，存储限时免费） | inventory zhipu.md §12.2 + docs.bigmodel.cn/cn/guide/start/pricing.md | 2026-10-07 |
