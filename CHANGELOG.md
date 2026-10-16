@@ -4,6 +4,8 @@
 
 ## 未发布
 
+## 2.1.37 — 2026-10-16
+
 - **跟进 Claude Code 2.1.296–2.1.301**（297、298 没有发布说明）。对照官方 CLI 的 npm 包、原生二进制与真实运行的全场景探针：Min 用到的帧、控制请求、参数和模型别名都没有改名或移除，不需要改协议。下面是这次对齐的行为。
   - **Min 引擎的命令判定更严**：`PATH=./bin ls`、`LD_PRELOAD=… cat`、`GIT_EXTERNAL_DIFF=… git diff` 这类带前置赋值的命令不再被当成只读直接放行（只有 `NODE_ENV`、`LANG`、`TZ` 这类确实无害的变量才剥掉）；单独给 `PATH`、`IFS`、`BASH_ARGV0`、`LD_*` 赋值再跑命令也要问。`bash -lc '…'`、`sh -ec`、`bash -euo pipefail -c` 里的命令现在能被看穿——以前 `bash -lc 'rm -rf /'` 在跳过权限确认下不会再问。`sudo`、`setsid`、`flock`、`watch`、`busybox` 包着的命令同样看穿，看不透的包装写法（`env -S`、`sudo -s`、`env -C`）一律问人。
   - **MCP 规则只管点名的那台服务器**：允许规则 `mcp__a` 不再顺带放行名叫 `a__b` 或 `a_` 的服务器，子 agent 的 `tools:` 同理；服务器名本身含 `__` 时写全名 `mcp__a__b__*`。
