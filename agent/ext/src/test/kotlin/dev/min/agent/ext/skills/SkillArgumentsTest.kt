@@ -72,6 +72,35 @@ class SkillArgumentsTest {
         assertEquals("\$1 hello", sub("\$1 \$a", "hello", listOf("1", "", "a")))
     }
 
+    // ---- 名字上限（CC 2.1.301：只填前 64 个名字，每个最长 64 字符） ----
+
+    @Test
+    fun `only the first 64 argument names are filled and later ones stay literal`() {
+        val names = (0 until 65).map { "n$it" }
+        val args = (0 until 65).joinToString(" ") { "v$it" }
+        assertEquals("v0 v63 \$n64", sub("\$n0 \$n63 \$n64", args, names))
+        // 名字之外的占位符（$ARGUMENTS[N]、$N）不受名字上限影响
+        assertEquals("v64", sub("\$ARGUMENTS[64]", args, names))
+    }
+
+    @Test
+    fun `a name of 65 characters is skipped but 64 is kept, and later names keep their own position`() {
+        val long = "a".repeat(65)
+        val ok = "b".repeat(64)
+        // 超长名字被跳过：它占的位置（第 0 个）留空，后面的名字仍对应第 1 个 / 第 2 个参数
+        assertEquals("\$$long|x1|x2", sub("\$$long|\$short|\$$ok", "x0 x1 x2", listOf(long, "short", ok)))
+        assertEquals("\$$long\n\nARGUMENTS: x0", sub("\$$long", "x0", listOf(long)))
+        assertEquals("x0", sub("\$$ok", "x0", listOf(ok)))
+    }
+
+    @Test
+    fun `names dropped for length do not count against the limit of 64`() {
+        // CC 先按长度滤、再取前 64：66 个名字里一个超长，剩下 65 个，最后一个（位置 65）落在 64 个之外
+        val names = listOf("x".repeat(65)) + (1..65).map { "m$it" }
+        val args = (0..65).joinToString(" ") { "v$it" }
+        assertEquals("v1 v64 \$m65", sub("\$m1 \$m64 \$m65", args, names))
+    }
+
     // ---- 没有收到参数的情况 ----
 
     @Test

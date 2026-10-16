@@ -2,7 +2,7 @@ package dev.min.agent.ext.skills
 
 /**
  * skill / command 正文里的参数替换。语义照 Claude Code 文档（skills.md「Argument substitution」），
- * 边角照 Claude Code 2.1.286 二进制里的实现（同样的替换顺序、同样的「值不再被二次展开」）：
+ * 边角照 Claude Code 2.1.286 / 2.1.301 二进制里的实现（同样的替换顺序、同样的「值不再被二次展开」）：
  *
  * - `$ARGUMENTS`：参数原文（照用户敲的，不拆不改）；`$ARGUMENTS[N]` 与 `$N`：第 N 个参数（从 0 起，shell 风格引号）；
  *   `$名字`：frontmatter `arguments` 里声明的名字，按位置对应。
@@ -70,15 +70,19 @@ object SkillArguments {
     }
 
     /**
-     * 替换 [content] 里的参数占位符。[argNames] 是 frontmatter `arguments` 声明的名字（空白名与纯数字名先被滤掉，位置按滤掉之后算——与 CC 一致）；
+     * 替换 [content] 里的参数占位符。[argNames] 是 frontmatter `arguments` 声明的名字（空白名与纯数字名先被滤掉，位置按滤掉之后算——与 CC 一致；
+     * 超过 [MAX_NAME_LENGTH] 字符的名字不参与替换，留下的名字最多取前 [MAX_NAMES] 个，其余的占位符原样留在正文里）；
      * [appendIfUnused] 为真且没有占位符收到参数时，末尾追加 `ARGUMENTS: …`。
      */
     fun substitute(content: String, args: String?, argNames: List<String> = emptyList(), appendIfUnused: Boolean = true): String {
         if (args == null) return content
         val values = parse(args)
-        // 名字长的先试：`$issue_id` 不能被名为 `issue` 的占位符吃掉前缀（CC 同样按长度倒序）
+        // 顺序照 CC 2.1.301：先滤空白名与纯数字名并按剩下的位置编号，再丢掉超过 64 字符的名字（它的位置留空、占位符原样），
+        // 然后只取前 64 个，最后名字长的先试：`$issue_id` 不能被名为 `issue` 的占位符吃掉前缀（CC 同样按长度倒序）
         val named = argNames.filter { it.isNotBlank() && !it.all(Char::isDigit) }
             .mapIndexed { index, name -> name to index }
+            .filter { it.first.length <= MAX_NAME_LENGTH }
+            .take(MAX_NAMES)
             .sortedByDescending { it.first.length }
         var received = false
         val out = StringBuilder(content.length + args.length)
@@ -161,6 +165,12 @@ object SkillArguments {
     private fun Char.isAsciiDigit() = this in '0'..'9'
 
     private fun isWord(c: Char) = c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c == '_'
+
+    /** 具名参数最多填几个（CC 2.1.301：名字多到成千上万时曾卡住数秒，二进制里是 `.slice(0, 64)`） */
+    const val MAX_NAMES = 64
+
+    /** 单个参数名最长多少字符（UTF-16 单元，与 JS 的 `.length` 一致）；超过的名字整个跳过，不截断（二进制里是 `name.length <= 64` 的过滤） */
+    const val MAX_NAME_LENGTH = 64
 
     private val DOUBLE_QUOTE_ESCAPABLE = setOf('"', '\\', '$', '`')
 }
