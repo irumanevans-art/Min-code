@@ -10,7 +10,7 @@
 ## token 代价
 记录 Usage；失败重试可能重复计费，完整成本估算尚未实现。
 ## 缓存影响
-恢复测试比实际 system / tools 与 fingerprint；保障同配置恢复，非跨升级承诺。
+恢复测试比实际 system / tools 与 fingerprint；保障同配置恢复，非跨升级承诺。MCP 工具 schema 被 API 拒收后降级为空 object：从那一次起前缀变一次，之后会话内不变。
 ## 已知限制
 工具完整回复后执行；恢复先结束旧回合，不自动 Replay / Reattach；子 agent、工作流、压缩和检查点未实现。
 

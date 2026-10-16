@@ -214,6 +214,10 @@ OAuth 凭证、注册信息、授权码、state、PKCE verifier 不属于会话�
 - `mcp_tools_loaded`：names 是本批发现的工具全名，按返回顺序追加并去重。顺序与集合完全由日志折叠。
   `ToolResult.effects` 的 `mcp_load_tools` 与 ToolOutcome 同一次提交生成该事件；下一次请求追加加载的 schema，
   内置、资源、alwaysLoad、ToolSearch 和 StructuredOutput 已有前缀保持原样。压缩不清除；子 agent / 分身继承模式和顺序。
+- `mcp_tool_schema_rejected`（2026-10-16，CC 2.1.300）：`name`（给模型的 MCP 工具全名）、`reason`（那次 400 的原文摘要，只给人看）。
+  API 拒收该工具的 inputSchema 后落盘；折叠进 `rejectedMcpSchemas`，之后组请求时这个工具改成无参数空 object、说明末尾追加固定一句，
+  **不从表里删除**（第 10 条：改 schema 不删工具；不改则每轮 400）。同一工具再来一条忽略。子 agent / 分身继承。
+  缓存：从降级那一次起稳定前缀变一次。
 
 ## M5 Workflow（2026-10-08，v1 增量）
 

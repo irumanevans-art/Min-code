@@ -126,7 +126,8 @@ internal object McpShaping {
      * 根级 `anyOf` / `oneOf` / `allOf` 压平成一个 object：allOf 合并属性并保留各分支的 required；
      * anyOf / oneOf 合并属性，各分支的 required 只写进说明、不强制（强制了会把合法的组合拒掉）。
      * 顶层属性名必须是 1–64 个 `[A-Za-z0-9_.-]`，否则排除这个工具（各家 API 对属性名都有这条限制）。
-     * 完整的 JSON Schema 元模式校验没做：坏 schema 由供应商的 400 兜底（那时会给出是哪个工具）
+     * 完整的 JSON Schema 元模式校验没做：坏 schema 由供应商的 400 兜底（那时会给出是哪个工具），
+     * 内核认出是 MCP 工具后降级为无参 schema 并重发，见 [retryAfterMcpSchemaRejection]
      */
     fun shape(raw: JsonObject): Shaped {
         val type = (raw["type"] as? JsonPrimitive)?.content

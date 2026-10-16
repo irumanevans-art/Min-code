@@ -153,7 +153,7 @@ fun SessionState.apply(record: EventRecord): SessionState {
         is ConversationRewound -> withRewind(record, e)
         is dev.min.agent.spi.McpServersLoaded, is dev.min.agent.spi.McpAuthentication, is dev.min.agent.spi.McpToolSearchConfigured,
         is dev.min.agent.spi.McpToolsLoaded, is dev.min.agent.spi.McpUrlElicitationAsked, is dev.min.agent.spi.McpUrlElicitationResolved,
-        is dev.min.agent.spi.McpToolsSnapshot -> foldMcp(record, e)
+        is dev.min.agent.spi.McpToolsSnapshot, is dev.min.agent.spi.McpToolSchemaRejected -> foldMcp(record, e)
         is dev.min.agent.spi.WorkflowSettingsDisabled, is dev.min.agent.spi.WorkflowCallIssued, is dev.min.agent.spi.WorkflowRequested,
         is dev.min.agent.spi.WorkflowApproved, is dev.min.agent.spi.WorkflowRunStarted, is dev.min.agent.spi.WorkflowNodeStarted,
         is dev.min.agent.spi.WorkflowNodeCompleted, is dev.min.agent.spi.WorkflowNodeReplayed, is dev.min.agent.spi.WorkflowProgress,
@@ -597,6 +597,9 @@ private fun SessionState.foldMcp(record: EventRecord, e: SessionEvent): SessionS
         mcpTools = e,
         presentation = if (e.note == null) presentation else presentation + SessionPresentation(record, history.lastOrNull()?.messageId),
     )
+    // 同一工具只记第一次：再来一条是重复降级，忽略
+    is dev.min.agent.spi.McpToolSchemaRejected ->
+        if (e.name in rejectedMcpSchemas) this else copy(rejectedMcpSchemas = rejectedMcpSchemas + (e.name to e.reason))
     else -> error("不属于「MCP」的事件：$e")
 }
 

@@ -220,6 +220,11 @@ data class SessionState(
     val lastEventAtMs: Long = 0,
     val mcpToolSearch: dev.min.agent.spi.McpToolSearchConfigured? = null,
     val loadedMcpTools: List<String> = emptyList(),
+    /**
+     * 被 API 拒收过 inputSchema 的 MCP 工具全名 → 那次 400 的原文摘要。由 [dev.min.agent.spi.McpToolSchemaRejected] 折叠；
+     * 组请求时这些工具改成无参数空 object（不从表里删除）。同一工具只记第一次。
+     */
+    val rejectedMcpSchemas: Map<String, String> = emptyMap(),
     /** 模型用 EndConversation 结束了这个会话（[dev.min.agent.spi.ConversationEnded]）：之后的用户输入不再开回合 */
     val ended: Boolean = false,
     val mcpQuestions: Map<QuestionId, AskedQuestion> = emptyMap(),

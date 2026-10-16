@@ -12,4 +12,4 @@ Anthropic Messages / OpenAI Chat / OpenAI Responses 的规范消息投影与线�
 ## 缓存影响
 Anthropic 缓存断点与可选 1h；Chat / Responses prompt_cache_key，longTtl 不自动映射。Responses 保留 phase / item id / encrypted_content，避免重新编码改变历史前缀。
 ## 已知限制
-Gemini 仅枚举；Responses 当前只支持文本 / 图片 / reasoning / 客户端 function，不支持原生服务端工具。生产 SSE 脱敏回放已有一个 Luna 夹具；供应商资料和逐家真网验收仍有空缺，见 docs/agent/08-进度与待办.md 和 openai/RESPONSES_NOTES.md。
+Gemini 仅枚举；Responses 当前只支持文本 / 图片 / reasoning / 客户端 function，不支持原生服务端工具。生产 SSE 脱敏回放已有一个 Luna 夹具；供应商资料和逐家真网验收仍有空缺，见 docs/agent/08-进度与待办.md 和 openai/RESPONSES_NOTES.md。400 点名「schema 被拒」只认 Anthropic 的 `tools.N.custom.input_schema`（下标）和 OpenAI 系的 `Invalid schema for function '…'`（名字）；Gemini 没有可核对的原文，不认。
