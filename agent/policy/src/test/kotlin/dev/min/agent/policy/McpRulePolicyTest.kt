@@ -43,9 +43,11 @@ class McpRulePolicyTest {
         assertTrue(v(call("mcp__github__get_issue", "github"), rule(RuleKind.Allow, "mcp__github__get_*")) is Verdict.Allow)
     }
 
-    @Test fun `without the server name deny keeps the prefix and allow needs the exact name`() {
-        assertTrue(v(call("mcp__a__b__tool", null), rule(RuleKind.Deny, "mcp__a")) is Verdict.Deny)
-        assertEquals(Verdict.Ask, v(call("mcp__a__tool", null), rule(RuleKind.Allow, "mcp__a")))
+    @Test fun `without the server name the first segment of the full name is the server`() {
+        // 兼容样本与旧日志里的审批不带服务器：mcp__a 放行 mcp__a__tool，仍不放行服务器 a_b 的工具。
+        // 含 __ 的服务器名在全名上切不准（mcp__a__b__tool 的服务器段就是 a），那种只在带服务器的调用上分得清
+        assertTrue(v(call("mcp__a__tool", null), rule(RuleKind.Allow, "mcp__a")) is Verdict.Allow)
+        assertEquals(Verdict.Ask, v(call("mcp__a_b__tool", null), rule(RuleKind.Allow, "mcp__a")))
         assertTrue(v(call("mcp__a__tool", null), rule(RuleKind.Allow, "mcp__a__tool")) is Verdict.Allow)
     }
 
