@@ -41,6 +41,11 @@ internal object CommandLoader {
     }
 
     internal suspend fun read(io: ConfigIo, source: ConfigSource, file: String, name: String): CommandDef? {
+        // 文件 / 文件夹名带隐藏 / 改变方向的字符或 < >：不提供，改名后才会出现（CC 2.1.299）；插件的 commands 也走这里
+        if (!isOfferableName(name)) {
+            io.notes += "跳过 ${shownName(file)}：命令名 `${shownName(name)}` 不合格，$NAME_RULE_NOTE"
+            return null
+        }
         val text = io.readText(file) ?: return null
         val fm = FrontmatterParser.parse(text, file)
         io.notes += fm.notes

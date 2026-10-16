@@ -320,6 +320,11 @@ class PluginBundle(
                 }
                 plugin.commands.forEach { command ->
                     val path = command.sourcePath?.let { GuestPath(GuestPaths.join(plugin.root, it)) } ?: inlinePath(plugin, command)
+                    if (command.content != null && !isOfferableName(command.name)) {
+                        // 内联 command 不经过 CommandLoader.read，名字在这里把关（磁盘上的那份由 read 把关）
+                        notes += "$label 的 command `${shownName(command.name)}` 不合格，已跳过：$NAME_RULE_NOTE"
+                        return@forEach
+                    }
                     val realPath = canonical(path).value
                     val commandRoot = canonical(GuestPath(plugin.root)).value.trimEnd('/')
                     if (!realPath.startsWith("$commandRoot/")) {

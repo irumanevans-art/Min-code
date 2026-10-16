@@ -98,6 +98,11 @@ internal object SkillLoader {
     }
 
     internal suspend fun readSkill(io: ConfigIo, source: ConfigSource, dir: String, dirName: String): SkillDef? {
+        // 目录名带隐藏 / 改变方向的字符或 < >：不提供，改名后才会出现（CC 2.1.299）；插件的 skills 也走这里
+        if (!isOfferableName(dirName)) {
+            io.notes += "跳过 ${shownName(dir)}：技能目录名 `${shownName(dirName)}` 不合格，$NAME_RULE_NOTE"
+            return null
+        }
         val file = GuestPaths.join(dir, "SKILL.md")
         val text = io.readText(file) ?: return null
         return skillFromText(text, source, file, dirName, io.notes)
@@ -109,7 +114,16 @@ internal object SkillLoader {
         notes += fm.notes
         val f = FrontmatterFields(fm.fields, file, notes)
         val p = PromptFields.read(f)
-        val name = f.string("name")?.trim()?.takeIf { it.isNotEmpty() } ?: dirName
+        val declared = f.string("name")?.trim()?.takeIf { it.isNotEmpty() }
+        val name = when {
+            declared == null -> dirName
+            isOfferableName(declared) -> declared
+            else -> {
+                // `name:` 不合格：忽略这个字段，回落到目录名（CC 2.1.299）
+                notes += "$file 的 `name:` `${shownName(declared)}` 不合格，已忽略、改用目录名 `${shownName(dirName)}`：$NAME_RULE_NOTE"
+                dirName
+            }
+        }
         return SkillDef(
             name = name,
             description = descriptionOrFirstLine(f.string("description"), fm.body),
