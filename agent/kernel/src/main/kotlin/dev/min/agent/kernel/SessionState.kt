@@ -139,6 +139,12 @@ data class SessionState(
      * 压缩改写了模型视图之后清空——那次的用量已经不代表下一次请求的大小
      */
     val lastRequestUsage: Usage? = null,
+    /**
+     * 最近一次完成的模型回复是哪个模型给的（具体型号，取自 [ModelRequestStarted.model]；还没回复过为 null）。
+     * 切到窗口更小的模型时，对话超出新窗口的那次摘要要由它来做（CC 2.1.301），而会话设置里的模型此刻已经是新的了。
+     * 与 [lastRequestUsage] 不同，压缩 / 回退不清它：它回答的是「这段对话是谁在撑着」，不是「上次请求多大」
+     */
+    val lastReplyModel: ModelRef? = null,
     /** 提示缓存的账：相邻两次请求比出来的失效与原因（[CacheWatch]），界面的用量段读它 */
     val cacheWatch: CacheWatch = CacheWatch(),
     /** 模型视图里被遮蔽的工具结果 → 原文所在的会话附件（docs/agent/detail/压缩设计.md §1） */
@@ -456,6 +462,8 @@ data class OpenRequest(
     val messageId: MessageId?,
     /** 已落盘的半截回答（崩溃后给界面看） */
     val segments: List<Part>,
+    /** 这次请求发给了哪个模型（[ModelRequestStarted.model]）；完成时记为 [SessionState.lastReplyModel] */
+    val model: ModelRef? = null,
 )
 
 data class CallState(

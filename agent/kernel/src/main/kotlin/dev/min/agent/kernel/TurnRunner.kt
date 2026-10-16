@@ -505,7 +505,7 @@ internal class TurnRunner(private val rt: SessionRuntime) {
         val attempts = RequestAttempts()
         // 发请求前按阈值遮蔽 / 摘要（docs/agent/detail/压缩设计.md §2）；撞墙时再压缩一次，只重试一次。
         // 回退链生效中（同一回合的后续请求）按回退模型的窗口算
-        compactor.beforeRequest(turnId, resolveActiveModel(rt.state.value, deps, rt::modelPermitted))
+        compactor.beforeRequest(turnId, resolveActiveModel(rt.state.value, deps, rt::modelPermitted), previousSummarizes = true)
         while (true) {
             val state = rt.state.value
             val model = resolveActiveModel(state, deps, rt::modelPermitted)

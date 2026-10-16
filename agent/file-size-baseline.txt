@@ -2,7 +2,7 @@
 # 只许缩小：文件变短后把这里的数字同步调低，拆到 800 行以内就删掉那一行；新文件超过 800 行会直接让构建失败。
 agent/cli/src/main/kotlin/dev/min/agent/cli/DesktopApp.kt 853
 agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt 856
-agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionHub.kt 1581
+agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionHub.kt 1580
 agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionRuntime.kt 1062
 agent/kernel/src/main/kotlin/dev/min/agent/kernel/ToolExecutor.kt 818
 agent/kernel/src/main/kotlin/dev/min/agent/kernel/TurnRunner.kt 884

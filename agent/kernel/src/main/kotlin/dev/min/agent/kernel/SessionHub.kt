@@ -325,21 +325,21 @@ class SessionHub(
     private val childGate = Semaphore(limits.maxConcurrentChildRequests)
 
     /**
-     * 起 hook agent 子会话并等它跑完一个回合，返回最终回复文本（没有文字给 null）。子会话只读
+     * 起 hook agent 子会话并等它跑完一个回合，返回最终回复文本（没有文字给 null）与「模型本身不可用」的标记（[HookAgentRun]）。子会话只读
      * （Read / Grep / Glob，CC 原文限定）、最多 [HOOK_AGENT_MAX_TURNS] 回合、不跑 SubagentStart hook、
      * 不写 SubagentSpawned——它不是委派，不进线程表；它的花费落自己的日志（ModelCharged，谁的账本
      * 谁记）。跑完就从 Hub 卸下：它不在任何在线汇总里，挂着只是泄漏；日志都在磁盘上，要查随时
      * peek。父回合被取消时由调用方（ModelHookRunner）经 [stopHookAgent] 停掉它
      */
-    internal suspend fun runHookAgent(parent: SessionRuntime, prompt: String, model: dev.min.agent.protocol.ModelRef? = null): String? {
+    internal suspend fun runHookAgent(parent: SessionRuntime, prompt: String, model: dev.min.agent.protocol.ModelRef? = null): HookAgentRun {
         val ps = parent.state.value
         // hook 不能再钩出 hook：hook-agent 的来历类型在 HookDriver 里挡掉模型侧 hook 类型
         val childId = SessionId(deps.ids.next("s"))
         val header = LogHeader(
             dev.min.agent.store.LOG_FORMAT_VERSION, childId, deps.clock.nowMs(), parent = parent.sessionId,
         )
-        // [model] 是调用方点名的审查模型（security-guidance 的 SECURITY_REVIEW_MODEL / SG_AGENTIC_MODEL，已过 availableModels 名单）；不给就用父会话的
-        val created = SessionCreated(ps.settings.cwd, model ?: ps.settings.model, dev.min.agent.protocol.PermissionMode.DontAsk, loadingModes = ps.created.loadingModes)
+        // [model] 是调用方点名的模型（hook 自己写的 / security-guidance 的审查模型，都已过名单）；不给就用触发 hook 的会话此刻在用的（子 agent 里是它自己的，不是根会话的）
+        val created = SessionCreated(ps.settings.cwd, model ?: ps.activeModel, dev.min.agent.protocol.PermissionMode.DontAsk, loadingModes = ps.created.loadingModes)
         val origin = SubagentOrigin(
             parent = parent.sessionId, root = ps.origin?.root ?: parent.sessionId,
             parentCall = CallId(deps.ids.next("hookcall")),
@@ -365,10 +365,9 @@ class SessionHub(
         )
         // 等子回合结束；调用方套着超时，超时后由 stopHookAgent 收
         child.state.first { it.turn == null && it.lastTurn != null }
-        val text = child.state.value.history.lastOrNull { it is HistoryEntry.Assistant }
-            ?.let { (it as HistoryEntry.Assistant).parts.filterIsInstance<TextPart>().joinToString("") { p -> p.text }.ifBlank { null } }
+        val run = HookAgentRun.of(child.state.value)
         unload(child.sessionId)
-        return text
+        return run
     }
 
     /** hook agent 超时或父回合被取消后收掉挂着的子回合：静音（不往父会话投报告）再打断，收完卸下 */

@@ -75,6 +75,9 @@ internal class HookTestRig(
     hookShellPath: (GuestPath) -> String = { it.value },
     exec: dev.min.agent.spi.Exec = dev.min.agent.testkit.FakeExec(),
     settingsInputs: dev.min.agent.ext.config.SettingsInputs = dev.min.agent.ext.config.SettingsInputs(),
+    /** 要测别名 / 多个模型时给：按请求的 ModelRef 解析（默认所有请求都落到 [model]） */
+    resolver: ModelResolver? = null,
+    modelAllowed: (dev.min.agent.protocol.ModelRef) -> Boolean = { true },
 ) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val store = FileSessionStore(folder, { 0L })
@@ -84,7 +87,8 @@ internal class HookTestRig(
         KernelDeps(
             clock = { 1_000 },
             ids = { prefix -> "${prefix}_${ids.incrementAndGet()}" },
-            models = { ResolvedModel(TEST_PROFILE, model) },
+            models = resolver ?: ModelResolver { ResolvedModel(TEST_PROFILE, model) },
+            modelAllowed = modelAllowed,
             tools = tools,
             host = HostPorts(fs, FakeSearch(), exec, { FakeArtifacts() }, httpHooks = http),
             platform = "test",

@@ -59,8 +59,12 @@ internal class Compactor(
     /** 已为「自动压缩被 PreCompact 拦下」写过 Note 的回合：同一回合只提示一次，不每个请求都刷 */
     private var autoBlockNoted: TurnId? = null
 
-    /** 发请求前调用：按阈值决定不动、遮蔽还是摘要。熔断后（连续失败 3 次）不再自动摘要，只遮蔽 */
-    suspend fun beforeRequest(turnId: TurnId, model: ResolvedModel) {
+    /**
+     * 发请求前调用：按阈值决定不动、遮蔽还是摘要。熔断后（连续失败 3 次）不再自动摘要，只遮蔽。
+     * [previousSummarizes]：刚切到窗口更小的模型、对话已经放不进它时，这次摘要由切换前的模型来做（CC 2.1.301，见 [previousModelFor]）。
+     * 回合内换回退模型那一次传 false——回退是因为原模型倒了，再让它做摘要只会白等一次失败
+     */
+    suspend fun beforeRequest(turnId: TurnId, model: ResolvedModel, previousSummarizes: Boolean = false) {
         val state = rt.state.value
         val budget = CompactionBudget.of(model.profile.contextWindow, model.profile.maxOutputTokens)
         val estimate = CompactionPlanner.estimate(state, fixedTokens(state, model))
@@ -71,7 +75,8 @@ internal class Compactor(
                 if (state.compactionFailures >= MAX_FAILURES) {
                     CompactionPlanner.maskCandidates(state, budget).takeIf { it.isNotEmpty() }?.let { mask(turnId, it.map { c -> c.first }) }
                 } else {
-                    when (val result = summarize(turnId, model, CompactionTrigger.Auto, null, plan.through, estimate)) {
+                    val previous = if (previousSummarizes) previousModelFor(state, model) else null
+                    when (val result = summarize(turnId, model, CompactionTrigger.Auto, null, plan.through, estimate, previous)) {
                         // 被拦：这次不压缩、照常发请求（CC：blocking automatic compaction skips it）；一回合一条 Note，不计熔断
                         is CompactResult.Blocked -> autoCompactionBlocked(turnId, result.reason)
                         else -> Unit
@@ -92,6 +97,34 @@ internal class Compactor(
     private fun fixedTokens(state: SessionState, model: ResolvedModel): Long {
         val request = assemble(state.copy(history = emptyList(), compaction = null), model.profile)
         return request.system.sumOf(Tokens::of) + request.tools.sumOf { Tokens.of(it.description) + Tokens.of(it.inputSchema.toString()) }
+    }
+
+    /**
+     * 切到窗口更小的模型后，这次摘要该由谁做：最近一次回复这段对话的那个模型（[SessionState.lastReplyModel]），
+     * 前提是它不是现在这个、窗口比现在这个大、名单仍放行、解析得出来；否则返回 null（照常用现在的模型）。
+     * 窗口不变或变大时永远是 null——行为与改动前完全一样。新模型放不下整段历史，摘要请求自己就会撞墙，
+     * 而小窗口的新模型写的摘要也不如原来撑得住这段对话的模型。时机放在请求前而不是 changeSettings 里：
+     * 摘要要落 CompactionStarted / 过 PreCompact hook，都挂在回合上；而且连切几次模型只在真要发请求时做一次
+     */
+    private suspend fun previousModelFor(state: SessionState, current: ResolvedModel): ResolvedModel? {
+        val ref = state.lastReplyModel?.takeIf { it != current.profile.ref } ?: return null
+        val previous = dev.min.agent.spi.catchingNonCancellation { deps.models.resolve(ref) }.getOrElse { e ->
+            noteSummarizerFallback("切换前的模型 ${ref.modelId} 解析不了（${e.message?.lineSequence()?.firstOrNull() ?: e.javaClass.simpleName}）", current)
+            return null
+        }
+        if (previous.profile.contextWindow <= current.profile.contextWindow) return null
+        if (!rt.modelPermitted(ref)) {
+            noteSummarizerFallback("切换前的模型 ${ref.modelId} 已不在 availableModels 里", current)
+            return null
+        }
+        return previous
+    }
+
+    private suspend fun noteSummarizerFallback(why: String, current: ResolvedModel) {
+        rt.commit(
+            listOf(Note(NoteLevel.Info, "对话超出了新模型的窗口，本想先用切换前的模型压缩，但$why，改由 ${current.profile.ref.modelId} 压缩")),
+            Durability.Batched,
+        )
     }
 
     // ---- 遮蔽 ----
@@ -120,6 +153,8 @@ internal class Compactor(
         instructions: String?,
         through: MessageId,
         estimate: Long,
+        /** 非空 = 先用它做这次摘要（切到更小窗口的模型之后）；它请求失败再退回 [model] 做 */
+        previous: ResolvedModel? = null,
     ): CompactResult {
         // PreCompact：拦下就不开始压缩（连 CompactionStarted 都不写），也不计入熔断
         preCompactBlocked(turnId, trigger, instructions)?.let { return it }
@@ -132,19 +167,34 @@ internal class Compactor(
         )
         // 撞墙时原样的前缀本身就超长：把全部工具结果遮掉再请求（缓存不中也只能这样）；自动 / 手动时用原前缀，几乎全命中缓存
         val view = if (trigger == CompactionTrigger.Overflow) state.copy(masked = state.masked + allCalls(state).associateWith { null }) else state
-        val base = assemble(view, model.profile)
-        val request = base.copy(
-            messages = base.messages + ModelMessage(Role.User, listOf(TextPart(instruction(instructions)))),
-            maxOutputTokens = minOf(model.profile.maxOutputTokens, SUMMARY_MAX_OUTPUT),
-        )
-        val (completed, failure) = try {
-            val gate = rt.requestGate
-            val done = if (gate == null) collect(model, request) else gate.withPermit { collect(model, request) }
-            done to null
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: ModelException) {
-            null to "模型请求失败（${e.kind}）：${e.message}"
+        // 摘要请求按做摘要的那个模型的 profile 组：它撑着这段对话时发的请求前缀就是这样的，缓存也还在
+        suspend fun attempt(summarizer: ResolvedModel): Pair<ModelStreamEvent.Completed?, String?> {
+            val base = assemble(view, summarizer.profile)
+            val request = base.copy(
+                messages = base.messages + ModelMessage(Role.User, listOf(TextPart(instruction(instructions)))),
+                maxOutputTokens = minOf(summarizer.profile.maxOutputTokens, SUMMARY_MAX_OUTPUT),
+            )
+            return try {
+                val gate = rt.requestGate
+                val done = if (gate == null) collect(summarizer, request) else gate.withPermit { collect(summarizer, request) }
+                done to null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ModelException) {
+                null to "模型请求失败（${e.kind}）：${e.message}"
+            }
+        }
+        var (completed, failure) = attempt(previous ?: model)
+        if (failure != null && previous != null) {
+            // 切换前的模型倒了（供应商不可用、没额度）：不卡会话，退回现在的模型做同一次压缩；它要是也放不下，
+            // 这次压缩失败，请求照发，由撞墙恢复路径兜底（与没有这个功能时一样）。失败的那次没有 ModelCharged，不重复计费
+            rt.commit(
+                listOf(Note(NoteLevel.Info, "用切换前的模型 ${previous.profile.ref.modelId} 压缩失败（$failure），改由 ${model.profile.ref.modelId} 压缩")),
+                Durability.Batched,
+            )
+            val retried = attempt(model)
+            completed = retried.first
+            failure = retried.second
         }
         val usage = completed?.usage ?: Usage()
         val written = completed?.message?.parts?.filterIsInstance<TextPart>()?.joinToString("") { it.text }?.trim().orEmpty()
