@@ -109,9 +109,9 @@ object NotebookEditTool : Tool<NotebookEditInput> {
         staleReadProblem(ctx, path, stat)?.let { return failResult(it) }
 
         val originalBytes = ctx.fs.read(path, 0, stat.size.toInt())
-        val raw = originalBytes.decodeToString()
-        val bom = raw.startsWith(BOM)
-        val text = raw.removePrefix(BOM)
+        // 严格解码，理由同 Edit：非 UTF-8 的文件宽松解码再写回会把非 ASCII 字符全换成 U+FFFD
+        val decoded = TextEncoding.decodeWritable(originalBytes) ?: return failResult(TextEncoding.refusal(path, "修改"))
+        val text = decoded.text
         val nb = when (val parsed = parseNotebook(path, text)) {
             is NotebookParse.Ok -> parsed.notebook
             is NotebookParse.Bad -> return failResult(parsed.message)
@@ -138,7 +138,7 @@ object NotebookEditTool : Tool<NotebookEditInput> {
             return failResult("改动后的 notebook 校验不通过，为免写坏文件没有修改。")
         }
 
-        val stored = preserveWrite(ctx, path, originalBytes, (if (bom) BOM + change.text else change.text).encodeToByteArray())
+        val stored = preserveWrite(ctx, path, originalBytes, decoded.encoding.encode(change.text))
         val written = checkNotNull(ctx.fs.stat(path)) { "写入后 stat 不到 $path" }
         val echo = PartsBuilder()
         change.shown?.let { renderCell(echo, it, change.shownIndex, imagesLeft = null) }
@@ -306,6 +306,4 @@ object NotebookEditTool : Tool<NotebookEditInput> {
             if (id !in used) return id
         }
     }
-
-    private val BOM = Char(0xFEFF).toString()
 }

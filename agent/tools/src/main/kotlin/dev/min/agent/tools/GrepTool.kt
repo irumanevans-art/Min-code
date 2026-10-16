@@ -17,6 +17,7 @@ import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.ToolTraits
 import dev.min.agent.spi.catchingNonCancellation
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.filter
@@ -137,9 +138,13 @@ object GrepTool : Tool<GrepInput> {
             multiline = input.multiline,
         )
         var matched = false
+        // 搜索本身失败（根读不了等）时不能当成「没有匹配」：那是假阴性，模型会据此断定代码里没有这个东西。
+        // 已经拿到命中就照常给结果（半路出错的少见情形），只有一条都没拿到才报错
+        var failure: Throwable? = null
+        val results = ctx.search.grep(query).catch { failure = it }
         val hits = if (content) {
             val rows = ArrayList<GrepHit>()
-            ctx.search.grep(query).takeWhile { hit ->
+            results.takeWhile { hit ->
                 if (rows.size.toLong() < limit.toLong() + 1) rows += hit
                 if (!hit.isContext) matched = true
                 // 前置上下文可能比 head_limit 还长：继续找到命中才停，避免误报「没有匹配」，但不再攒正文。
@@ -147,9 +152,12 @@ object GrepTool : Tool<GrepInput> {
             }.collect { }
             rows
         } else {
-            ctx.search.grep(query).filter { !it.isContext }.take(query.maxHits).toList().also { matched = it.isNotEmpty() }
+            results.filter { !it.isContext }.take(query.maxHits).toList().also { matched = it.isNotEmpty() }
         }
-        if (!matched) return ToolResult(listOf(TextPart("没有匹配")))
+        if (!matched) {
+            failure?.let { return failResult(searchFailure(it)) }
+            return ToolResult(listOf(TextPart("没有匹配")))
+        }
 
         return when (input.mode) {
             GrepMode.Content -> renderContent(hits, input)

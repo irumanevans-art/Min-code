@@ -22,7 +22,7 @@ data class EditInput(val path: GuestPath, val oldString: String, val newString: 
  * 按 old_string → new_string 改文件的一部分（规格 §4）。匹配链在 [EditMatch]。
  *
  * 进出时处理两件模型看不见的事：CRLF 换行（文件是 CRLF 时，匹配在 \n 形式上做，写回时换回 CRLF）
- * 与 UTF-8 BOM（原样保留）。模型从 Read 的输出里抄 old_string，那里既看不到 \r 也看不到 BOM。
+ * 与编码（UTF-8 / UTF-8 带 BOM / UTF-16LE 带 BOM 原样写回；其他编码拒绝，见 [TextEncoding]）。模型从 Read 的输出里抄 old_string，那里既看不到 \r 也看不到 BOM。
  */
 object EditTool : Tool<EditInput> {
     override val name = "Edit"
@@ -67,15 +67,16 @@ object EditTool : Tool<EditInput> {
         val stat = ctx.fs.stat(path)
         if (stat == null) {
             if (input.oldString.isNotEmpty()) return failResult("$path 不存在。要新建文件时 old_string 留空，或改用 Write。", ENOENT)
-            return write(ctx, path, null, TextFile(bom = false, crlf = false, text = ""), input.newString, 1, null, created = true)
+            return write(ctx, path, null, TextFile(TextEncoding.Utf8, crlf = false, text = ""), input.newString, 1, null, created = true)
         }
         if (stat.kind == FileKind.Directory) return failResult("$path 是目录，不能编辑。")
         if (stat.size > MAX_EDITABLE_FILE_BYTES) return failResult("$path 有 ${stat.size} 字节，超过 Edit 能处理的 $MAX_EDITABLE_FILE_BYTES 字节上限。")
         staleReadProblem(ctx, path, stat)?.let { return failResult(it) }
 
         val bytes = ctx.fs.read(path, 0, stat.size.toInt())
-        if (bytes.take(BINARY_PROBE_BYTES).any { it == 0.toByte() }) return failResult("$path 是二进制文件，不能按文本编辑。")
-        val file = TextFile.decode(bytes)
+        if (TextEncoding.looksBinary(bytes)) return failResult("$path 是二进制文件，不能按文本编辑。")
+        // 严格解码：GBK / Shift-JIS / Windows-1252 文件宽松解码再写回，所有非 ASCII 字符都会变成 U+FFFD，所以直接拒绝
+        val file = TextFile.decode(bytes) ?: return failResult(TextEncoding.refusal(path, "修改"))
 
         if (input.oldString.isEmpty()) {
             if (file.text.isNotEmpty()) {
@@ -157,28 +158,23 @@ object EditTool : Tool<EditInput> {
 
     private fun String.toLf(): String = replace("\r\n", "\n")
 
-    /** 文件的文本内容与它的换行、BOM 形式：匹配在 \n 形式上做，写回时照原样还原 */
-    private data class TextFile(val bom: Boolean, val crlf: Boolean, val text: String) {
-        fun encode(): ByteArray {
-            val body = if (crlf) text.replace("\n", "\r\n") else text
-            return (if (bom) BOM else "").plus(body).encodeToByteArray()
-        }
+    /** 文件的文本内容与它的换行、编码（含 BOM）形式：匹配在 \n 形式上做，写回时照原样还原 */
+    private data class TextFile(val encoding: TextEncoding, val crlf: Boolean, val text: String) {
+        fun encode(): ByteArray = encoding.encode(if (crlf) text.replace("\n", "\r\n") else text)
 
         companion object {
-            fun decode(bytes: ByteArray): TextFile {
-                val raw = bytes.decodeToString()
-                val bom = raw.startsWith(BOM)
-                val body = raw.removePrefix(BOM)
+            /** 不是 UTF-8 / UTF-16LE 带 BOM 的合法文本时返回 null（调用方拒绝） */
+            fun decode(bytes: ByteArray): TextFile? {
+                val decoded = TextEncoding.decodeWritable(bytes) ?: return null
+                val body = decoded.text
                 // 全部换行都是 CRLF 才当 CRLF 文件。混合换行的文件原样处理：个别行尾的 \r 留在文本里，
                 // 匹配时由「忽略行尾空白」那一级兜住，写回时也不会把别的行改成 CRLF
                 val crlf = body.contains("\r\n") && body.count { it == '\n' } == Regex("\r\n").findAll(body).count()
-                return TextFile(bom, crlf, if (crlf) body.replace("\r\n", "\n") else body)
+                return TextFile(decoded.encoding, crlf, if (crlf) body.replace("\r\n", "\n") else body)
             }
         }
     }
 
-    private const val BOM = "\uFEFF"
-    private const val BINARY_PROBE_BYTES = 8 * 1024
     private const val SNIPPET_CONTEXT = 4
     private const val SNIPPET_MAX_LINES = 40
 }

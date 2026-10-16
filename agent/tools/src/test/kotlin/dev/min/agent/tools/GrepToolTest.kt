@@ -120,6 +120,25 @@ class GrepToolTest {
         assertEquals("没有匹配", r.text)
     }
 
+    @Test
+    fun `搜索本身失败报错而不是没有匹配`() = runTest {
+        ctx.search.failure = java.io.IOException("无法读取搜索根 /work（没有读取权限）")
+        for (mode in listOf("files_with_matches", "content", "count")) {
+            val r = GrepTool.call(ctx, "pattern" to "x", "output_mode" to mode)
+            assertTrue(mode, r.isError)
+            assertEquals(mode, "搜索失败：无法读取搜索根 /work（没有读取权限）", r.text)
+        }
+    }
+
+    @Test
+    fun `已经有命中时半路出错照常给结果`() = runTest {
+        hits(hit("/w/1", 1, "x"))
+        ctx.search.failure = java.io.IOException("boom")
+        val r = GrepTool.call(ctx, "pattern" to "x")
+        assertFalse(r.text, r.isError)
+        assertEquals("/w/1", r.text)
+    }
+
     // ---- count ----
 
     @Test

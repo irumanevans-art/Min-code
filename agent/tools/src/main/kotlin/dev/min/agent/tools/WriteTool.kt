@@ -73,8 +73,10 @@ object WriteTool : Tool<WriteInput> {
         // 覆盖之前的原文：存编辑记录（检查点能撤回）与算 diff 用。新建文件的原文就是空串（diff 全是 + 行）；
         // 读失败（或文件太大）就不存、不给 diff，不影响写入本身
         val raw = if (existing == null) null else readBefore(ctx, path, existing.size)
-        val before = if (existing == null) "" else raw?.takeIf { it.size <= MAX_DIFF_BYTES }?.decodeToString()
-        val stored = preserveWrite(ctx, path, raw, input.content.encodeToByteArray())
+        val encoding = if (existing == null) TextEncoding.Utf8 else originalEncoding(ctx, path, raw)
+            ?: return failResult(TextEncoding.refusal(path, "写入"))
+        val before = if (existing == null) "" else raw?.takeIf { it.size <= MAX_DIFF_BYTES }?.let(TextEncoding::decodeLenient)
+        val stored = preserveWrite(ctx, path, raw, encoding.encode(input.content))
         val after = checkNotNull(ctx.fs.stat(path)) { "写入后 stat 不到 $path" }
         return okResult(
             "已写入 $path（${countLines(input.content)} 行）",
@@ -95,6 +97,21 @@ object WriteTool : Tool<WriteInput> {
         if (size > MAX_PRESERVE_BYTES) return null
         return catchingNonCancellation { ctx.fs.read(path, 0, size.toInt()) }.getOrNull()
     }
+
+    /**
+     * 覆盖时沿用原文件的编码（UTF-8 带 BOM 保留 BOM，UTF-16LE 带 BOM 按 UTF-16LE 写回）；原文件不是这几种形式就返回 null，
+     * 由调用方拒绝——否则 GBK 等文件被模型读成乱码后整份重写，等于静默转码。
+     * [raw] 为 null 是原文没读到：太大（超过 [MAX_PRESERVE_BYTES]）时整份验不了合法性，只看开头的 BOM 沿用，
+     * 其余按 UTF-8；读失败时也按 UTF-8（反正随后的写入多半同样失败，不为这个挡住写）。
+     */
+    private suspend fun originalEncoding(ctx: ToolContext, path: GuestPath, raw: ByteArray?): TextEncoding? {
+        if (raw != null) return TextEncoding.decodeWritable(raw)?.encoding
+        val head = catchingNonCancellation { ctx.fs.read(path, 0, BOM_PROBE_BYTES) }.getOrNull() ?: return TextEncoding.Utf8
+        return TextEncoding.detect(head).takeIf { it.writable }
+    }
+
+    /** UTF-32 BOM 的 4 字节：[TextEncoding.detect] 要看到这么多才分得清 UTF-16LE 与 UTF-32LE */
+    private const val BOM_PROBE_BYTES = 4
 
     /** diff 的原文上限：比这个大的文件只报「改过了」，不逐行展示 */
     private const val MAX_DIFF_BYTES = 2 * 1024 * 1024

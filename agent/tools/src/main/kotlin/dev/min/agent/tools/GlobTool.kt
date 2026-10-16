@@ -15,6 +15,7 @@ import dev.min.agent.spi.ToolProgress
 import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.ToolTraits
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.json.JsonObject
 
@@ -70,8 +71,13 @@ object GlobTool : Tool<GlobInput> {
         val rootStat = ctx.fs.stat(root) ?: return failResult("目录不存在：$root。", ENOENT)
         if (rootStat.kind != FileKind.Directory) return failResult("$root 不是目录，path 要给目录。")
 
-        val found = ctx.search.glob(GlobQuery(input.pattern, root, SCAN_LIMIT)).toList()
-        if (found.isEmpty()) return okResult("没有匹配的文件")
+        var failure: Throwable? = null
+        val found = ctx.search.glob(GlobQuery(input.pattern, root, SCAN_LIMIT)).catch { failure = it }.toList()
+        if (found.isEmpty()) {
+            // 搜索失败不能报成「没有匹配」（假阴性），理由同 Grep
+            failure?.let { return failResult(searchFailure(it)) }
+            return okResult("没有匹配的文件")
+        }
 
         // stat 不到的（列出之后被删了）当作最旧，而不是丢掉——丢掉会让「找到 N 个」对不上
         val sorted = found

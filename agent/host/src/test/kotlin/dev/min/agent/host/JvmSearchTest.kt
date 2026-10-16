@@ -232,6 +232,24 @@ class JvmSearchTest {
     }
 
     @Test
+    fun `搜索根不存在时 grep 与 glob 抛错而不是返回空`() {
+        val missing = GuestPath("/workspace/nope")
+        val g = assertThrows(java.io.IOException::class.java) { runBlocking { search.grep(GrepQuery("x", missing)).toList() } }
+        assertTrue(g.message, g.message!!.contains("无法读取搜索根 /workspace/nope（不存在）"))
+        val l = assertThrows(java.io.IOException::class.java) { runBlocking { search.glob(GlobQuery("*", missing)).toList() } }
+        assertTrue(l.message, l.message!!.contains("无法读取搜索根"))
+        // 宿主路径不能漏给模型
+        assertTrue(g.message, !g.message!!.contains("/data/files"))
+    }
+
+    @Test
+    fun `根存在但没有匹配时仍是空列表`() {
+        write("a.txt", "bar\n")
+        assertEquals(emptyList<GrepHit>(), grep("foo"))
+        assertEquals(emptyList<String>(), glob("*.zzz"))
+    }
+
+    @Test
     fun `flow 可取消，取第一条后不再遍历出错`() {
         write("a.txt", "foo\n")
         write("b.txt", "foo\n")

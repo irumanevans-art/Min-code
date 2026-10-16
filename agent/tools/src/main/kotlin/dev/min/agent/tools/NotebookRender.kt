@@ -60,7 +60,7 @@ internal suspend fun readNotebook(input: ReadInput, ctx: ToolContext, stamp: Fil
     if (stamp.size > MAX_NOTEBOOK_BYTES) {
         return failResult("$path 有 ${stamp.size} 字节，超过 Read 能处理的 notebook 上限 $MAX_NOTEBOOK_BYTES 字节（多半是内嵌了大量图片输出）。可以用 Bash 配合 jq 或 python 只取需要的单元。")
     }
-    val text = ctx.fs.read(path, 0, MAX_NOTEBOOK_BYTES.toInt()).decodeToString().removePrefix(Char(0xFEFF).toString())
+    val text = TextEncoding.decodeLenient(ctx.fs.read(path, 0, MAX_NOTEBOOK_BYTES.toInt()))
     val nb = when (val parsed = parseNotebook(path, text)) {
         is NotebookParse.Ok -> parsed.notebook
         is NotebookParse.Bad -> return failResult(parsed.message)

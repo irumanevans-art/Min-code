@@ -46,7 +46,6 @@ object ReadTool : Tool<ReadInput> {
     /** 文本文件一次最多读入这么多字节：一个几百 MB 的日志不该整个进内存。超出部分读不到，结果里会说明 */
     const val MAX_TEXT_BYTES = 8 * 1024 * 1024
 
-    private const val BINARY_SNIFF_BYTES = 8 * 1024
     private val IMAGE_TYPES = mapOf(
         "png" to "image/png", "jpg" to "image/jpeg", "jpeg" to "image/jpeg", "gif" to "image/gif", "webp" to "image/webp",
     )
@@ -112,14 +111,16 @@ object ReadTool : Tool<ReadInput> {
         // notebook 是 JSON，不能按行读：整本解析后按单元渲染（offset / limit 此时按单元计）
         if (path.isNotebook()) return readNotebook(input, ctx, stamp)
 
+        // 扩展名表补 NUL 嗅探的漏：xlsm / parquet / epub / heic 这类前 8KB 可能没有 NUL，会被当文本读出乱码
+        if (TextEncoding.isBinaryExtension(ext)) return failResult("$path 是二进制文件（.$ext），不能按文本读。")
         val bytes = ctx.fs.read(path, 0, MAX_TEXT_BYTES)
-        if (bytes.take(BINARY_SNIFF_BYTES).any { it == 0.toByte() }) {
+        if (TextEncoding.looksBinary(bytes)) {
             return failResult("$path 是二进制文件，不能按文本读。")
         }
         val cutByBytes = stat.size > bytes.size
         if (bytes.isEmpty()) return okResult("文件存在但是空的：$path", listOf(stamp))
 
-        val lines = splitLines(bytes.decodeToString())
+        val lines = splitLines(TextEncoding.decodeLenient(bytes))
         val total = lines.size
         if (input.offset > total) {
             return failResult("offset=${input.offset} 超出文件末尾：$path 只有 $total 行。")

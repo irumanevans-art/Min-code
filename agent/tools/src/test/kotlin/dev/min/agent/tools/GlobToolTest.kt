@@ -86,6 +86,15 @@ class GlobToolTest {
     }
 
     @Test
+    fun `搜索本身失败报错而不是没有匹配的文件`() = runTest {
+        found()
+        ctx.search.failure = java.io.IOException("无法读取搜索根 /work（不存在）")
+        val r = GlobTool.call(ctx, "pattern" to "*.zzz")
+        assertTrue(r.isError)
+        assertEquals("搜索失败：无法读取搜索根 /work（不存在）", r.text)
+    }
+
+    @Test
     fun `超过 100 条只列前 100 条并提示，列的是最新的 100 条`() = runTest {
         val paths = (1..150).map { "/work/f$it.txt" }
         paths.forEachIndexed { i, p -> fs.put(p, "", mtime = (i + 1).toLong()) }

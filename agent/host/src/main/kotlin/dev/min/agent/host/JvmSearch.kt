@@ -12,9 +12,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import java.io.IOException
+import java.nio.file.AccessDeniedException
 import java.nio.file.FileSystem
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.PathMatcher
 import java.nio.file.SimpleFileVisitor
@@ -44,7 +46,7 @@ class JvmSearch(private val fs: RootfsFileSystem) : Search {
         // include 走 ripgrep -g 的习惯：不含 '/' 的模式按文件名匹配任意深度，所以 `*.kt` 能命中 src/a.kt
         val include = query.include?.let { GlobFilter(root.fileSystem, it, anyDepthWhenBare = true) }
         var hits = 0
-        for (file in candidates(root)) {
+        for (file in candidates(root, rootGuest)) {
             currentCoroutineContext().ensureActive()
             if (include != null && !include.matches(file.rel)) continue
             if (query.exclude(guestOf(rootGuest, file.rel))) continue
@@ -66,7 +68,7 @@ class JvmSearch(private val fs: RootfsFileSystem) : Search {
         val root = fs.hostPath(rootGuest)
         val filter = GlobFilter(root.fileSystem, query.pattern, anyDepthWhenBare = false)
         var found = 0
-        for (file in candidates(root)) {
+        for (file in candidates(root, rootGuest)) {
             currentCoroutineContext().ensureActive()
             if (!filter.matches(file.rel)) continue
             if (query.exclude(guestOf(rootGuest, file.rel))) continue
@@ -80,8 +82,12 @@ class JvmSearch(private val fs: RootfsFileSystem) : Search {
     /** [rel] 是相对搜索根、以 '/' 分隔的路径（根本身是文件时为空串） */
     private class Candidate(val host: Path, val rel: String)
 
-    /** 列出搜索根下全部可搜的普通文件，已按相对路径排序。根是文件时只有它自己 */
-    private fun candidates(root: Path): List<Candidate> {
+    /**
+     * 列出搜索根下全部可搜的普通文件，已按相对路径排序。根是文件时只有它自己。
+     * 搜索根本身进不去（不存在、没权限、读目录失败）抛 [IOException]：返回空列表会被工具报成「没有匹配」，是假阴性
+     * （CC 2.1.301）。根下个别子目录 / 文件读不了照旧跳过——受限的系统目录很常见，不该让整次搜索失败。
+     */
+    private fun candidates(root: Path, rootGuest: GuestPath): List<Candidate> {
         val out = ArrayList<Candidate>()
         // walkFileTree 默认不跟随链接：链接在 visitFile 里 isRegularFile 为假，被跳过；目录链接不会被进入
         Files.walkFileTree(
@@ -95,11 +101,21 @@ class JvmSearch(private val fs: RootfsFileSystem) : Search {
                     return FileVisitResult.CONTINUE
                 }
 
-                override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult = FileVisitResult.CONTINUE
+                override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult {
+                    if (file == root) throw IOException("无法读取搜索根 $rootGuest（${reason(exc)}）", exc)
+                    return FileVisitResult.CONTINUE
+                }
             },
         )
         out.sortBy { it.rel }
         return out
+    }
+
+    /** 给模型看的失败原因：不带宿主路径（那是 Android 上的内部目录，对模型没意义也不该泄露） */
+    private fun reason(exc: IOException): String = when (exc) {
+        is NoSuchFileException -> "不存在"
+        is AccessDeniedException -> "没有读取权限"
+        else -> exc.javaClass.simpleName
     }
 
     private fun relative(root: Path, file: Path): String =
