@@ -3,9 +3,6 @@ package dev.min.agent.tools
 import dev.min.agent.spi.FileKind
 import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.ToolContext
-import java.nio.ByteBuffer
-import java.nio.charset.CharacterCodingException
-import java.nio.charset.CodingErrorAction
 
 /*
  * 把工作区文件交给用户（SendUserFile）或交给预览位（Artifact）前的共同检查。
@@ -44,12 +41,4 @@ internal fun workspaceFileReads(paths: List<GuestPath>, ctx: ToolContext): List<
  * 严格按 UTF-8 解码；字节里有非法序列就返回 null，而不是默默替换成 U+FFFD。
  * 预览位显示的是模型写的源文件，替换字符会让页面静默地错，不如直接说这个文件不是 UTF-8。
  */
-internal fun decodeUtf8Strict(bytes: ByteArray): String? = try {
-    Charsets.UTF_8.newDecoder()
-        .onMalformedInput(CodingErrorAction.REPORT)
-        .onUnmappableCharacter(CodingErrorAction.REPORT)
-        .decode(ByteBuffer.wrap(bytes))
-        .toString()
-} catch (e: CharacterCodingException) {
-    null
-}
+internal fun decodeUtf8Strict(bytes: ByteArray): String? = TextEncoding.strictDecode(Charsets.UTF_8, bytes)

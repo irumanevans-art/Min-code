@@ -22,7 +22,7 @@
   （恶意代码的边界见 docs/agent/04-子系统设计.md §4.4.1 的隔离层）。
 - `JvmSearch`（`Search` 的纯 JVM 实现，Android 拿不到随 APK 的 ripgrep 时兜底，桌面 CLI 直接用）与 ripgrep 的差异：
   不读 `.gitignore` / `.ignore`，只硬编码跳过 `.git` 与 `node_modules`；隐藏文件照搜；不跟随符号链接（有意，见类注释）；
-  按 UTF-8 解码（非法字节变替换符），不认其他编码；整文件读进内存，超过 64 MB 的文件跳过；先遍历排序再搜，
+  按 UTF-8 解码（非法字节变替换符），不认其他编码；搜索根本身读不了 / 不存在时抛 `IOException`（工具报「搜索失败：…」，不是「没有匹配」），根下个别子目录读不了照旧跳过；整文件读进内存，超过 64 MB 的文件跳过；先遍历排序再搜，
   大目录树上首条结果出得比 ripgrep 慢；正则是 Java 语法（与 Rust regex 大体一致，环视与反向引用 Java 支持而 ripgrep 默认不支持）。
 - `GrepQuery.maxHits` 只数实际命中、不数上下文；`JvmSearch` 按剩余命中配额逐文件扫描，工具另按 `head_limit` 裁显示行。
 

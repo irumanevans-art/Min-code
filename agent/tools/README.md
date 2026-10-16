@@ -16,8 +16,8 @@
 | 工具 | 入参 | 模型拿到的结果 |
 | --- | --- | --- |
 | Read | `file_path`（绝对）、`offset`（从 1 起）、`limit`（默认 2000） | `cat -n` 风格：行号右对齐 6 位 + 制表符 + 内容；单行超 2000 字符截断；没读完时末尾一行说明总行数与已显示范围。图片返回一句说明 + base64 图；`.ipynb` 渲染成 `<cell id index type>` 块（源码 + `<output>` 块；输出去 ANSI 色码、回车覆盖的进度条只留末版、单块超 8000 字符留头尾；png / jpeg / gif / webp 输出最多内嵌 8 张，其余占位），offset / limit 此时按单元计，没有 id 的旧格式单元叫 `cell-<序号>`（从 0 起）；空文件一句话；二进制、目录、不存在、offset 越界都是带处理建议的错误 |
-| Write | `file_path`（绝对）、`content` | 一句「已写入 路径（N 行）」。覆盖已有文件必须先 Read 且读后未被改，否则错误并告诉它「先 Read / 重新 Read」 |
-| Edit | `file_path`、`old_string`、`new_string`、`replace_all` | 先读后写；逐级唯一匹配，replace_all 仅精确匹配；返回附近最多 40 行带行号内容，保留 CRLF / BOM，不生成 unified diff |
+| Write | `file_path`（绝对）、`content` | 一句「已写入 路径（N 行）」。覆盖已有文件必须先 Read 且读后未被改，否则错误并告诉它「先 Read / 重新 Read」；覆盖时沿用原文件的 UTF-8 BOM / UTF-16LE BOM，原文件是 GBK 等其他编码则拒绝（建议 iconv 显式转码） |
+| Edit | `file_path`、`old_string`、`new_string`、`replace_all` | 先读后写；逐级唯一匹配，replace_all 仅精确匹配；返回附近最多 40 行带行号内容，保留 CRLF 与编码（UTF-8 / UTF-8 带 BOM / UTF-16LE 带 BOM），其他非 UTF-8 编码拒绝并建议用 iconv 显式转码，不生成 unified diff |
 | NotebookEdit | `notebook_path`（绝对，.ipynb）、`cell_id`、`new_source`、`cell_type`、`edit_mode`（replace 默认 / insert / delete） | 先读后写（同 Edit 的 lastSeen 机制）；按 id 定位单元，找不到时列出现有 id；只替换 / 插入 / 删除目标单元那一段文本，其余字节原样保留（缩进、键顺序、别的单元的输出）；replace code 单元清空 outputs 与 execution_count；insert 在 nbformat ≥ 4.5 时生成 8 位十六进制 id。回显改动后的那个单元 |
 | Glob | `pattern`、`path`（可选） | 绝对路径逐行，修改时间从新到旧，最多 100 条，超出注明；无结果一句「没有匹配的文件」 |
 | Grep | `pattern`、`path`、`glob`、`output_mode`、`-i`、`-n`、`-C`、`multiline`、`head_limit`（默认 250） | files_with_matches：路径列表；count：`路径:命中数`；content：`路径:行号:内容`，上下文行用 `-`，不相邻的组之间 `--`。超 head_limit 注明；命中行超 500 字符截断；无命中「没有匹配」 |
@@ -59,7 +59,7 @@
 
 ## 已知限制
 
-- Read：文本文件一次最多读入 8 MB，更大的文件后面的内容读不到（说明里会提示）；只认 UTF-8（非 UTF-8 会出替换字符）；二进制只看前 8 KB 有无 NUL；图片不缩放，超 5 MB 直接报错。
+- Read：文本文件一次最多读入 8 MB，更大的文件后面的内容读不到（说明里会提示）；认 UTF-8（含 BOM，BOM 不出现在内容里）与带 BOM 的 UTF-16LE / UTF-16BE，其余非法 UTF-8（GBK 等）宽松显示、会出替换字符；二进制看前 8 KB 有无 NUL（带 UTF-16 BOM 的除外）加一张扩展名表（xlsx / parquet / epub / heic / zip 等，见 `TextEncoding`）；图片不缩放，超 5 MB 直接报错。
 - Write：不检查父目录是否存在，缺失时的行为（报错还是自动建目录）由宿主的 `writeAtomic` 决定；先读后写依赖 mtime 与大小，同一毫秒内大小不变的外部改动检测不到。
 - Read（notebook）：整本读入再解析，上限 10 MiB（含大量内嵌图片的 notebook 容易超，超了建议 Bash + jq）；offset / limit 按单元计而不是按行；只认 nbformat 4（旧的 3 报错并建议 nbconvert）；图片只内嵌 png / jpeg / gif / webp，svg 等给占位；输出里的 text/html、application/json 等没有 text/plain 时只给占位，不渲染。
 - NotebookEdit：不能新建 notebook（用 Write）；不能一次改多个单元（逐个调用）；`cell-<序号>` 的序号在插入 / 删除后会变，没有 id 的 notebook 里要先重新 Read；只用 8 位随机十六进制做新 id，不与已有 id 重复但不保证全局唯一；缩进靠文件开头的空白推断，压成一行的 notebook 写成无空格的压缩形式；检测到全文只有 ASCII 却带 `\uXXXX`（≥ 0x80）转义时，新内容也按 ensure_ascii 转义；写前把结果重新解析并与预期逐单元比对，不一致就拒绝写入（宁可失败不写坏）；replace code 单元清空输出，这与 Jupyter 界面里「改源码输出仍保留」不同，沿用 Claude Code 的做法；单元的 attachments 等附属键在 replace 时原样保留（转成 code 类型时不会清理 markdown 的 attachments）。

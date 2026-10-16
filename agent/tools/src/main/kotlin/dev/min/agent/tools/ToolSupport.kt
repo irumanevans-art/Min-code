@@ -145,11 +145,11 @@ internal data class StoredContents(val before: ContentId?, val after: ContentId?
  */
 internal suspend fun preserveWrite(ctx: ToolContext, path: GuestPath, original: ByteArray?, updated: ByteArray): StoredContents {
     val before = original?.let { ctx.preserve(it) }
-    val baselineText = original?.decodeToString() ?: if (ctx.lsp.available && ctx.fs.stat(path) == null) "" else null
+    val baselineText = original?.let(TextEncoding::decodeLenient) ?: if (ctx.lsp.available && ctx.fs.stat(path) == null) "" else null
     val token = ctx.lsp.beforeEdit(path, baselineText)
     ctx.fs.writeAtomic(path, updated)
     val after = ctx.preserve(updated)
-    return StoredContents(before, after, ctx.lsp.afterEdit(path, updated.decodeToString(), token))
+    return StoredContents(before, after, ctx.lsp.afterEdit(path, TextEncoding.decodeLenient(updated), token))
 }
 
 internal fun failResult(text: String, errorKind: String? = null) = ToolResult(listOf(TextPart(text)), isError = true, errorKind = errorKind)
@@ -181,3 +181,6 @@ internal fun staleReadProblem(
     val seen = ctx.lastSeen(path) ?: return unreadMessage
     return if (seen.size != current.size || seen.modifiedMs != current.modifiedMs) staleMessage else null
 }
+
+/** Grep / Glob 的搜索本身失败（根读不了、遍历出错）时给模型的话：与「没有匹配」区分开（CC 2.1.301） */
+internal fun searchFailure(cause: Throwable): String = "搜索失败：${cause.message?.takeIf { it.isNotBlank() } ?: cause.javaClass.simpleName}"

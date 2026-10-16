@@ -35,6 +35,7 @@ import dev.min.agent.spi.UserQuestion
 import dev.min.agent.spi.WorkspaceFs
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.last
 import kotlinx.coroutines.flow.take
@@ -141,21 +142,30 @@ class FakeFs : WorkspaceFs {
 class FakeSearch : Search {
     var hits: List<GrepHit> = emptyList()
     var globbed: List<GuestPath> = emptyList()
+
+    /** 非 null 时搜索在吐完 [hits] / [globbed] 之后抛出它（设了空结果就等于「一条都没拿到就失败」） */
+    var failure: Throwable? = null
     val grepQueries = mutableListOf<GrepQuery>()
     val globQueries = mutableListOf<GlobQuery>()
 
     override fun grep(query: GrepQuery): Flow<GrepHit> {
         grepQueries += query
         var matches = 0
-        return hits.asFlow().takeWhile { hit ->
+        val capped = hits.asFlow().takeWhile { hit ->
             if (!hit.isContext) matches++
             matches <= query.maxHits
         }
+        return failing(capped)
     }
 
     override fun glob(query: GlobQuery): Flow<GuestPath> {
         globQueries += query
-        return globbed.asFlow().take(query.maxResults)
+        return failing(globbed.asFlow().take(query.maxResults))
+    }
+
+    private fun <T> failing(source: Flow<T>): Flow<T> = flow {
+        emitAll(source)
+        failure?.let { throw it }
     }
 }
 
