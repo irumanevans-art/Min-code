@@ -29,7 +29,7 @@ import java.time.Instant
  * 向 stdout 写事件帧。
  *
  * 下面的 schema 对照官方 CLI 二进制（@anthropic-ai/claude-code，最近一次完整校对
- * v2.1.295；2.1.270 的 permission_denials / bashEditDiff 等仍有效）中内嵌的 zod schema。
+ * v2.1.301；2.1.270 的 permission_denials / bashEditDiff 等仍有效）中内嵌的 zod schema。
  * 2.1.273–283 对照结论：Min 发的 control_request 子类型、启动参数和 env 都没改名或移除；
  * 新增的要跟的只有错误应答的 `error_code` 和一直没接的 `control_cancel_request`（见 [ClaudeCodeEvent.ControlCancel]），
  * 新 system 子类型全是内部帧（见 NOISE_SYSTEM_SUBTYPES）。
@@ -48,6 +48,13 @@ import java.time.Instant
  * initialize 的 message_uuid；工具侧新增 OfferChromeSetup（连浏览器扩展，-p 下不会走到）、Agent 的 `effort` 入参、
  * WebFetch 的 `offset`、Grep 的 total。要跟的只有模型：2.1.293 起别名 `haiku` 是 Haiku 5.5
  * （原生 1M、list_models 报 effort low…max），见 [ClaudeCodeModelCatalog]。
+ * 2.1.295–301 对照结论（297、298 没有发布说明；npm 包 sdk-tools.d.ts 差分 + 原生二进制 zod 字面量与 describe 文档串差分 + 真 CLI 全场景探针，
+ * 帧普查没有 Min 丢掉的帧）：帧类型、system / control_request 子类型、can_use_tool、task_* 与 background_tasks_changed 的 schema、
+ * 模型别名（list_models）一个没变。新增的全是可选或 @internal：工具入参 Read 的 `allow_large`、Cron 输出的 `nextFireAt`，
+ * list_models 的 `supportsThinkingOff`（5.x 全是 false；Min 不提供关思考，不用接），init 的 `original_cwd` / `additional_directories`，
+ * can_use_tool 的 decision_reason_hook_* 等显示用字段，set_model 的 `only_if_model_is_current` 与 error_code `model_not_current`。
+ * 行为上：set_model 不等压缩就应答（切到小窗口模型的「先用旧模型摘要」发生在下一轮请求前，帧与自动压缩相同）；
+ * 空闲压缩（2.1.299）挂在 GrowthBook 开关下、headless 没有宿主时不会在两轮之间压缩；transcript 新增 api-request* 大行，见 TranscriptLineFilter.kt。
  * fork 子 agent（Agent 的 `subagent_type:"fork"`，-p 下要 CLAUDE_CODE_FORK_SUBAGENT=1 才开，Min 不设，用户可在供应商自定义 env 里加）
  * 帧上与别的后台子 agent 一样：task_started{subagent_type:"fork", is_backgrounded:true, spawn_depth, prompt}、
  * Agent 结果 async_launched、子帧顶层多带 subagent_type / task_description、can_use_tool 带 agent_id（= task_id），

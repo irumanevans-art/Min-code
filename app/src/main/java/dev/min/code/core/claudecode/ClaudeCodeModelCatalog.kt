@@ -12,7 +12,7 @@ package dev.min.code.core.claudecode
  * Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5 是**原生 1M**、不用加 `[1m]`。
  *
  * 数据来源：CLI 二进制内置的模型表（`context:{window, native_1m, supports_1m_suffix}`；
- * 最近一次对照 v2.1.283）与官方 model-config 文档。**CLI 回报的值永远优先**
+ * 最近一次对照 v2.1.301）与官方 model-config 文档。**CLI 回报的值永远优先**
  * （`get_context_usage.maxTokens`、`list_models[].supportedEffortLevels`），这里只在它没说的时候兜底。
  */
 object ClaudeCodeModelCatalog {
