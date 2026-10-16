@@ -385,6 +385,8 @@ data class PendingInput(
     val parts: List<Part>,
     val delivery: Delivery,
     val origin: InputOrigin = InputOrigin.User,
+    /** 见 [InputReceived.submitScreened] */
+    val submitScreened: List<String>? = null,
 )
 
 sealed interface HistoryEntry {

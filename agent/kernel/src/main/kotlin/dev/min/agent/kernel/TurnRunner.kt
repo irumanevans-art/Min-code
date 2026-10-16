@@ -22,7 +22,6 @@ import dev.min.agent.ext.hooks.StopFailureInput
 import dev.min.agent.ext.hooks.StopInput
 import dev.min.agent.ext.hooks.SubagentStopInput
 import dev.min.agent.ext.hooks.TeammateIdleInput
-import dev.min.agent.ext.hooks.UserPromptSubmitInput
 import dev.min.agent.protocol.ClientMsgId
 import dev.min.agent.spi.CompactionTrigger
 import dev.min.agent.spi.HookContextAdded
@@ -300,15 +299,15 @@ internal class TurnRunner(private val rt: SessionRuntime) {
 
     /**
      * 让人发的输入过 UserPromptSubmit hooks（hooks设计 §7）：拦下的落 [InputBlocked]（不进历史，界面退回输入框并显示理由），
-     * 加的上下文记下来，提升后挂到那条消息上。返回 true = 有输入被拦下
+     * 加的上下文记下来，提升后挂到那条消息上；宿主在斜杠展开前已跑过的（submitScreened）不重跑。返回 true = 有输入被拦下
      */
     private suspend fun screen(pending: List<PendingInput>): Boolean {
         var blocked = false
         for (input in pending) {
             if (input.origin != InputOrigin.User || input.clientMsgId in screened) continue
+            input.submitScreened?.let { screened[input.clientMsgId] = it; continue }
             val prompt = input.parts.filterIsInstance<TextPart>().joinToString("\n") { it.text }
-            val specific = HookJson.encodeToJsonElement(UserPromptSubmitInput.serializer(), UserPromptSubmitInput(prompt = prompt)).jsonObject
-            val outcome = hooks.run(HookEvent.UserPromptSubmit, null, specific, rt.state.value.turn?.turnId)
+            val outcome = hooks.runUserPromptSubmit(prompt, rt.state.value.turn?.turnId)
             screened[input.clientMsgId] = outcome?.contexts.orEmpty()
             if (outcome == null) continue
             if (outcome.decision == HookOutcome.Decision.Stop) {

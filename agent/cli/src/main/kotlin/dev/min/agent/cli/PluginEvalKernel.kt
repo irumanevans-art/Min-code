@@ -133,12 +133,18 @@ internal class LocalEvalKernel(
         try {
             val finished = withTimeoutOrNull(remainingMs()) {
                 val action = evalInput(runtime, case.prompt)
+                // 与真实入口同一个先后：UserPromptSubmit（用户敲的原文）→ UserPromptExpansion → 登记 skill hooks → 发送；
+                // 斜杠展开出来的才在这里预检，普通提示词仍由内核提升时跑
+                val screened = if (action.names.isEmpty()) null else when (val verdict = runtime.promptSubmitHooks(case.prompt)) {
+                    is dev.min.agent.ext.skills.PromptSubmitVerdict.Blocked -> error(verdict.reason)
+                    is dev.min.agent.ext.skills.PromptSubmitVerdict.Pass -> verdict.contexts
+                }
                 promptExpansionBlock(runtime, case.prompt, action)?.let { error(it) }
                 action.names.forEach { name -> runtime.state.value.skills?.entries?.firstOrNull { it.name == name }?.let { entry ->
                     entry.hooks?.let { runtime.registerComponentHooks(entry.kind.name.lowercase(), name, entry.source ?: "plugin", it) }
                     runtime.skillInvoked(name)
                 } }
-                runtime.send(ClientMsgId("eval-input"), listOf(TextPart(action.text)))
+                runtime.send(ClientMsgId("eval-input"), listOf(TextPart(action.text)), submitScreened = screened)
                 runtime.state.first { it.turn == null && it.lastTurn != null }
                 runtime.awaitIdle(); true
             }

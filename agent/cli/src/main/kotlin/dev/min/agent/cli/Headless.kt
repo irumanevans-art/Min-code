@@ -198,7 +198,7 @@ private suspend fun sendPrompt(
         catch (e: Exception) { stderr.println("MCP prompts 发现失败：${e::class.simpleName}"); emptyList() }
     } else emptyList()
     val config = app.config()
-    val action = if (runtime.savedWorkflows().any { it.name == effective.trim().removePrefix("/").takeWhile { !it.isWhitespace() } }) InputAction.Send(effective, humanInput = false) else interpretInputRun(effective, config.skills + runtime.nestedSkillDefs(), config.commands, app.skillVars(runtime), runtime.userSkillRunPort(), prompts, slashGate(runtime))
+    val action = if (runtime.savedWorkflows().any { it.name == effective.trim().removePrefix("/").takeWhile { !it.isWhitespace() } }) InputAction.Send(effective, humanInput = false) else interpretInputRun(effective, config.skills + runtime.nestedSkillDefs(), config.commands, app.skillVars(runtime), runtime.userSkillRunPort(), prompts, slashGate(runtime), submitGate(runtime))
     // UserPromptExpansion：被拦就按参数错误退出（与展不开的命令同一档），理由给人看
     if (action is InputAction.Prompt) promptExpansionBlock(runtime, effective, action)?.let { stderr.println(it); return 2 }
     val parts = when (action) {
@@ -223,7 +223,8 @@ private suspend fun sendPrompt(
         }
     }
     // 只有人写的提示词才扫 `@server:uri`；展开出来的 skill / prompt 文本不扫（MCP2 复核 H2）
-    runtime.send(ClientMsgId(UUID.randomUUID().toString()), parts, scanMcpMentions = action is InputAction.Send && action.humanInput)
+    val screened = (action as? InputAction.Send)?.submitContexts ?: (action as? InputAction.Prompt)?.submitContexts
+    runtime.send(ClientMsgId(UUID.randomUUID().toString()), parts, scanMcpMentions = action is InputAction.Send && action.humanInput, submitScreened = screened)
     runtime.awaitIdle()
     return null
 }

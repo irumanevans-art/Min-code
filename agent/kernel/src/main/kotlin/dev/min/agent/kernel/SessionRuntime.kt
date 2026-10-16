@@ -456,10 +456,10 @@ class SessionRuntime private constructor(
     // ---- 命令 ----
 
     /**
-     * 收一条用户输入。同一个 [clientMsgId] 重发只收一次（返回 false）。
-     * 空闲时直接开回合；回合进行中时，[Delivery.Steer] 在当前工具批结束后送达，[Delivery.Queue] 等下一回合。
+     * 收一条用户输入。同一个 [clientMsgId] 重发只收一次（返回 false）。空闲时直接开回合；回合进行中时，[Delivery.Steer] 在当前工具批结束后送达，[Delivery.Queue] 等下一回合。
+     * [submitScreened] 非 null = 宿主已在斜杠展开前对用户原文跑过 UserPromptSubmit（见 [promptSubmitHooks]），提升时不再重跑，只挂它给的上下文。
      */
-    suspend fun send(clientMsgId: ClientMsgId, parts: List<Part>, delivery: Delivery = Delivery.Queue, scanMcpMentions: Boolean = false): Boolean = inputPrepareLock.withLock {
+    suspend fun send(clientMsgId: ClientMsgId, parts: List<Part>, delivery: Delivery = Delivery.Queue, scanMcpMentions: Boolean = false, submitScreened: List<String>? = null): Boolean = inputPrepareLock.withLock {
         if (clientMsgId in state.value.seenInputs) return@withLock false
         // 会话已由模型结束（EndConversation）：不再开回合，只留一句说明（日志里有，界面与 CLI 都看得到）
         if (state.value.ended) {
@@ -475,7 +475,7 @@ class SessionRuntime private constructor(
         val workflow = prepareSavedWorkflow(clientMsgId, prepared)
         startsInFlight.incrementAndGet()
         try {
-            commitIf(listOfNotNull(workflow, InputReceived(clientMsgId, prepared, delivery)), Durability.Sync) { clientMsgId !in it.seenInputs }
+            commitIf(listOfNotNull(workflow, InputReceived(clientMsgId, prepared, delivery, submitScreened = submitScreened)), Durability.Sync) { clientMsgId !in it.seenInputs }
                 ?: return@withLock false
             startTurnIfIdle(TurnTrigger.User)
         } finally {
@@ -813,7 +813,7 @@ class SessionRuntime private constructor(
     }
 
     /**
-     * 宿主把用户敲的斜杠命令展开成提示词之后、发送之前调用（hooks.md UserPromptExpansion）。
+     * 宿主在斜杠命令认完名字之后、预执行之前调用（hooks.md UserPromptExpansion；晚于 [promptSubmitHooks]）。
      * 返回 null = 照常发送；返回理由 = 被 hook 拦下，不要发送，把理由给人看。additionalContext 已经记进日志，随后发的那条消息自带
      */
     suspend fun promptExpansionHooks(expansionType: String, commandName: String, commandArgs: String, commandSource: String?, prompt: String): String? =

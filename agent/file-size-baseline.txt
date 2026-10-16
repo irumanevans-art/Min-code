@@ -5,4 +5,4 @@ agent/kernel/src/main/kotlin/dev/min/agent/kernel/McpManager.kt 856
 agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionHub.kt 1580
 agent/kernel/src/main/kotlin/dev/min/agent/kernel/SessionRuntime.kt 1062
 agent/kernel/src/main/kotlin/dev/min/agent/kernel/ToolExecutor.kt 818
-agent/kernel/src/main/kotlin/dev/min/agent/kernel/TurnRunner.kt 884
+agent/kernel/src/main/kotlin/dev/min/agent/kernel/TurnRunner.kt 883

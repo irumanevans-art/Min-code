@@ -376,3 +376,5 @@ Responses 的 `custom_tool_call` 冻结在 `OpaquePart`，同时投影为 `ToolC
 - 无日志格式变化（2026-10-12，MessageDisplay）：它是宿主上屏那一刻的 hook，**不写任何会话事件**——替换后的文字只给屏幕，会话日志与模型看到的助手文字永远是原文；每一批 hook 只留一条 `hooks_ran`（`event: "MessageDisplay"`）。流式时每批（完成的行）一条，配了这个 hook 的会话日志里这类记录会比较多。
 
 - v1 增量（2026-10-16，MCP 规则按服务器匹配）：`PermissionAsk` 新增可选字段 `mcpServer`（MCP 工具所属服务器的规范化名，其余工具缺省、不落盘）。权限规则据它判断 `mcp__服务器` 管不管这次调用（CC 2.1.299：`mcp__a` 不再放行服务器 `a__b`）。旧日志里的 MCP 审批没有这个字段，规则退回只看全名：拒绝 / 询问按前缀、允许只认全名精确相等。旧版本读到新字段直接忽略。
+
+- v1 增量（2026-10-16，斜杠命令先过 UserPromptSubmit）：`input_received` 新增可选字段 `submitScreened`（`List<String>?`，默认 null、不落盘）。非 null = 宿主已在斜杠命令 / skill 展开**之前**对用户敲的原文跑过 UserPromptSubmit hooks（放行），内容是它们带来的 additionalContext；内核提升这条输入时不再对（已展开的）正文重跑，只把这些上下文挂到消息上。null = 没跑过，提升时照常跑（普通消息走这条）。旧日志没有这个字段，读出来就是没跑过。含新字段的日志旧版本打不开；旧日志照常读。
