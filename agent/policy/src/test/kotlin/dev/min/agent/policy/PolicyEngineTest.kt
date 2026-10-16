@@ -56,11 +56,15 @@ class PolicyEngineTest {
         for (prefix in prefixes) {
             val rule = PermissionRule.parse(RuleKind.Allow, "Bash($prefix python *)", "user")!!
             assertTrue(rule.raw, PolicyEngine.suspendedInAuto(rule))
-            // 赋值由既有匹配器剥掉；验证真实可匹配的内层规则，不能为匹配表扩大默认授权。
-            val matching = if (prefix == "VAR=value") PermissionRule.parse(RuleKind.Allow, "Bash(python *)", "user")!! else rule
-            assertTrue("Default ${matching.raw}", v(bash("$prefix python -c 'print(1)'"), PolicyContext(PermissionMode.Default, listOf(matching))) is Verdict.Allow)
-            assertEquals(matching.raw, Verdict.Ask, v(bash("$prefix python -c 'print(1)'"), PolicyContext(PermissionMode.Auto, listOf(matching))))
+            // watch 把参数用空格拼成一行交给 sh -c：引号要包住整条，否则 `print(1)` 的括号在 sh 里是语法错误
+            val command = if (prefix.startsWith("watch")) "$prefix \"python -c 'print(1)'\"" else "$prefix python -c 'print(1)'"
+            assertTrue("Default ${rule.raw}", v(bash(command), PolicyContext(PermissionMode.Default, listOf(rule))) is Verdict.Allow)
+            assertEquals(rule.raw, Verdict.Ask, v(bash(command), PolicyContext(PermissionMode.Auto, listOf(rule))))
         }
+        // VAR 不在安全前置变量名单上：只写内层程序的规则批准不了带这个前缀的命令（CC 只剥 NODE_ENV 这类安全变量）
+        val inner = PermissionRule.parse(RuleKind.Allow, "Bash(python *)", "user")!!
+        assertEquals(Verdict.Ask, v(bash("VAR=value python -c 'print(1)'"), PolicyContext(PermissionMode.Default, listOf(inner))))
+        assertTrue(v(bash("NODE_ENV=test python -c 'print(1)'"), PolicyContext(PermissionMode.Default, listOf(inner))) is Verdict.Allow)
         for (program in listOf("osascript", "Rscript", "tclsh", "tclsh8.6", "gawk", "/usr/bin/python3.12", "python*", "sh")) {
             val rule = PermissionRule.parse(RuleKind.Allow, "Bash($program *)", "user")!!
             assertTrue(rule.raw, PolicyEngine.suspendedInAuto(rule))

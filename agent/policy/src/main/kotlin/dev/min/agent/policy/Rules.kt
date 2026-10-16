@@ -90,12 +90,15 @@ internal class RuleMatcher(private val cwd: GuestPath, private val home: GuestPa
         return false
     }
 
-    fun matchesCommand(rule: PermissionRule, cmd: SimpleCommand): Boolean {
+    /**
+     * [forAllow]：允许规则对 [SimpleCommand.allowForms]（带 `LD_PRELOAD=x`、sudo 这类前缀的命令要连前缀一起批准，
+     * 与 CC 只剥安全前置变量一致），拒绝 / 询问规则对 [SimpleCommand.denyForms]（前缀全剥掉，加前缀躲不开）。
+     */
+    fun matchesCommand(rule: PermissionRule, cmd: SimpleCommand, forAllow: Boolean = false): Boolean {
         if (rule.tool != "Bash") return false
         val spec = rule.specifier ?: return false
         val pattern = bashPattern(spec)
-        return pattern.matches(cmd.text) || pattern.matches(cmd.originalText) ||
-            cmd.outerForms.any { pattern.matches(it.joinToString(" ")) }
+        return (if (forAllow) cmd.allowForms else cmd.denyForms).any { pattern.matches(it) }
     }
 
     fun matchesPath(rule: PermissionRule, access: PathAccess, tool: String? = null): Boolean {

@@ -27,6 +27,8 @@ object CommandSafety {
     )
 
     fun isReadOnly(cmd: SimpleCommand): Boolean {
+        // `PATH=./bin ls`、`LD_PRELOAD=x cat a`、`sudo cat /etc/shadow`：程序名对得上只读清单，跑的却未必是那个程序、那个身份
+        if (cmd.riskyPrefix.isNotEmpty()) return false
         if (cmd.redirects.any { it.writesFile }) return false
         // 通配可能扩成 -delete 等选项；只有所有选项均只读的程序才免批。
         if (cmd.hasUnquotedGlob && cmd.program in setOf("find", "sort", "sed", "git")) return false
@@ -87,13 +89,13 @@ object CommandSafety {
             (cmd.program == "rmdir" || cmd.argv.drop(1).any { RECURSIVE_FLAG.matches(it) || it == "--recursive" })) {
             return "递归删除的目标来自管道，删到哪里要执行时才知道"
         }
-        // sudo / doas 换个身份跑后面那条：剥掉再看（在 proot 里 sudo 多半就是 root，不能当成更安全）
-        if (cmd.program == "sudo" || cmd.program == "doas") {
-            val inner = elevated(cmd.argv.drop(1)) ?: return null
-            return dangerReason(cmd.copy(argv = inner), all)
-        }
+        // sudo / doas 由 ShellAnalyzer 当包装剥掉，这里看到的已是被提权的那条（在 proot 里 sudo 多半就是 root，不能当成更安全）
         val args = cmd.argv.drop(1)
         val targets = args.filterNot { it.startsWith("-") }
+        // 程序名本身来自变量（`$RM -rf /`，或 `BASH_ARGV0=rm` 之后的 `$0 -rf /`）：跑的是什么执行时才知道，参数又是递归处理关键路径的形态
+        if ('$' in cmd.argv.firstOrNull().orEmpty() && args.any { RECURSIVE_FLAG.matches(it) || it == "--recursive" }) {
+            targets.firstOrNull { isCritical(it) }?.let { return "要执行的程序来自变量，参数是递归处理关键路径 $it 的形态" }
+        }
         when (cmd.program) {
             "rm", "rmdir", "shred" -> {
                 val recursive = cmd.program == "rmdir" || args.any { RECURSIVE_FLAG.matches(it) || it == "--recursive" }
@@ -127,27 +129,14 @@ object CommandSafety {
         if (cmd.program.startsWith("mkfs.")) return "${cmd.program} 会抹掉磁盘或分区"
         cmd.redirects.firstOrNull { it.writesFile && it.target.startsWith("/dev/") && it.target != "/dev/null" }
             ?.let { return "直接写设备 ${it.target}" }
-        // 下载后直接交给解释器执行：curl … | sh
-        val readsScriptFromStdin = cmd.program in setOf("sh", "bash", "dash", "zsh") && args.none { !it.startsWith("-") }
+        // 下载后直接交给解释器执行：curl … | sh（`bash -o pipefail` 也是从标准输入读脚本）
+        val readsScriptFromStdin = cmd.program in WrapperSyntax.SHELLS &&
+            WrapperSyntax.shellInvocation(args) == WrapperSyntax.ShellInvocation.Stdin
         if (readsScriptFromStdin && all.any { it.program == "curl" || it.program == "wget" }) return "下载的内容直接交给 shell 执行"
         return null
     }
 
     private val FIND_NAME_FILTERS = setOf("-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex")
-
-    /** sudo 的选项里 -u / -g / -C / -h / -p 带一个值；遇到 -- 或第一个非选项就是被提权的命令。认不出（-s / -i 开 shell）返回 null */
-    private fun elevated(args: List<String>): List<String>? {
-        var rest = args
-        while (rest.isNotEmpty() && rest.first().startsWith("-")) {
-            val opt = rest.first()
-            rest = when {
-                opt == "--" -> return rest.drop(1).ifEmpty { null }
-                opt in setOf("-u", "-g", "-C", "-h", "-p", "-U", "-r", "-t", "-T") -> rest.drop(2)
-                else -> rest.drop(1)
-            }
-        }
-        return rest.ifEmpty { null }
-    }
 
     private fun isCritical(target: String): Boolean {
         val t = target.trim()

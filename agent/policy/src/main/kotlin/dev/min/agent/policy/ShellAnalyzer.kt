@@ -16,10 +16,32 @@ data class SimpleCommand(
     /** 保留外层调用用于规则原文匹配，内层 argv 仍负责 deny 与底线分析。 */
     val outerForms: List<List<String>> = emptyList(),
     val unquotedGlobIndices: Set<Int> = emptySet(),
+    /** 命令前的赋值词（去掉引号后的 `NAME=value`），[original] 不含它们 */
+    val assignments: List<String> = emptyList(),
+    /**
+     * 剥掉的前缀里改变「这条命令怎么跑」的部分：不在安全名单上的赋值（含 env / sudo 后面的，见 [ShellVariables]）、
+     * sudo / doas、会建锁文件的 flock。非空时这条命令不算只读，允许规则只认带着这些前缀的原文；
+     * 拒绝 / 询问规则照旧按内层命令匹配——加个前缀躲不开拒绝。
+     */
+    val riskyPrefix: List<String> = emptyList(),
+    /** 外层调用连同它前面的赋值（[outerForms] 不带赋值，给拒绝 / 询问规则用） */
+    val outerWritten: List<List<String>> = emptyList(),
 ) {
     val program: String get() = argv.firstOrNull()?.substringAfterLast('/').orEmpty()
     val text: String get() = argv.joinToString(" ")
     val originalText: String get() = original.joinToString(" ")
+    private val written: String get() = (assignments + original).joinToString(" ")
+
+    /** 拒绝 / 询问规则对的写法：内层命令、包装前的原文、外层调用，都去掉前置赋值——加前缀躲不开拒绝 */
+    val denyForms: List<String>
+        get() = listOf(text, originalText) + outerForms.map { it.joinToString(" ") }
+
+    /** 允许规则对的写法：[riskyPrefix] 非空时只认带着赋值的原文与外层调用（前缀也得批准），否则同 [denyForms] 再加带赋值的原文 */
+    val allowForms: List<String>
+        get() {
+            val outer = outerWritten.map { it.joinToString(" ") }
+            return if (riskyPrefix.isNotEmpty()) listOf(written) + outer else denyForms + written + outer
+        }
 }
 
 data class Redirect(val op: String, val target: String) {
@@ -46,9 +68,20 @@ sealed interface ShellAnalysis {
 object ShellAnalyzer {
     private const val MAX_NESTING = 2
 
-    /** 包装命令：剥掉它们，看被包装的那条命令 */
-    private val WRAPPERS = setOf("timeout", "nice", "nohup", "time", "command", "env", "exec", "stdbuf", "xargs")
-    private val SHELLS = setOf("bash", "sh", "dash", "zsh")
+    /**
+     * 包装命令：剥掉它们，看被包装的那条命令（选项语法在 [WrapperSyntax]）。sudo / doas 也剥——不剥的话
+     * `sudo bash -c 'rm -rf /'`、`sudo timeout 5 rm -rf /` 的内层命令底线看不见；换身份这件事记进 [SimpleCommand.riskyPrefix]。
+     */
+    private val WRAPPERS = setOf(
+        "timeout", "nice", "nohup", "time", "command", "env", "exec", "stdbuf", "xargs", "setsid", "flock", "watch", "busybox",
+        "sudo", "doas",
+    )
+
+    /** 这些包装本身就改变命令怎么跑：换身份、建锁文件 */
+    private val RISKY_WRAPPERS = setOf("sudo", "doas", "flock")
+
+    /** 包装后面可以直接跟 `NAME=value`，效果同前置赋值 */
+    private val ASSIGNING_WRAPPERS = setOf("env", "sudo")
     private val RESERVED = setOf(
         "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac",
         "function", "select", "[[", "]]", "!", "{", "}", "coproc",
@@ -121,37 +154,60 @@ object ShellAnalyzer {
             }
             i++
         }
-        // 前置的变量赋值（FOO=1 cmd）不影响命令是什么；只有赋值没有命令的一行什么都不执行
         val firstCommand = words.indexOfFirst { !it.assignment }
-        if (firstCommand < 0) return Built.Many(emptyList())
+        val prefix = if (firstCommand < 0) words else words.take(firstCommand)
+        // 只有赋值没有命令的一行本身什么都不执行，但给 PATH、IFS、BASH_ARGV0 这类变量赋值会改变同一行后面的命令
+        if (firstCommand < 0) {
+            prefix.firstNotNullOfOrNull { ShellVariables.standaloneRisk(it.text) }?.let { return Built.Fail(it) }
+            return Built.Many(emptyList())
+        }
+        prefix.firstNotNullOfOrNull { ShellVariables.integerRisk(it.text) }?.let { return Built.Fail(it) }
         val argv = words.drop(firstCommand)
         if (argv.first().text in RESERVED && !argv.first().quotedAny) return Built.Fail("含控制结构（${argv.first().text}）")
 
         val original = argv.map { it.text }
-        val unwrapped = unwrap(argv) ?: return Built.Fail("包装命令的写法认不出")
+        val u = unwrap(argv) ?: return Built.Fail("包装命令的写法认不出")
+        u.assignments.firstNotNullOfOrNull { ShellVariables.integerRisk(it.text) }?.let { return Built.Fail(it) }
+        val assignments = prefix.map { it.text }
+        val riskyPrefix = (prefix + u.assignments).filterNot { ShellVariables.isSafePrefix(it.text, it.expansion) }.map { it.text } + u.risks
+        val wrapped = argv.take(argv.size - u.words.size)
+        val fromXargs = wrapped.any { it.text.substringAfterLast('/') == "xargs" }
+        val unwrapped = u.words
+        // 剥开内层脚本（bash -c、watch）后：外层的重定向、前缀与 xargs 标记都要带到每条内层命令上
+        fun nested(script: Token.Word, what: String): Built {
+            if (script.expansion) return Built.Fail("$what 的脚本含变量")
+            if (depth >= MAX_NESTING) return Built.Fail("$what 嵌套过深")
+            return when (val inner = analyze(script.text, depth + 1)) {
+                is ShellAnalysis.Untrusted -> Built.Fail(inner.reason)
+                is ShellAnalysis.Parsed -> Built.Many(inner.commands.map {
+                    it.copy(
+                        redirects = it.redirects + redirects,
+                        outerForms = it.outerForms + listOf(original),
+                        outerWritten = it.outerWritten + listOf(assignments + original),
+                        // 剥开的 xargs 仍会从 stdin 补参数；再剥 shell 不能丢掉已有递归删除底线。
+                        fromXargs = it.fromXargs || fromXargs,
+                        riskyPrefix = riskyPrefix + it.riskyPrefix,
+                    )
+                })
+            }
+        }
+        u.watchScript?.let { return nested(it, "watch") }
         if (unwrapped.isEmpty()) {
-            return Built.Many(listOf(SimpleCommand(original, redirects, argv.any { it.expansion }, original)))
+            return Built.Many(
+                listOf(SimpleCommand(original, redirects, argv.any { it.expansion }, original, assignments = assignments, riskyPrefix = riskyPrefix)),
+            )
         }
         val program = unwrapped.first().text.substringAfterLast('/')
         if (program == "eval" || program == "source" || program == ".") return Built.Fail("$program 执行的内容静态看不到")
 
-        // bash -c "…"：剥开再查里面那段脚本
-        if (program in SHELLS) {
-            val c = unwrapped.indexOfFirst { it.text == "-c" }
-            if (c >= 0) {
-                val inner = unwrapped.getOrNull(c + 1) ?: return Built.Fail("$program -c 后面缺少脚本")
-                if (inner.expansion) return Built.Fail("$program -c 的脚本含变量")
-                if (depth >= MAX_NESTING) return Built.Fail("$program -c 嵌套过深")
-                return when (val nested = analyze(inner.text, depth + 1)) {
-                    is ShellAnalysis.Untrusted -> Built.Fail(nested.reason)
-                    is ShellAnalysis.Parsed -> Built.Many(nested.commands.map {
-                        it.copy(
-                            redirects = it.redirects + redirects, outerForms = it.outerForms + listOf(original),
-                            // 剥开的 xargs 仍会从 stdin 补参数；再剥 shell 不能丢掉已有递归删除底线。
-                            fromXargs = it.fromXargs || argv.take(argv.size - unwrapped.size).any { word -> word.text.substringAfterLast('/') == "xargs" },
-                        )
-                    })
-                }
+        // bash -c "…"、bash -lc "…"、bash -euo pipefail -c "…"：剥开再查里面那段脚本
+        if (program in WrapperSyntax.SHELLS) {
+            when (val invocation = WrapperSyntax.shellInvocation(unwrapped.drop(1).map { it.text })) {
+                null -> return Built.Fail(
+                    if (unwrapped.drop(1).any { it.text == "-c" }) "$program -c 后面缺少脚本" else "$program 的选项认不出",
+                )
+                is WrapperSyntax.ShellInvocation.Inline -> return nested(unwrapped[1 + invocation.script], "$program -c")
+                else -> Unit
             }
         }
         return Built.Many(
@@ -162,51 +218,62 @@ object ShellAnalyzer {
                     hasExpansion = unwrapped.any { it.expansion },
                     original = original,
                     hasUnquotedGlob = unwrapped.any { it.unquotedGlob },
-                    fromXargs = argv.take(argv.size - unwrapped.size).any { it.text.substringAfterLast('/') == "xargs" },
+                    fromXargs = fromXargs,
                     unquotedGlobIndices = unwrapped.indices.filter { unwrapped[it].unquotedGlob }.toSet(),
+                    assignments = assignments,
+                    riskyPrefix = riskyPrefix,
                 ),
             ),
         )
     }
 
+    /**
+     * 剥完包装剩下的：[words] 是被包装的命令；[assignments] 是 env / sudo 后面的 `NAME=value`；
+     * [risks] 是本身改变命令怎么跑的包装（sudo、flock）；[watchScript] 非空时 watch 会把它交给 `sh -c`。
+     */
+    private class Unwrapped(
+        val words: List<Token.Word>,
+        val assignments: List<Token.Word>,
+        val risks: List<String>,
+        val watchScript: Token.Word? = null,
+    )
+
     /** 剥掉包装命令及其选项；返回 null = 认不出包装的写法 */
-    private fun unwrap(argv: List<Token.Word>): List<Token.Word>? {
+    private fun unwrap(argv: List<Token.Word>): Unwrapped? {
         var rest = argv
+        val assignments = mutableListOf<Token.Word>()
+        val risks = mutableListOf<String>()
         while (rest.isNotEmpty()) {
             val head = rest.first()
-            if (head.quotedAny) return rest
+            if (head.quotedAny) break
             val name = head.text.substringAfterLast('/')
-            if (name !in WRAPPERS) return rest
+            if (name !in WRAPPERS) break
             rest = rest.drop(1)
-            when (name) {
-                // 带参数的 xargs 会改变内层 argv，不能拿内层规则替它作批准。
-                "xargs" -> if (rest.isEmpty() || rest.first().text.startsWith("-")) return listOf(head) + rest
-                // timeout [选项] 时长 命令
-                "timeout" -> {
-                    // -s 信号、-k 时长各带一个值
-                    while (rest.firstOrNull()?.text?.startsWith("-") == true) {
-                        rest = rest.drop(if (rest.first().text in setOf("-s", "-k", "--signal", "--kill-after")) 2 else 1)
-                    }
-                    if (rest.isEmpty()) return null
-                    rest = rest.drop(1)
-                }
-                "nice" -> rest = when {
-                    rest.firstOrNull()?.text == "-n" -> rest.drop(2)
-                    rest.firstOrNull()?.text?.matches(Regex("-n?-?\\d+")) == true -> rest.drop(1)
-                    else -> rest
-                }
-                "time" -> rest = rest.dropWhile { it.text == "-p" }
-                // command -v / -V 是查询，不执行后面的命令
-                "command" -> {
-                    if (rest.firstOrNull()?.text in setOf("-v", "-V")) return rest.let { listOf(head) + it }
-                    rest = rest.dropWhile { it.text == "-p" }
-                }
-                "env" -> rest = rest.dropWhile { it.text.startsWith("-") || ASSIGNMENT.matches(it.text) }
-                "stdbuf" -> rest = rest.dropWhile { it.text.startsWith("-") }
-                "nohup", "exec" -> Unit
+            // 带参数的 xargs 会改变内层 argv，不能拿内层规则替它作批准；command -v / -V 是查询，不执行后面的命令
+            if (name == "xargs" && (rest.isEmpty() || rest.first().text.startsWith("-"))) return Unwrapped(listOf(head) + rest, assignments, risks)
+            if (name == "xargs") continue
+            if (name == "command" && rest.firstOrNull()?.text in setOf("-v", "-V")) return Unwrapped(listOf(head) + rest, assignments, risks)
+            val texts = rest.map { it.text }
+            val skipped = WrapperSyntax.skipOptions(name, texts) ?: return null
+            // env -C 目录 / sudo -D 目录：内层命令里的相对路径不再相对当前目录，路径判定会看错
+            if (WrapperSyntax.changesDirectory(name, texts.take(skipped))) return null
+            if (name in RISKY_WRAPPERS) risks += name
+            // watch 不带 -x 时把剩下的参数用空格拼起来交给 sh -c：按内联脚本分析
+            if (name == "watch" && texts.take(skipped).none { it == "-x" || it == "--exec" }) {
+                val script = rest.drop(skipped)
+                if (script.isEmpty()) return null
+                val joined = Token.Word(script.joinToString(" ") { it.text }, quotedAny = true, expansion = script.any { it.expansion })
+                return Unwrapped(emptyList(), assignments, risks, watchScript = joined)
+            }
+            rest = rest.drop(skipped)
+            if (name in ASSIGNING_WRAPPERS) {
+                // 包装自己解析这些参数，引号不影响它们是不是赋值
+                val assigned = rest.takeWhile { ASSIGNMENT.matches(it.text) }
+                assignments += assigned
+                rest = rest.drop(assigned.size)
             }
         }
-        return rest
+        return Unwrapped(rest, assignments, risks)
     }
 
     // ---- 词法 ----

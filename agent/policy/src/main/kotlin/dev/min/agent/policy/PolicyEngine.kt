@@ -280,7 +280,7 @@ object PolicyEngine {
         var decisive: PermissionRule? = whole
         val allowedCommands = mutableSetOf<SimpleCommand>()
         for (cmd in facts.commands) {
-            val rule = rules.firstOrNull { m.matchesCommand(it, cmd) }
+            val rule = rules.firstOrNull { m.matchesCommand(it, cmd, forAllow = true) }
             if (rule == null && whole == null && !facts.commandIsReadOnly(cmd)) return null
             decisive = decisive ?: rule
             if (rule != null || whole != null) allowedCommands += cmd
@@ -323,6 +323,8 @@ object PolicyEngine {
             if (ask.commands.size != 1) return null
             val parsed = ShellAnalyzer.analyze(ask.commands.single().raw) as? ShellAnalysis.Parsed ?: return null
             val cmd = parsed.commands.singleOrNull() ?: return null
+            // 带 sudo / LD_PRELOAD=x 这类前缀的：按内层程序给的规则下次对不上（允许规则要连前缀批准），给了只会让人以为不用再问
+            if (cmd.riskyPrefix.isNotEmpty()) return null
             if (cmd.program in EXACT_ONLY || cmd.hasExpansion) return "Bash(${cmd.text})"
             val second = cmd.argv.getOrNull(1)
             val withSub = second != null && !second.startsWith("-") && '/' !in second && '.' !in second && cmd.program in SUBCOMMAND_TOOLS

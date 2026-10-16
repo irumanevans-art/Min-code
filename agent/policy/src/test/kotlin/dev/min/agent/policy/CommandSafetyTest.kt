@@ -74,7 +74,7 @@ class CommandSafetyTest {
     fun `lookalikes of dangerous commands are fine`() {
         listOf(
             "dd if=a of=b", "echo x > /dev/null", "chmod +x gradlew", "chmod -R 755 build", "git push origin main",
-            "curl -o a.sh https://x", "bash install.sh", "find . -name '*.pyc' -delete", "find build -exec rm {} +", "sudo ls /root", "sudo -i", "xargs rm",
+            "curl -o a.sh https://x", "bash install.sh", "find . -name '*.pyc' -delete", "find build -exec rm {} +", "sudo ls /root", "xargs rm",
             "echo x >&2",
         ).forEach { assertNull("不应踩底线：$it", danger(it)) }
     }
