@@ -86,7 +86,7 @@ internal fun loadSubagentEvents(sessionFile: File, links: Map<String, String>): 
     return entries.flatMap { entry ->
         runCatching {
             entry.file.useLines { lines ->
-                lines.flatMap { line ->
+                lines.filterNot(::isUnusedTranscriptLine).flatMap { line ->
                     runCatching { parseTranscriptLine(line, sidechainParent = entry.parent) }
                         .getOrDefault(emptyList())
                 }.toList()

@@ -1399,6 +1399,7 @@ fun parseTranscriptLine(line: String, sidechainParent: String? = null): List<Cla
     // 认不出归属的 sidechain 只能扔：挂不上任何一张卡，平铺又会污染主线程
     if (obj.bool("isSidechain") == true && parent == null) return emptyList()
 
+    // 分支增减时同步 TRANSCRIPT_EVENT_TYPES：读列表与回放先用它跳过用不上的大行（TranscriptLineFilter.kt）
     return when (type) {
         "custom-title", "ai-title" -> titleFromFrame(obj, type)
             ?.let { listOf(ClaudeCodeEvent.CustomTitle(it)) }

@@ -70,7 +70,7 @@ class ClaudeCodeSessionStore {
             val links = HashMap<String, String>()
             val main = runCatching {
                 file.useLines { lines ->
-                    lines.flatMap { line ->
+                    lines.filterNot(::isUnusedTranscriptLine).flatMap { line ->
                         subagentLinkOf(line)?.let { (toolUseId, agentId) -> links[agentId] = toolUseId }
                         runCatching { parseTranscriptLine(line) }
                             .onFailure { Log.w(TAG, "skip bad transcript line: ${line.take(200)}", it) }
@@ -157,6 +157,7 @@ class ClaudeCodeSessionStore {
         val body = StringBuilder()
         file.useLines { lines ->
             for (line in lines) {
+                if (isUnusedTranscriptLine(line)) continue
                 val kind = transcriptLineType(line)
                 val events = runCatching { parseTranscriptLine(line) }.getOrDefault(emptyList())
                 when (kind) {
