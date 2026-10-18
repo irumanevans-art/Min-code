@@ -106,9 +106,10 @@ internal fun claudeSessionEnv(
             put("CLAUDE_CODE_PROMPT_CACHE_TTL", ttl)
             put("CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL", ttl)
         }
-        // fork 子 agent（继承父会话完整上下文、在后台跑）：交互式 CLI 里默认就有，-p 下要这个开关才开
-        // （2.1.286 探针：不开时传 subagent_type "fork" 得到 `Agent type 'fork' not found`）。
-        // Min 是在手机上提供交互式体验，所以对齐交互式 CLI 默认打开；放在供应商自定义 env 之前，用户写 0 照样能关
+        // fork 子 agent（继承父会话完整上下文、在后台跑）：交互式 CLI 里一直默认就有。
+        // 2.1.286–301 的 -p 下要这个开关才开（2.1.286 探针：不开时传 subagent_type "fork" 得到 `Agent type 'fork' not found`）；
+        // 2.1.302 起 -p / Agent SDK 也默认打开，这个变量只在写成 0 时才关。Min 从 2.1.286 起就注入 1 对齐交互式 CLI，
+        // 两边语义重合，留着不删：放在供应商自定义 env 之前，用户写 0 照样能关。
         put("CLAUDE_CODE_FORK_SUBAGENT", "1")
         // 沙箱里没法交互，自动更新只会把已装版本覆盖坏
         put("DISABLE_AUTOUPDATER", "1")

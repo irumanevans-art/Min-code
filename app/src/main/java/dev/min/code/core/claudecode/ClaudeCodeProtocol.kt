@@ -29,7 +29,7 @@ import java.time.Instant
  * 向 stdout 写事件帧。
  *
  * 下面的 schema 对照官方 CLI 二进制（@anthropic-ai/claude-code，最近一次完整校对
- * v2.1.301；2.1.270 的 permission_denials / bashEditDiff 等仍有效）中内嵌的 zod schema。
+ * v2.1.302；2.1.270 的 permission_denials / bashEditDiff 等仍有效）中内嵌的 zod schema。
  * 2.1.273–283 对照结论：Min 发的 control_request 子类型、启动参数和 env 都没改名或移除；
  * 新增的要跟的只有错误应答的 `error_code` 和一直没接的 `control_cancel_request`（见 [ClaudeCodeEvent.ControlCancel]），
  * 新 system 子类型全是内部帧（见 NOISE_SYSTEM_SUBTYPES）。
@@ -55,6 +55,12 @@ import java.time.Instant
  * can_use_tool 的 decision_reason_hook_* 等显示用字段，set_model 的 `only_if_model_is_current` 与 error_code `model_not_current`。
  * 行为上：set_model 不等压缩就应答（切到小窗口模型的「先用旧模型摘要」发生在下一轮请求前，帧与自动压缩相同）；
  * 空闲压缩（2.1.299）挂在 GrowthBook 开关下、headless 没有宿主时不会在两轮之间压缩；transcript 新增 api-request* 大行，见 TranscriptLineFilter.kt。
+ * 2.1.301–302 对照结论（npm 包 sdk-tools.d.ts 差分 + 原生二进制 zod 字面量与 describe 文档串差分；没有跑真 CLI 探针，
+ * 这次 changelog 没有帧形状或模型别名的变化，探针也看不出新东西）：帧类型、system / control_request 子类型、
+ * can_use_tool、task_* 与 result 字段一个没变，模型别名和烤进二进制的价格档也没变。describe 只改了三处文案，
+ * 全是 @internal 遥测或设计工具。行为上唯一碰到 Min 的是 fork 子 agent 在 -p 下改为默认打开
+ * （关掉改用 CLAUDE_CODE_FORK_SUBAGENT=0）；Min 从 2.1.286 起就自己注入 =1 对齐交互式 CLI，所以不用改。
+ * sdk-tools 只多了一句「fork 忽略 effort」——fork 本来就继承父会话的思考档，Min 的 Agent 工具没有 effort 入参。
  * fork 子 agent（Agent 的 `subagent_type:"fork"`，-p 下要 CLAUDE_CODE_FORK_SUBAGENT=1 才开，Min 不设，用户可在供应商自定义 env 里加）
  * 帧上与别的后台子 agent 一样：task_started{subagent_type:"fork", is_backgrounded:true, spawn_depth, prompt}、
  * Agent 结果 async_launched、子帧顶层多带 subagent_type / task_description、can_use_tool 带 agent_id（= task_id），
