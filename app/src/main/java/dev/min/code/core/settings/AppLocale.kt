@@ -58,6 +58,42 @@ object AppLocale {
     }
 
     /**
+     * 按设置里选的语言取字符串用的 Context。给不经过 Activity 的文字用：内核文案、通知。
+     *
+     * 为什么要有它：Koin 注入的是 Application context，它的 Configuration 不一定带着
+     * per-app locale。进程若是被无障碍服务等组件先拉起来的（还没有 Activity），Application
+     * 的资源按系统语言走——实测英文系统的模拟器上，App 设了中文，权限模式和「本会话总是允许」
+     * 照样出英文；从桌面重开一次才变回中文。Activity 不受影响，它们有自己的 Configuration。
+     * 这里每次现查选的语言，和当前资源不一致才包一层，包好的按语言标签缓存一份。
+     */
+    fun localized(context: Context): Context {
+        val wanted = chosenLocale(context)
+        val current = context.resources.configuration.locales.takeIf { !it.isEmpty }?.get(0)
+        if (!needsOverride(current, wanted)) return context
+        val tag = wanted!!.toLanguageTag()
+        cachedLocalized?.let { (key, cached) -> if (key == tag) return cached }
+        val config = Configuration(context.resources.configuration).apply { setLocales(LocaleList(wanted)) }
+        return context.createConfigurationContext(config).also { cachedLocalized = tag to it }
+    }
+
+    /** 选了具体语言、且和当前资源的主语言不同，才需要另包一层。纯函数，单测在 AppLocaleTest */
+    internal fun needsOverride(current: Locale?, wanted: Locale?): Boolean =
+        wanted != null && current?.language != wanted.language
+
+    @Volatile
+    private var cachedLocalized: Pair<String, Context>? = null
+
+    /** 设置里选的语言；跟随系统时为 null。33+ 以系统记录为准，更低版本读镜像 */
+    private fun chosenLocale(context: Context): Locale? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val manager = context.getSystemService(LocaleManager::class.java) ?: return null
+            val locales = manager.applicationLocales
+            return if (locales.isEmpty) null else locales[0]
+        }
+        return localeOf(LocalePrefs.read(context))
+    }
+
+    /**
      * 系统侧当前记着的是哪一种。33+ 才有；用来和 App 自己存的值对齐 ——
      * 用户可能是从「系统设置 → 应用 → Min → 语言」改的，那边才是更权威的一次操作。
      * 返回 null = 这个版本没有系统级 per-app locale，或者系统给了个我们不认识的语言。

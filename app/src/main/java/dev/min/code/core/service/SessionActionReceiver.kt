@@ -17,6 +17,7 @@ import dev.min.code.core.engine.InteractionAnswer
 import dev.min.code.core.engine.PendingInteraction
 import dev.min.code.core.engine.SessionCommand
 import dev.min.code.core.engine.SessionRef
+import dev.min.code.core.settings.AppLocale
 import dev.min.code.util.cancelNotification
 import dev.min.code.util.sendNotification
 import kotlinx.coroutines.async
@@ -56,7 +57,7 @@ class SessionActionReceiver : BroadcastReceiver() {
                                 return@withTimeout
                             }
                             SessionCommand.Answer(commandId, target, InteractionAnswer.Choose(selected.id,
-                                if (selected.kind == ApprovalOption.Kind.Deny) context.getString(R.string.session_notification_deny_note) else null))
+                                if (selected.kind == ApprovalOption.Kind.Deny) AppLocale.localized(context).getString(R.string.session_notification_deny_note) else null))
                         }
                         ACTION_RESUME -> SessionCommand.Resume(commandId, target)
                         else -> {
@@ -139,7 +140,7 @@ class SessionActionReceiver : BroadcastReceiver() {
             val id = 9_000_000 + (stableKeyInt("${ref.storageKey}:$target") and 0x7FFFF)
             context.sendNotification(CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID, id) {
                 title = context.engineName(ref.engine)
-                content = context.getString(R.string.session_notification_stale)
+                content = AppLocale.localized(context).getString(R.string.session_notification_stale)
                 category = NotificationCompat.CATEGORY_STATUS
                 autoCancel = true
                 contentIntent = openSessionIntent(context, ref)

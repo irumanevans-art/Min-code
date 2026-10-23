@@ -5,6 +5,7 @@ import dev.min.agent.kernel.CronNotice
 import dev.min.agent.kernel.CronOverrun
 import dev.min.agent.spi.CronExpiry
 import dev.min.code.R
+import dev.min.code.core.settings.AppLocale
 
 /**
  * 定时任务的措辞（通知、清单共用）：内核只给结构化事实，句子在这里按界面语言组。
@@ -61,7 +62,7 @@ private const val MINUTES_PER_DAY = 24L * 60
 
 /** 读资源的实现，跟着界面语言走 */
 class ResCronText(private val context: Context) : CronText {
-    private fun s(id: Int, vararg args: Any): String = context.getString(id, *args)
+    private fun s(id: Int, vararg args: Any): String = AppLocale.localized(context).getString(id, *args)
 
     override fun schedule(cron: String?, intervalMs: Long?): String {
         if (cron != null) return s(R.string.cron_schedule_cron, cron)

@@ -1,6 +1,7 @@
 package dev.min.code.core.engine.min
 
 import android.content.Context
+import dev.min.code.core.settings.AppLocale
 import dev.min.agent.protocol.Effort
 import dev.min.agent.protocol.PermissionMode
 import dev.min.code.R
@@ -150,7 +151,9 @@ internal fun reportStatusRes(status: String): Int? = when (status) {
 
 /** 读 `res/values*` 的实现。时间用系统短格式，跟着界面语言走 */
 class ResMinAgentText(private val context: Context) : MinAgentText {
-    private fun s(id: Int, vararg args: Any): String = context.getString(id, *args)
+    /** 按 App 选的语言取字符串，而不是 Application 资源当下碰巧的语言，见 [AppLocale.localized] */
+    private val res: Context get() = AppLocale.localized(context)
+    private fun s(id: Int, vararg args: Any): String = res.getString(id, *args)
 
     private fun clock(atMs: Long): String = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(atMs))
     private fun dateClock(atMs: Long): String = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(atMs))
@@ -272,12 +275,12 @@ class ResMinAgentText(private val context: Context) : MinAgentText {
     override fun networkDecision(domain: String, port: Int, outcome: String, reason: String) = s(R.string.network_decision_notice, domain, port, outcome, reason)
     override fun optionDeny() = s(R.string.min_agent_option_deny)
     override fun optionDenyAndStop() = s(R.string.min_agent_option_deny_stop)
-    override fun ruleSaved(layer: RuleLayer): String = context.getString(
+    override fun ruleSaved(layer: RuleLayer): String = res.getString(
         if (layer == RuleLayer.User) R.string.min_agent_rule_saved_user else R.string.min_agent_rule_saved_local,
     )
-    override fun ruleNotSaved(reason: String): String = context.getString(R.string.min_agent_rule_not_saved, reason)
-    override fun optionWorkflowRemember(): String = context.getString(R.string.workflow_remember_project)
-    override fun optionAlways(layer: RuleLayer, rule: String): String = context.getString(
+    override fun ruleNotSaved(reason: String): String = res.getString(R.string.min_agent_rule_not_saved, reason)
+    override fun optionWorkflowRemember(): String = res.getString(R.string.workflow_remember_project)
+    override fun optionAlways(layer: RuleLayer, rule: String): String = res.getString(
         when (layer) {
             RuleLayer.Session -> R.string.min_agent_option_always_session
             RuleLayer.Local -> R.string.min_agent_option_always_local

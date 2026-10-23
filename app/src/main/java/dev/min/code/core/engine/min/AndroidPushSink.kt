@@ -7,6 +7,7 @@ import dev.min.code.CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID
 import dev.min.code.R
 import dev.min.code.util.sendNotification
 import java.util.concurrent.atomic.AtomicInteger
+import dev.min.code.core.settings.AppLocale
 
 /**
  * 模型用 PushNotification 发来的通知：走 App 已有的告警通道（与定时任务、会话结束的通知同一个通道），不另开通道。
@@ -19,7 +20,7 @@ internal class AndroidPushSink(private val context: Context) : PushSink {
     override suspend fun push(title: String?, message: String): Boolean {
         val id = BASE_ID + (next.getAndIncrement() and (SLOTS - 1))
         return context.sendNotification(CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID, id) {
-            this.title = title ?: context.getString(R.string.app_name)
+            this.title = title ?: AppLocale.localized(context).getString(R.string.app_name)
             content = message
             useBigTextStyle = true
             autoCancel = true

@@ -10,6 +10,7 @@ import dev.min.code.core.engine.SessionRef
 import dev.min.code.core.service.openSessionIntent
 import dev.min.code.core.service.stableKeyInt
 import dev.min.code.util.sendNotification
+import dev.min.code.core.settings.AppLocale
 
 /**
  * 定时任务出了需要告诉用户的事（7 天到期、一次运行被花费上限停下、因缺 USD 价格跳过、连续超限暂停）时发一条系统通知。
@@ -20,7 +21,7 @@ internal class CronNoticeNotifier(private val context: Context, private val text
     fun notify(notice: CronNotice) {
         val ref = SessionRef(EngineKind.MinAgent, notice.session.value)
         context.sendNotification(CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID, cronNoticeNotificationId(ref, notice.cronId)) {
-            title = context.getString(cronNoticeTitleRes(notice.kind), notice.cronId)
+            title = AppLocale.localized(context).getString(cronNoticeTitleRes(notice.kind), notice.cronId)
             // 正文由内核给的结构化事实按界面语言组句（日志里那句中文只在缺事实时兜底）；通知栏放不下就折叠，点开看完整
             content = cronNoticeBody(notice, text)
             useBigTextStyle = true

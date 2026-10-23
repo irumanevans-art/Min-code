@@ -40,6 +40,7 @@ import org.koin.java.KoinJavaComponent.inject
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import dev.min.code.core.session.SessionStatus
+import dev.min.code.core.settings.AppLocale
 
 /**
  * 会话的「后台管家」：统一注册表保活 + 后台通知（CC / Min / Codex 同一条路径）。
@@ -67,6 +68,8 @@ class SessionSupervisor(
     private val localServices: LocalServiceRegistry,
     private val subscription: ClaudeSubscription,
 ) {
+    /** 通知文字按 App 选的语言取；Application 资源可能还是系统语言，见 [AppLocale.localized] */
+    private val text: Context get() = AppLocale.localized(context)
     private val isForeground = MutableStateFlow(false)
 
     /**
@@ -149,8 +152,8 @@ class SessionSupervisor(
                     channelId = CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID,
                     notificationId = sessionDoneNotificationId(session.ref),
                 ) {
-                    title = context.engineName(session.ref.engine)
-                    content = notificationBody(session.lastAssistantText, context.getString(R.string.session_notification_done))
+                    title = text.engineName(session.ref.engine)
+                    content = notificationBody(session.lastAssistantText, text.getString(R.string.session_notification_done))
                     autoCancel = true
                     useDefaults = true
                     category = NotificationCompat.CATEGORY_MESSAGE
@@ -158,10 +161,10 @@ class SessionSupervisor(
                 }
                 is SupervisorEvent.Died -> {
                     context.cancelNotification(interactionNotificationId(session.ref))
-                    notifyEnded(session.ref, context.getString(R.string.session_notification_ended, context.engineName(session.ref.engine)), event.message, event.resume)
+                    notifyEnded(session.ref, text.getString(R.string.session_notification_ended, text.engineName(session.ref.engine)), event.message, event.resume)
                 }
                 is SupervisorEvent.TurnIncomplete -> notifyEnded(
-                    session.ref, context.getString(R.string.session_notification_incomplete, context.engineName(session.ref.engine)),
+                    session.ref, text.getString(R.string.session_notification_incomplete, text.engineName(session.ref.engine)),
                     (event.end as? TurnEnd.Failed)?.message ?: session.errorMessage, event.resume,
                 )
             }
@@ -178,25 +181,25 @@ class SessionSupervisor(
             channelId = CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID,
             notificationId = interactionNotificationId(ref),
         ) {
-            title = context.getString(
+            title = text.getString(
                 if (brief.fromSchedule) R.string.session_notification_schedule_confirm else R.string.session_notification_confirm,
-                context.engineName(ref.engine),
+                text.engineName(ref.engine),
             )
             // 子 agent 上浮的审批 / 提问 / 计划都写明是谁要的：用户从通知栏看不到会话，不说来源就以为是自己刚发的那句话在等
             val agent = brief.agent
-            val agentName = agent?.let { it.name ?: subagentTypeName(it.agentType, context.getString(R.string.agent_type_fork)) }.orEmpty()
-            val agentSuffix = if (agent?.background == true) context.getString(R.string.session_notification_background) else ""
+            val agentName = agent?.let { it.name ?: subagentTypeName(it.agentType, text.getString(R.string.agent_type_fork)) }.orEmpty()
+            val agentSuffix = if (agent?.background == true) text.getString(R.string.session_notification_background) else ""
             content = when (brief.kind) {
                 InteractionKind.Approval ->
-                    if (brief.toolName == PEER_MESSAGE_APPROVAL) context.getString(R.string.session_notification_peer)
-                    else if (agent != null) context.getString(R.string.session_notification_agent_approval, agentName, agentSuffix, brief.toolName.orEmpty())
-                    else context.getString(R.string.session_notification_tool, brief.toolName.orEmpty())
+                    if (brief.toolName == PEER_MESSAGE_APPROVAL) text.getString(R.string.session_notification_peer)
+                    else if (agent != null) text.getString(R.string.session_notification_agent_approval, agentName, agentSuffix, brief.toolName.orEmpty())
+                    else text.getString(R.string.session_notification_tool, brief.toolName.orEmpty())
                 InteractionKind.Question ->
-                    if (agent != null) context.getString(R.string.session_notification_agent_question, agentName, agentSuffix)
-                    else context.getString(R.string.session_notification_question)
+                    if (agent != null) text.getString(R.string.session_notification_agent_question, agentName, agentSuffix)
+                    else text.getString(R.string.session_notification_question)
                 InteractionKind.PlanReview ->
-                    if (agent != null) context.getString(R.string.session_notification_agent_plan, agentName, agentSuffix)
-                    else context.getString(R.string.session_notification_plan)
+                    if (agent != null) text.getString(R.string.session_notification_agent_plan, agentName, agentSuffix)
+                    else text.getString(R.string.session_notification_plan)
             }
             // ongoing：这条不是"看过就算"的提醒，会话真的停在这里等它
             ongoing = true
@@ -207,7 +210,7 @@ class SessionSupervisor(
             // 交互摘要不含完整选项；在协程里读取实际审批卡，只把 notificationSafe 放进通知。
             if (brief.kind == InteractionKind.Approval) {
                 options.forEach { option ->
-                    addAction(context.getString(if (option.kind == ApprovalOption.Kind.Allow) R.string.session_notification_allow else R.string.session_notification_deny),
+                    addAction(text.getString(if (option.kind == ApprovalOption.Kind.Allow) R.string.session_notification_allow else R.string.session_notification_deny),
                         SessionActionReceiver.answerIntent(context, ref, brief.id, option.id))
                 }
             }
@@ -217,13 +220,13 @@ class SessionSupervisor(
     private fun notifyEnded(ref: SessionRef, heading: String, message: String?, resume: ResumeBrief?) {
         context.sendNotification(CLAUDE_CODE_ALERT_NOTIFICATION_CHANNEL_ID, sessionDoneNotificationId(ref)) {
             title = heading
-            content = message?.take(160) ?: context.getString(R.string.session_notification_exited)
+            content = message?.take(160) ?: text.getString(R.string.session_notification_exited)
             autoCancel = true
             useDefaults = true
             useBigTextStyle = true
             category = NotificationCompat.CATEGORY_ERROR
             contentIntent = openSessionIntent(context, ref)
-            resume?.let { addAction(context.getString(R.string.session_notification_resume), SessionActionReceiver.resumeIntent(context, ref, it.offerId)) }
+            resume?.let { addAction(text.getString(R.string.session_notification_resume), SessionActionReceiver.resumeIntent(context, ref, it.offerId)) }
         }
     }
 }
