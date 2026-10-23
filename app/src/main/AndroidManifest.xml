@@ -51,11 +51,21 @@
     「用 Claude 订阅登录」要把授权页交给外部浏览器（ui/components/ExternalBrowser.kt）。
     API 30+ 的包可见性下，不声明这一条就查不到有哪些浏览器，也就没法确认解析到的不是 Min 自己。
   -->
+  <!--
+    设备操控的 device_open_app 用 getLaunchIntentForPackage 打开别的应用。没有下面第二条，
+    API 30+ 上 Min 只看得见能开 https 链接的那几个（实测模拟器上只有 Chrome 和 Drive），
+    时钟、设置、微信一律回 null，被报成「这台设备上没装」。只声明「桌面能启动的应用」，
+    不要 QUERY_ALL_PACKAGES：够用，也不需要额外的权限说明。
+  -->
   <queries>
     <intent>
       <action android:name="android.intent.action.VIEW" />
       <category android:name="android.intent.category.BROWSABLE" />
       <data android:scheme="https" />
+    </intent>
+    <intent>
+      <action android:name="android.intent.action.MAIN" />
+      <category android:name="android.intent.category.LAUNCHER" />
     </intent>
   </queries>
 
