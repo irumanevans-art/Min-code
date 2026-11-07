@@ -82,6 +82,24 @@ class WorkflowRunTest {
         val full=WorkflowRun(start(),listOf(WorkflowProgress("run","log","x".repeat(1024*1024))),{ messages+=it }) { _,_,_ -> WorkflowAnswer("ok") }
         full.progress("log","y"); assertEquals(2,messages.size)
     }
+    // CC 2.1.305：parallel()/pipeline() 的分支序号交错，一个早失败的分支不能把后面已完成的兄弟分支拖着重跑
+    @Test fun anEarlyFailedBranchReRunsOnlyItselfAndNodesThatStartedAfterIt() = run {
+        val options = JsonObject(emptyMap())
+        fun s(i: Int) = WorkflowNodeStarted("run", i, "p$i", options)
+        fun c(i: Int, error: Boolean = false) = WorkflowNodeCompleted("run", i, if (error) JsonNull else JsonPrimitive("saved$i"), error)
+        // 0..2 并行起跑；1 完成后它的下一阶段 3 才起跑；0 失败之后才起跑的 4 可能用了 0 的结果（或它留下的文件）
+        val previous = listOf(s(0), s(1), s(2), c(1), s(3), c(0, error = true), s(4), c(2), c(3), c(4))
+        for (changeInstead in listOf(false, true)) {
+            val journal = if (changeInstead) previous.map { if (it is WorkflowNodeCompleted && it.index == 0) c(0) else it } else previous
+            val calls = mutableListOf<Int>(); val logs = mutableListOf<SessionEvent>()
+            val host = WorkflowRun(start(), journal, { logs += it }) { i, _, _ -> calls += i; WorkflowAnswer("new$i") }
+            assertEquals(JsonPrimitive("new0"), host.agent(0, if (changeInstead) "edited" else "p0", options))
+            for (i in 1..3) assertEquals(JsonPrimitive("saved$i"), host.agent(i, "p$i", options))
+            assertEquals("起跑时 0 已经结束：照样重跑", JsonPrimitive("new4"), host.agent(4, "p4", options))
+            assertEquals(listOf(0, 4), calls)
+            assertEquals(listOf(1, 2, 3), logs.filterIsInstance<WorkflowNodeReplayed>().map { it.index })
+        }
+    }
     @Test fun editedScriptReusesOnlyLongestUnchangedPrefix() = run {
         val options=JsonObject(emptyMap())
         val previous=(0..2).flatMap { i -> listOf(WorkflowNodeStarted("run",i,"old$i",options),WorkflowNodeCompleted("run",i,JsonPrimitive("saved$i"))) }

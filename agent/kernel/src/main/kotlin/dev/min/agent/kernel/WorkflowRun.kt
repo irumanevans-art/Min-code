@@ -28,15 +28,32 @@ internal class WorkflowRun(
     private val gate = Semaphore(run.concurrency)
     private val starts = linkedMapOf<Int, WorkflowNodeStarted>()
     private val completed = linkedMapOf<Int, WorkflowNodeCompleted>()
+    /** 各节点最近一次 started 在日志里的位置，和每一次 completed（含后来被作废的）的位置：判断谁可能用过谁的结果 */
+    private val startedAt = HashMap<Int, Int>()
+    private val completions = mutableListOf<Pair<Int, Int>>()
     init {
         // 一次重跑已经写了 started 却被杀时，不能拿更早那次的 completed 冒充本次结果。
-        previous.forEach { event -> when (event) {
-            is WorkflowNodeStarted -> if (event.runId == run.runId) { starts[event.index] = event; completed.remove(event.index) }
-            is WorkflowNodeCompleted -> if (event.runId == run.runId) completed[event.index] = event
+        previous.forEachIndexed { position, event -> when (event) {
+            is WorkflowNodeStarted -> if (event.runId == run.runId) { starts[event.index] = event; startedAt[event.index] = position; completed.remove(event.index) }
+            is WorkflowNodeCompleted -> if (event.runId == run.runId) { completed[event.index] = event; completions += event.index to position }
             else -> Unit
         } }
     }
-    private var replayBefore = completed.values.filter { it.isError }.minOfOrNull { it.index } ?: Int.MAX_VALUE
+    /** 本次恢复里重跑（没有从日志取）的节点；判定按序号依次做（[next]），轮到一个节点时比它小的都已定 */
+    private val rerun = ConcurrentHashMap.newKeySet<Int>()
+
+    /**
+     * 恢复时一个已完成的节点能不能直接取日志里的结果（CC 2.1.305）：成功、prompt 与 options 没变，并且它在原来那次起跑之前
+     * 已经完成的节点（它可能 await 了它们的结果，或用了它们留在工作区里的文件）这次一个都没重跑。不再按序号取最长前缀：
+     * parallel()/pipeline() 的分支序号是交错分的，前缀规则会让一个早失败的分支把后面已完成的兄弟分支全拖着重跑。
+     * 起跑时还没完成的节点（并行的兄弟）不算依赖。依赖只会是序号更小的节点：完成在先必然起跑在先
+     */
+    private fun replayable(index: Int, prompt: String, options: JsonObject): WorkflowNodeCompleted? {
+        val old = starts[index] ?: return null
+        val done = completed[index]?.takeIf { !it.isError && old.prompt == prompt && old.options == options } ?: return null
+        val startedPosition = startedAt.getValue(index)
+        return done.takeIf { completions.none { (upstream, position) -> position < startedPosition && upstream in rerun } }
+    }
     private val next = MutableStateFlow(0)
     @Volatile private var appendFailure: Exception? = null
     private val progressLock = Mutex()
@@ -62,10 +79,8 @@ internal class WorkflowRun(
         appendFailure?.let { throw it }
         check(next.value == index) { "Duplicate workflow node." }
         options["phase"]?.jsonPrimitive?.content?.let { progress("phase", it) }
-        val old = starts[index]
-        if (old != null && (old.prompt != prompt || old.options != options)) replayBefore = minOf(replayBefore, index)
-        val cached = completed[index]?.takeIf { index < replayBefore && !it.isError && old?.prompt == prompt && old.options == options }
-        if (cached == null) persist(WorkflowNodeStarted(run.runId, index, prompt, options))
+        val cached = replayable(index, prompt, options)
+        if (cached == null) { rerun += index; persist(WorkflowNodeStarted(run.runId, index, prompt, options)) }
         else persist(WorkflowNodeReplayed(run.runId, index))
         next.value = index + 1
         if (cached != null) return cached.result

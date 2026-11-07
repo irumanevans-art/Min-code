@@ -24,7 +24,7 @@ JS 在异步桥之前限制 prompt 300000 字符、日志/阶段 30000 字符；
 
 bypass 直接运行；Manual / acceptEdits 每次询问，只有明确选择本项目不再问才记住 cwd + 源码哈希。Auto 的一次同意由宿主保存，后续调用免额外确认。Workflow / Workflow(name) 规则、PreToolUse allow、AutoReviewer 可预授权；deny / ask 与 auto hard_deny 仍优先。批准后只执行冻结源码。App 和 CLI 共用私有 FileWorkflowApprovals，包含读写、revoke 和 revokeAuto 接口。App 显示查看脚本与项目记住选项；CLI -p 无交互，由原有权限链路决定是否允许。
 
-节点 started / completed 同步落盘后返回给 JS。只有 run 属于刚被中断回合时 ▶ 自动恢复；失败/取消分别落 failed/cancelled 终态。显式 resume_run 可使用修改源码、原 args，按 prompt/options 比较复用最长未改动前缀，首次变动或失败处起全部重跑。新的 started 废弃旧 completed。写盘异常广播给序号等待者；取消收尾写盘失败保留原取消原因。保存命令执行失败使回合与 CLI 结果失败。
+节点 started / completed 同步落盘后返回给 JS。只有 run 属于刚被中断回合时 ▶ 自动恢复；失败/取消分别落 failed/cancelled 终态。显式 resume_run 可使用修改源码、原 args：成功且 prompt/options 未变的节点从日志取结果，失败或变动的节点重跑；原日志里在某个重跑节点完成之后才起跑的节点（可能用了它的结果或它留下的文件）也重跑。不再按序号取最长前缀：parallel/pipeline 的分支序号交错，早失败的分支不会把已完成的兄弟分支拖着重跑（CC 2.1.305）。新的 started 废弃旧 completed。写盘异常广播给序号等待者；取消收尾写盘失败保留原取消原因。保存命令执行失败使回合与 CLI 结果失败。
 
 CLAUDE_CODE_DISABLE_WORKFLOWS=1、settings.disableWorkflows=true 和 App 全局开关隐藏工具与命令；已开始运行继续使用冻结配置。settings 禁用事件只在禁用时落盘，默认日志形状不变，重开保持。许可页及 APK assets 同步包含 quickjs-kt Apache、QuickJS MIT、c-vector MIT（Evan Teran 2015）原文与固定来源。
 
