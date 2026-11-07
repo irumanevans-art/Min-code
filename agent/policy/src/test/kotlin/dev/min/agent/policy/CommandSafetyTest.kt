@@ -53,6 +53,22 @@ class CommandSafetyTest {
     }
 
     @Test
+    fun `recursive deletes of mount roots cross the floor`() {
+        val roots = listOf(
+            "/storage/emulated/0", "/storage/emulated", "/storage/self/primary", "/storage/1A2B-3C4D", "/sdcard/Download",
+            "/sdcard/DCIM", "/mnt/sdcard", "/mnt/media_rw/1A2B-3C4D", "/mnt/c", "/cygdrive/d", "C:/", "c:\\", "D:",
+            "/Volumes/Backup", "/media/u/usb",
+        )
+        for (root in roots) for (form in listOf(root, "${root.trimEnd('/', '\\')}/")) {
+            assertNotNull("应踩底线：rm -rf $form", danger("rm -rf '$form'"))
+        }
+        assertNotNull(danger("rm -rf /storage/emulated/0/*"))
+        // 挂载点下面更深的目录是日常清理
+        listOf("rm -rf /sdcard/Download/old", "rm -rf /storage/emulated/0/Download/x", "rm -rf /mnt/c/Users/u/tmp", "rm -rf /Volumes/Backup/old")
+            .forEach { assertNull("不应踩底线：$it", danger(it)) }
+    }
+
+    @Test
     fun `ordinary deletes do not cross the floor`() {
         listOf(
             "rm a.txt", "rm -f build.log", "rm -rf build", "rm -rf ./node_modules", "rm -rf /workspace/app/build",

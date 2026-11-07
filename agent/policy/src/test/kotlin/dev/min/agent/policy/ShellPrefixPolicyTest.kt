@@ -118,7 +118,11 @@ class ShellPrefixPolicyTest {
             "watch 'rm -rf /'", "watch -n 1 rm -rf /", "watch -x rm -rf /", "busybox rm -rf /", "sudo bash -c 'rm -rf /'",
             "sudo timeout 5 rm -rf /", "sudo -u root bash -lc 'rm -rf ~'", "doas sh -c 'rm -rf /'", "nohup bash -lc 'rm -rf /'",
             "env -S 'rm -rf /'", "sudo -s rm -rf /", "env -C / rm -rf x", "\$RM -rf /", "\"\$X\" -rf ~", "BASH_ARGV0=rm; \$0 -rf /",
-        ).forEach { assertEquals("bypass 下应询问：$it", Verdict.Ask, v(it, PermissionMode.BypassPermissions)) }
+        ).forEach {
+            // bypass 下看得见的危险删除直接拒绝（CC 2.1.309），程序名来自变量的仍问人；总之不能放行
+            assertTrue("bypass 下不能放行：$it", v(it, PermissionMode.BypassPermissions) !is Verdict.Allow)
+            assertEquals("默认模式应询问：$it", Verdict.Ask, v(it, PermissionMode.Default))
+        }
     }
 
     @Test fun `ordinary wrapped commands are unaffected`() {

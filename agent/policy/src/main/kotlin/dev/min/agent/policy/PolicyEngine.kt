@@ -128,6 +128,14 @@ object PolicyEngine {
             )
         }
 
+        // 跳过权限确认下没人守着审批卡：危险删除弹卡只会让会话干等，直接拒绝并告诉模型怎么改写（CC 2.1.309）。
+        // 其余底线（写手机文件、受保护路径、force push……）照旧问人；Min 自 2.1.281 起危险删除在 bypass 下也问人，这里改成拒绝
+        if (context.mode == PermissionMode.BypassPermissions) {
+            deleteFloorReason(facts)?.let { reason ->
+                return Verdict.Deny(DecidedBy.Mode(context.mode), "$reason。$BYPASS_DELETE_HINT")
+            }
+        }
+
         if (floorReason(facts) != null) return Verdict.Ask
 
         if (firstHit(facts, context.rules.filter { it.kind == RuleKind.Ask }, matcher) != null) return Verdict.Ask
@@ -228,6 +236,10 @@ object PolicyEngine {
         return CommandSafety.isProtectedPath(relative)
     }
 
+    private fun deleteFloorReason(facts: Facts): String? =
+        facts.commands.firstNotNullOfOrNull { CommandSafety.deleteDanger(it, facts.commands) }
+            ?: facts.untrustedRaw.firstNotNullOfOrNull { CommandSafety.untrustedDeleteDanger(it) }
+
     private fun floorReason(facts: Facts): String? {
         facts.paths.firstOrNull { it.kind == AccessKind.Write && it.scope == PathScope.Device }
             ?.let { return "要写手机上的真实文件 ${it.path}" }
@@ -322,7 +334,8 @@ object PolicyEngine {
         if (ask.commands.isNotEmpty()) {
             if (ask.commands.size != 1) return null
             val parsed = ShellAnalyzer.analyze(ask.commands.single().raw) as? ShellAnalysis.Parsed ?: return null
-            val cmd = parsed.commands.singleOrNull() ?: return null
+            // 只有重定向的占位命令（`> out.txt`）没有程序可写进规则
+            val cmd = parsed.commands.singleOrNull()?.takeIf { it.argv.isNotEmpty() } ?: return null
             // 带 sudo / LD_PRELOAD=x 这类前缀的：按内层程序给的规则下次对不上（允许规则要连前缀批准），给了只会让人以为不用再问
             if (cmd.riskyPrefix.isNotEmpty()) return null
             if (cmd.program in EXACT_ONLY || cmd.hasExpansion) return "Bash(${cmd.text})"
@@ -338,6 +351,11 @@ object PolicyEngine {
         ask.domains.firstOrNull()?.let { return "WebFetch(domain:$it)" }
         return ask.tool
     }
+
+    /** bypass 下拒绝危险删除时给模型的改写提示：说清没执行、为什么、往哪个方向改 */
+    private const val BYPASS_DELETE_HINT =
+        "跳过权限确认模式下这类删除不会弹卡等人批准，命令没有执行。不要原样重试：改成只删工作区里写死的具体路径（如 rm -r ./build），" +
+            "不要用变量、命令替换或管道拼出删除目标；确实要删这里，请告诉用户让他们自己执行。"
 
     /** 前缀放宽就等于放行任意代码的程序：只给精确命令 */
     private val EXACT_ONLY = setOf(
@@ -469,10 +487,18 @@ object PolicyEngine {
                         credentialCwd = nextCwd(cmd, credentialCwd, context, normalize=false)
                     }
                 }
+                // 看不透的命令里字面写出的重定向目标（CC 2.1.309）：只进 paths，让 Edit 拒绝 / 询问规则与写入底线看得见；
+                // 看不透的命令本来就不会被允许规则覆盖、也不算只读，多出来的路径只会让结论更严。
+                // 相对目标按起点目录解析——命令里若先 cd 过，真实位置可能不同，这里只求不比整条丢掉更松
+                val untrustedWrites = ask.commands.zip(analyses).filter { it.second is ShellAnalysis.Untrusted }
+                    .flatMap { (access, _) -> ShellAnalyzer.literalWriteRedirects(access.raw) }
+                    .filter { it.writesFile }
+                    .mapNotNull { resolve(it.target, start.value, context) }
+                    .map { PathAccess(it, AccessKind.Write, scope(it, context)) }
                 val allPaths = ask.paths.map {
                     val path = GuestPath(normalize(it.path.value))
                     it.copy(path = path, scope = if (it.scope == PathScope.Device) it.scope else scope(path, context))
-                } + redirectWrites + redirectReads + filePaths
+                } + redirectWrites + redirectReads + filePaths + untrustedWrites
                 // 写进会话 shell 环境目录：字面路径与解析后的真实路径都比（链接不能把写入带进去）
                 val envDir = context.shellEnvDir?.let { normalize(it.value) }
                 val envDirReal = context.shellEnvDir?.let { normalize(context.canonicalPath(it).value) }
@@ -523,6 +549,8 @@ object PolicyEngine {
             private fun nextCwd(cmd: SimpleCommand, cwd: String?, context: PolicyContext, normalize: Boolean = true): String? {
                 if (cmd.program == "popd" || cmd.hasExpansion) return null
                 val args = cmd.argv.drop(1).filterNot { it == "-P" || it == "-L" || it == "-e" || it == "--" }
+                // pushd 不带参数是交换栈顶、+N / -N 是转栈、-n 只入栈不换目录：去了哪里静态不知道（不是家目录）
+                if (cmd.program == "pushd" && (args.isEmpty() || args.any { it.startsWith("+") || it.startsWith("-") })) return null
                 val target = args.singleOrNull() ?: return if (args.isEmpty()) context.home.value else null
                 if (target == "-") return null
                 return resolve(target, cwd, context, normalize)?.value

@@ -2,6 +2,7 @@ package dev.min.agent.policy
 
 import dev.min.agent.protocol.PermissionMode
 import dev.min.agent.spi.*
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -34,6 +35,20 @@ class ShellCwdPolicyTest {
         assertTrue("../../a.txt 是 /home/a.txt，落在底线分级（这里设为 Device）的地方，任何模式都要问人：$outside", outside is Verdict.Ask)
         // 没有 shell 目录（旧行为）：../a.txt 相对会话目录 = /home/a.txt，出界
         assertTrue(PolicyEngine.evaluate(bash("echo x > ../a.txt"), false, context(null, PermissionMode.BypassPermissions)) is Verdict.Ask)
+    }
+
+    @Test fun `builtin cd and pushd move the shell directory for later redirects`() {
+        // scopeOf 把 /home/u 之外都当 Device：cd 出去之后的相对写入要踩手机文件底线
+        for (raw in listOf("builtin cd /sdcard && echo x > a", "pushd /sdcard && echo x > a", "builtin pushd /sdcard; echo x > a")) {
+            assertEquals(raw, Verdict.Ask, PolicyEngine.evaluate(bash(raw), false, context(null)))
+        }
+        assertTrue(PolicyEngine.evaluate(bash("builtin cd sub && echo x > a"), false, context(null)) is Verdict.Allow)
+        // pushd 不带参数 / 带 +N 是在目录栈里换位置，静态不知道去了哪：相对写入不能按原目录放行
+        val allowEcho = context(null, PermissionMode.Default).copy(rules = listOf(PermissionRule.parse(RuleKind.Allow, "Bash(echo *)", "user")!!))
+        assertTrue(PolicyEngine.evaluate(bash("echo x > a"), false, allowEcho) is Verdict.Allow)
+        for (raw in listOf("pushd && echo x > a", "pushd +1 && echo x > a", "pushd -n /tmp && echo x > a")) {
+            assertEquals(raw, Verdict.Ask, PolicyEngine.evaluate(bash(raw), false, allowEcho))
+        }
     }
 
     @Test fun `Monitor commands run from the shell directory too, so their relative paths resolve there`() {

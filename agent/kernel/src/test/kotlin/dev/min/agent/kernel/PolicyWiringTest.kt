@@ -230,13 +230,31 @@ class PolicyWiringTest {
             if (req.messages.size == 1) reply(cmd("c1", "rm -rf /"), stop = StopReason.ToolUse) else reply(TextPart("好"))
         }
         val hub = SessionHub(store, deps(model, listOf(bash)), scope)
-        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.Default)
         rt.send(ClientMsgId("u1"), listOf(TextPart("清空")))
         rt.state.first { it.phaseOf(CallId("c1")) is CallPhase.AwaitingApproval }
         val request = events(rt).filterIsInstance<ApprovalRequested>().single()
         assertEquals("递归删除关键路径 /", request.floorReason)
         assertNull(request.suggestedRule)
         assertTrue(ran.isEmpty())
+    }
+
+    /** CC 2.1.309：跳过权限确认下危险删除不弹卡，直接以带改写提示的错误结果回给模型，回合照常收尾 */
+    @Test
+    fun `a dangerous delete in bypass mode is refused without an approval card`() = run {
+        val model = RoutingModel { req ->
+            if (req.messages.size == 1) reply(cmd("c1", "rm -rf /"), stop = StopReason.ToolUse) else reply(TextPart("好"))
+        }
+        val hub = SessionHub(store, deps(model, listOf(bash)), scope)
+        val rt = hub.create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.send(ClientMsgId("u1"), listOf(TextPart("清空")))
+        val done = rt.state.first { it.turn == null && it.lastTurn != null }
+        assertTrue(events(rt).none { it is ApprovalRequested })
+        assertTrue(ran.isEmpty())
+        val denied = done.toolResults.getValue(CallId("c1"))
+        assertTrue(denied.isError)
+        val text = (denied.content.single() as TextPart).text
+        assertTrue(text, text.contains("递归删除关键路径 /") && text.contains("rm -r ./build"))
     }
 
     @Test

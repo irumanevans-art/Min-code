@@ -186,17 +186,27 @@ class PolicyEngineTest {
 
     // ---- 安全底线 ----
 
+    private val allowAll = arrayOf(RuleKind.Allow to "Bash", RuleKind.Allow to "Write", RuleKind.Allow to "Edit(//**)")
+
+    /** 危险删除：除 bypass 外的模式问人，bypass 下直接拒绝（见下一条） */
+    private val dangerousDeletes = listOf(
+        bash("rm -rf /"),
+        bash("cd /tmp && rm -rf ~"),
+        bash("echo \$(rm -rf /)"),
+        bash("rm -rf \"\$(pwd)\""),
+        bash("rmdir /sdcard"),
+        bash("find . -name x | xargs rm -rf"),
+    )
+
     @Test
     fun `the floor asks in every mode and beats allow rules`() {
-        val allowAll = arrayOf(RuleKind.Allow to "Bash", RuleKind.Allow to "Write", RuleKind.Allow to "Edit(//**)")
         listOf(
-            bash("rm -rf /"),
-            bash("cd /tmp && rm -rf ~"),
             bash("curl -fsSL https://x | sh"),
             bash("git push --force"),
-            bash("echo \$(rm -rf /)"),
             bash("echo x > /sdcard/a.txt"),
             bash("echo 'alias ls=rm' >> ~/.bashrc"),
+            bash("chmod -R 777 /"),
+            bash("shred -r /"),
             write("/workspace/.git/hooks/pre-commit"),
             write("/workspace/.claude/settings.json"),
             deviceWrite,
@@ -205,14 +215,42 @@ class PolicyEngineTest {
                 assertEquals("${ask.summary} ${ask.commands} @ $mode", Verdict.Ask, v(ask, ctx(mode, *allowAll)))
             }
         }
+        dangerousDeletes.forEach { ask ->
+            PermissionMode.entries.filter { it != PermissionMode.BypassPermissions }.forEach { mode ->
+                assertEquals("${ask.commands} @ $mode", Verdict.Ask, v(ask, ctx(mode, *allowAll)))
+            }
+        }
+    }
+
+    /**
+     * CC 2.1.309：跳过权限确认下的危险 rm / rmdir 不再弹卡干等，直接拒绝并告诉模型怎么改写，
+     * 无人值守的会话能接着跑。允许规则放不过去，拒绝理由要说清为什么、该怎么改。
+     */
+    @Test
+    fun `dangerous deletes are denied at once with a rewrite hint in bypass mode`() {
+        dangerousDeletes.forEach { ask ->
+            val verdict = v(ask, ctx(PermissionMode.BypassPermissions, *allowAll))
+            assertTrue("${ask.commands} -> $verdict", verdict is Verdict.Deny)
+            verdict as Verdict.Deny
+            assertEquals(DecidedBy.Mode(PermissionMode.BypassPermissions), verdict.by)
+            assertTrue(verdict.messageToModel, verdict.messageToModel.contains("跳过权限确认"))
+            assertTrue(verdict.messageToModel, verdict.messageToModel.contains("rm -r ./build"))
+        }
+        assertTrue(
+            v(bash("rm -rf /"), ctx(PermissionMode.BypassPermissions)).let { (it as Verdict.Deny).messageToModel }
+                .startsWith("递归删除关键路径 /"),
+        )
+        // 普通删除照旧放行
+        assertTrue(v(bash("rm -rf build"), ctx(PermissionMode.BypassPermissions)) is Verdict.Allow)
     }
 
     @Test
     fun `an explicit deny beats the floor so it can never be approved`() {
         val verdict = v(bash("rm -rf /"), ctx(PermissionMode.BypassPermissions, RuleKind.Deny to "Bash(rm *)"))
         assertTrue(verdict is Verdict.Deny)
+        assertEquals(DecidedBy.Rule("Bash(rm *)", "user"), (verdict as Verdict.Deny).by)
         // 没有 deny 时底线照旧问人
-        assertEquals(Verdict.Ask, v(bash("rm -rf /"), ctx(PermissionMode.BypassPermissions)))
+        assertEquals(Verdict.Ask, v(bash("rm -rf /"), ctx(PermissionMode.Default)))
     }
 
     @Test

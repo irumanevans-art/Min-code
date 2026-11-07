@@ -134,4 +134,18 @@ class CwdWorktreeTest {
             assertNotNull(script, worktreeViolation(s, d, PermissionAsk("Bash", "cd target", commands = listOf(CommandAccess(script)))))
         assertNotNull(worktreeViolation(s.copy(settings = s.settings.copy(cwd = GuestPath("/missing"))), d, PermissionAsk("Bash", "missing")))
     }
+
+    @Test fun `isolation follows pushd and builtin cd, and bare redirects`() = runBlocking {
+        val fs = fs().apply { put("/old/.claude/worktrees/w/keep", "worktree") }
+        val d = deps(fs, ScriptedModel()); val w = WorktreeBinding("w", GuestPath("/old/.claude/worktrees/w"), old, old, pinned = true)
+        val h = LogHeader(1, SessionId("s"), 0); val s = fold(h, listOf(EventRecord(1, 0, SessionCreated(w.path, TEST_MODEL, PermissionMode.BypassPermissions)), EventRecord(2, 0, CwdChanged(w.path, w.path, w))))
+        suspend fun bash(script: String) = worktreeViolation(s, d, PermissionAsk("Bash", "cmd", commands = listOf(CommandAccess(script))))
+        for (script in listOf(
+            "pushd /old", "builtin cd /old", "pushd .. && pushd ../.. && git status", "builtin cd ../../.. && printf x > f",
+            "pushd ../../.. && printf x > f", "pushd -n /old && git status", "pushd +1 && printf x > f",
+            "pushd sub && popd && popd && printf x > f", "> /old/file", "ls; > /old/file", "X=1 > /old/file",
+        )) assertNotNull(script, bash(script))
+        for (script in listOf("pushd sub && printf x > f", "builtin cd sub && git status", "pushd sub && popd && printf x > f", "> f"))
+            assertNull(script, bash(script))
+    }
 }

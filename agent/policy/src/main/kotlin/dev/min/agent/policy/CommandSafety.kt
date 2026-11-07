@@ -30,6 +30,8 @@ object CommandSafety {
         // `PATH=./bin ls`、`LD_PRELOAD=x cat a`、`sudo cat /etc/shadow`：程序名对得上只读清单，跑的却未必是那个程序、那个身份
         if (cmd.riskyPrefix.isNotEmpty()) return false
         if (cmd.redirects.any { it.writesFile }) return false
+        // 只有重定向、没有命令词的占位（见 ShellAnalyzer.buildCommand）：不写文件就什么都不执行
+        if (cmd.argv.isEmpty()) return true
         // 通配可能扩成 -delete 等选项；只有所有选项均只读的程序才免批。
         if (cmd.hasUnquotedGlob && cmd.program in setOf("find", "sort", "sed", "git")) return false
         val args = cmd.argv.drop(1)
@@ -80,6 +82,21 @@ object CommandSafety {
         "/workspace", "/workspace/", "/workspace/*", "/root", "/root/", "/sdcard", "/sdcard/", "/storage", "/home",
     )
     private val TOP_LEVEL_DIR = Regex("^/[^/]+/?$")
+
+    /**
+     * 挂载根（CC 2.1.304）：删掉就是整块存储。手机：共享存储的各种别名、SD 卡 / U 盘卷（`/storage/1A2B-3C4D`）、
+     * `/sdcard` 下的顶层目录（DCIM、Download……）；桌面宿主：WSL / Cygwin 的盘符挂载、Windows 盘符根、macOS / Linux 的卷。
+     * 结尾可带斜杠或「斜杠加星号」；更深的子目录是日常清理，不拦
+     */
+    private val MOUNT_ROOTS = listOf(
+        Regex("""^/storage/(emulated(/0)?|self(/primary)?|[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4})(/|/\*)?$"""),
+        Regex("""^/sdcard/[^/]+/?$"""),
+        Regex("""^/mnt/(sdcard|[A-Za-z]|media_rw(/[^/]+)?)(/|/\*)?$"""),
+        Regex("""^/cygdrive/[A-Za-z](/|/\*)?$"""),
+        Regex("""^[A-Za-z]:([/\\]\*?)?$"""),
+        Regex("""^/Volumes/[^/]+(/|/\*)?$"""),
+        Regex("""^/media/[^/]+(/[^/]+)?(/|/\*)?$"""),
+    )
 
     /**
      * 踩了安全底线就返回原因（给人看的一句话），否则 null。[all] 是同一段命令里的全部简单命令（判断「下载后直接执行」要看前后）。
@@ -140,7 +157,7 @@ object CommandSafety {
 
     private fun isCritical(target: String): Boolean {
         val t = target.trim()
-        return t in CRITICAL_TARGETS || TOP_LEVEL_DIR.matches(t) || ONLY_DOTS_AND_SLASHES.matches(t)
+        return t in CRITICAL_TARGETS || TOP_LEVEL_DIR.matches(t) || ONLY_DOTS_AND_SLASHES.matches(t) || MOUNT_ROOTS.any { it.matches(t) }
     }
 
     // `../..`、`./.`、`/*` 这类只由点、斜杠、星号组成的目标
@@ -151,6 +168,20 @@ object CommandSafety {
 
     fun untrustedDanger(raw: String): String? =
         DANGEROUS_WORDS.find(raw)?.let { "命令里有看不透的写法，又出现了「${it.value.trim()}」" }
+
+    /**
+     * 底线里属于「危险删除」的那几种：rm / rmdir 递归删关键路径、删除目标来自管道或未展开的变量，
+     * 以及看不透的写法里出现 rm / rmdir（CC 的典型例子 `rm -rf "$(pwd)"`）。
+     * 单独拎出来是因为跳过权限确认下它们直接拒绝而不是问人（CC 2.1.309），其余底线照旧问人
+     */
+    fun deleteDanger(cmd: SimpleCommand, all: List<SimpleCommand>): String? =
+        if (cmd.program in DELETE_PROGRAMS) dangerReason(cmd, all) else null
+
+    fun untrustedDeleteDanger(raw: String): String? =
+        DANGEROUS_WORDS.findAll(raw).map { it.value.trim() }.firstOrNull { it in DELETE_PROGRAMS }
+            ?.let { "命令里有看不透的写法，又出现了「$it」" }
+
+    private val DELETE_PROGRAMS = setOf("rm", "rmdir")
 
     /**
      * 受保护路径：改了会让后续的命令、配置或权限本身被改写。直接写这些地方任何模式都要人确认（Min 比 Claude Code 更严：CC 在 bypass 下放行）。

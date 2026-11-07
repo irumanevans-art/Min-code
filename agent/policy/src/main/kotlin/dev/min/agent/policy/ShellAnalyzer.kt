@@ -75,6 +75,8 @@ object ShellAnalyzer {
     private val WRAPPERS = setOf(
         "timeout", "nice", "nohup", "time", "command", "env", "exec", "stdbuf", "xargs", "setsid", "flock", "watch", "busybox",
         "sudo", "doas",
+        // `builtin cd /sdcard`：不剥的话程序名是 builtin，cd 跟踪与 eval / source 的拦截都看不见里面那条
+        "builtin",
     )
 
     /** 这些包装本身就改变命令怎么跑：换身份、建锁文件 */
@@ -95,6 +97,86 @@ object ShellAnalyzer {
         val tokens = (Tokenizer(spec).tokenize() as? TokenizeResult.Ok)?.tokens ?: return null
         if (tokens.any { it !is Token.Word }) return null
         return autoRuleProgram(tokens.filterIsInstance<Token.Word>().map { it.text })
+    }
+
+    /**
+     * 看不透的命令（[ShellAnalysis.Untrusted]）里**字面写出**的写文件重定向：`(true); echo x > /etc/hosts`、
+     * `echo $(date) >> ~/.bashrc`。整条命令解析不了，但这些目标不需要展开就知道写到哪里，拿它们对 Edit 拒绝规则与底线
+     * （CC 2.1.309）。尽力而为、只会多拦：引号里的 `>` 不算；目标含变量、命令替换、通配或花括号的不提取；
+     * here-doc 起始那一行之后的正文不看（正文里以 `>` 开头的行不是重定向）。返回的是重定向本身，`/dev/null` 与 `2>&1` 由调用方按
+     * [Redirect.writesFile] 过滤
+     */
+    fun literalWriteRedirects(raw: String): List<Redirect> {
+        val found = mutableListOf<Redirect>()
+        var i = 0
+        var single = false
+        var double = false
+        var heredoc = false
+        var atWordStart = true
+        while (i < raw.length) {
+            val c = raw[i]
+            when {
+                single -> { if (c == '\'') single = false; i++ }
+                c == '\\' -> i += 2
+                double -> { if (c == '"') double = false; i++ }
+                c == '\'' -> { single = true; i++ }
+                c == '"' -> { double = true; i++ }
+                c == '\n' && heredoc -> return found
+                c == '#' && atWordStart -> while (i < raw.length && raw[i] != '\n') i++
+                raw.startsWith("<<<", i) -> i += 3
+                raw.startsWith("<<", i) -> { heredoc = true; i += 2 }
+                c == '>' -> {
+                    var j = i + 1
+                    val op = when {
+                        raw.startsWith(">>", i) -> { j = i + 2; ">>" }
+                        raw.startsWith(">|", i) -> { j = i + 2; ">|" }
+                        raw.startsWith(">&", i) -> { j = i + 2; ">&" }
+                        else -> ">"
+                    }
+                    // >(…) 是进程替换；>&2、>&- 是复制 / 关闭文件描述符
+                    val dup = op == ">&" && raw.getOrNull(j)?.let { it.isDigit() || it == '-' } == true
+                    if (raw.getOrNull(j) == '(' || dup) { i = j; continue }
+                    while (j < raw.length && (raw[j] == ' ' || raw[j] == '\t')) j++
+                    val (target, end) = literalWord(raw, j)
+                    if (target != null) found += Redirect(op, target)
+                    i = maxOf(end, i + 1)
+                }
+                else -> i++
+            }
+            atWordStart = c == ' ' || c == '\t' || c == '\n' || c in ";&|()"
+        }
+        return found
+    }
+
+    /** 从 [start] 读一个重定向目标词；含展开 / 通配 / 花括号的返回 null（写到哪里要执行时才知道）。第二项是词尾位置 */
+    private fun literalWord(raw: String, start: Int): Pair<String?, Int> {
+        val out = StringBuilder()
+        var dynamic = false
+        var i = start
+        while (i < raw.length) {
+            val c = raw[i]
+            when {
+                c == ' ' || c == '\t' || c == '\n' || c == '\r' || c in ";&|()<>" -> break
+                c == '\'' -> {
+                    val end = raw.indexOf('\'', i + 1)
+                    if (end < 0) return null to raw.length
+                    out.append(raw, i + 1, end)
+                    i = end + 1
+                }
+                c == '"' -> {
+                    val end = raw.indexOf('"', i + 1)
+                    if (end < 0) return null to raw.length
+                    val inner = raw.substring(i + 1, end)
+                    if (inner.any { it == '$' || it == '`' || it == '\\' }) dynamic = true
+                    out.append(inner)
+                    i = end + 1
+                }
+                c == '\\' && i + 1 < raw.length -> { out.append(raw[i + 1]); i += 2 }
+                c == '$' || c == '`' || c in "*?[{" -> { dynamic = true; i++ }
+                else -> { out.append(c); i++ }
+            }
+        }
+        return (if (dynamic || out.isEmpty()) null else out.toString()) to i
     }
 
     private fun analyze(script: String, depth: Int): ShellAnalysis {
@@ -159,7 +241,10 @@ object ShellAnalyzer {
         // 只有赋值没有命令的一行本身什么都不执行，但给 PATH、IFS、BASH_ARGV0 这类变量赋值会改变同一行后面的命令
         if (firstCommand < 0) {
             prefix.firstNotNullOfOrNull { ShellVariables.standaloneRisk(it.text) }?.let { return Built.Fail(it) }
-            return Built.Many(emptyList())
+            if (redirects.isEmpty()) return Built.Many(emptyList())
+            // `> ~/.bashrc`、`ls; > /sdcard/x`：没有命令词，重定向照样建 / 截断文件。留一条空 argv 的占位命令带着它们，
+            // 只读判定、Edit 拒绝规则、受保护路径 / 手机文件底线与 worktree 隔离才看得见这次写入（丢掉就等于放行）
+            return Built.Many(listOf(SimpleCommand(emptyList(), redirects, assignments = prefix.map { it.text })))
         }
         prefix.firstNotNullOfOrNull { ShellVariables.integerRisk(it.text) }?.let { return Built.Fail(it) }
         val argv = words.drop(firstCommand)
@@ -251,7 +336,8 @@ object ShellAnalyzer {
             rest = rest.drop(1)
             // 带参数的 xargs 会改变内层 argv，不能拿内层规则替它作批准；command -v / -V 是查询，不执行后面的命令
             if (name == "xargs" && (rest.isEmpty() || rest.first().text.startsWith("-"))) return Unwrapped(listOf(head) + rest, assignments, risks)
-            if (name == "xargs") continue
+            // builtin 没有选项，后面直接是内建命令名
+            if (name == "xargs" || name == "builtin") continue
             if (name == "command" && rest.firstOrNull()?.text in setOf("-v", "-V")) return Unwrapped(listOf(head) + rest, assignments, risks)
             val texts = rest.map { it.text }
             val skipped = WrapperSyntax.skipOptions(name, texts) ?: return null

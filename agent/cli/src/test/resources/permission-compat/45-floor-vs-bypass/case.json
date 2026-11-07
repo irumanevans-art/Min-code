@@ -16,8 +16,8 @@
       "input": {
         "command": "rm -rf /"
       },
-      "expected": "ask",
-      "basis": "任务单拍板保留 Min 安全底线：写受保护路径、递归删除关键路径、看不透且带危险词，任何模式（含 bypass）都问人。"
+      "expected": "deny",
+      "basis": "2026-10-24 用户拍板跟 CC 2.1.309：bypass 下危险 rm / rmdir 不弹卡干等，直接拒绝并给改写提示；其余底线仍问人。"
     },
     {
       "tool": "Bash",
