@@ -14,6 +14,36 @@ class HttpEdgeCasesTest {
         val c = McpClient(t, this, McpClientOptions("1", requestTimeoutMs = 3_000))
         try { withTimeout(10_000) { block(c) } } finally { c.close() }
     }
+    // CC 2.1.307：POST 已被接受、续传 GET 才 404 时，服务器可能已经执行了这次调用。只读/幂等的工具才重发
+    @Test fun `post SSE resume 404 reinitializes but does not resend a tool call not marked resend safe`() = runBlocking {
+        LoopbackHttp().use { s ->
+            val initializations = AtomicInteger(); val calls = AtomicInteger()
+            s.server.createContext("/mcp") { e ->
+                if (e.requestMethod == "GET") e.reply(404)
+                else if (e.requestMethod != "POST") e.reply(405)
+                else {
+                    val m = json(e.requestBody.readBytes().decodeToString())
+                    when (m.text("method")) {
+                        "initialize" -> {
+                            e.responseHeaders.add("Mcp-Session-Id", "s${initializations.incrementAndGet()}")
+                            e.reply(200, result(m.getValue("id"), initializeResult()).toString())
+                        }
+                        "tools/call" -> { calls.incrementAndGet(); e.reply(200, "id: resume\nretry: 1\n\n", "text/event-stream") }
+                        "ping" -> e.reply(200, result(m.getValue("id"), emptyObject).toString())
+                        else -> e.reply(202)
+                    }
+                }
+            }
+            withClient(StreamableHttpMcpTransport(s.url + "/mcp", { emptyList() }, s.http, enableGetStream = false)) { c ->
+                c.connect()
+                val failure = try { c.callTool("x", emptyObject, idleTimeoutMs = 3_000); null } catch (e: McpTransportClosed) { e }
+                assertTrue(failure!!.reason, failure.reason.contains("结果未知"))
+                // 会话已恢复：后续请求照常可用
+                c.ping()
+            }
+            assertEquals(1, calls.get()); assertEquals(2, initializations.get())
+        }
+    }
     @Test fun `post SSE resume 404 reinitializes and resends once but second expiry fails`() = runBlocking {
         for (failAgain in listOf(false, true)) LoopbackHttp().use { s ->
             val initializations = AtomicInteger(); val gets = AtomicInteger()
@@ -42,7 +72,7 @@ class HttpEdgeCasesTest {
             }
             withClient(StreamableHttpMcpTransport(s.url + "/mcp", { emptyList() }, s.http, enableGetStream = false)) { c ->
                 c.connect()
-                val failure = try { c.callTool("x", emptyObject, idleTimeoutMs = 3_000); null } catch (e: McpHttpException) { e }
+                val failure = try { withContext(McpResendSafe()) { c.callTool("x", emptyObject, idleTimeoutMs = 3_000) }; null } catch (e: McpHttpException) { e }
                 if (failAgain) assertEquals(404, failure!!.status) else assertNull(failure)
             }
             assertEquals(2, initializations.get()); assertEquals(listOf(null, null), initializeSessions)

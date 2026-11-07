@@ -159,7 +159,7 @@ internal class ModelHookRunner(private val rt: SessionRuntime) {
                 val result = rt.mcpCaller.call(
                     McpCallRequest(
                         server, tool, interpolateMcpInput(handler.mcpInput ?: JsonObject(mapOf()), stdin),
-                        rt.sessionId, CallId(deps.ids.next("hookcall")), deps.host.artifacts(rt.sessionId), { },
+                        rt.sessionId, CallId(deps.ids.next("hookcall")), deps.host.artifacts(rt.sessionId), { }, resendSafe = entry.resendSafe,
                     ),
                 )
                 val text = result.content.filterIsInstance<TextPart>().joinToString("") { it.text }

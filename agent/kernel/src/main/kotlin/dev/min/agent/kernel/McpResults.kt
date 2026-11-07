@@ -86,9 +86,20 @@ internal object McpResults {
         return ToolResult(listOf(TextPart(wrapped)) + parts, isError = result.isError)
     }
 
-    /** 调用失败（不是工具自己说的 isError）给模型的话：说清是哪种失败、能不能重试 */
-    fun failure(server: String, e: Exception): ToolResult {
-        val text = when (e) {
+    /**
+     * 调用失败（不是工具自己说的 isError）给模型的话：说清是哪种失败、能不能重试。
+     * [awaitingElicitation]：超时那一刻这台服务器还有一张 elicitation 卡片没人答（CC 2.1.310）——
+     * 这时说「结果未知」会让模型再调一次、再弹一张没人看的卡片，所以直说没等到回答、别重复
+     */
+    fun failure(server: String, e: Exception, awaitingElicitation: Boolean = false): ToolResult {
+        val text = if (e is McpTimeoutException && awaitingElicitation)
+            "MCP 服务器 $server 在等用户回答它的请求（elicitation），一直没有等到回答，这次调用已超时取消。不要再重复这次调用；需要的话先在回复里问用户。"
+        else describe(server, e)
+        return ToolResult(listOf(TextPart(text)), isError = true)
+    }
+
+    private fun describe(server: String, e: Exception): String =
+        when (e) {
             is McpRpcException -> "MCP 服务器 $server 拒绝了这次调用（错误码 ${e.code}）：${e.serverMessage ?: e.message}"
             is McpTimeoutException -> when (e.kind) {
                 McpTimeoutException.Kind.Idle -> "MCP 服务器 $server 太久没有回应也没有报进度，这次调用已取消。结果未知：有副作用的操作先确认状态，不要盲目重试。"
@@ -99,8 +110,6 @@ internal object McpResults {
             is McpTransportClosed -> "和 MCP 服务器 $server 的连接断了（${e.reason}）。这次调用的结果未知：不要盲目重试有副作用的操作。"
             else -> "调用 MCP 服务器 $server 出错：${e.message ?: e::class.simpleName}"
         }
-        return ToolResult(listOf(TextPart(text)), isError = true)
-    }
 
     private fun decode(data: String): ByteArray? = dev.min.agent.spi.catchingNonCancellation { Base64.getDecoder().decode(data) }.getOrNull()
 

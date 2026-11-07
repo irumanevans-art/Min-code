@@ -77,6 +77,25 @@ class McpToolsTest {
     }
 
     @Test
+    fun `the description cut never splits a surrogate pair`() {
+        // 第 4096 个 UTF-16 单元是 emoji 的高半：切在它前面，不留半个字符（半个代理对会让供应商拒掉整个请求）
+        val cut = McpShaping.truncate("x".repeat(4095) + "😀" + "y")
+        assertEquals("x".repeat(4095) + "…", cut)
+        assertEquals("x".repeat(4094) + "😀" + "…", McpShaping.truncate("x".repeat(4094) + "😀" + "y".repeat(10)))
+    }
+
+    @Test
+    fun `input that failed JSON parsing is rejected before it reaches the server`() {
+        var called = false
+        val entry = dev.min.agent.spi.McpToolEntry("mcp__s__t", "s", "t", "d", schema("""{"type":"object"}"""))
+        val adapter = McpToolAdapter(entry, McpCaller { called = true; error("不该调到服务器") })
+        val broken = adapter.parse(schema("""{"__invalid_json":"{\"path\":\"a"}"""))
+        assertTrue(broken.toString(), broken is dev.min.agent.spi.ToolInput.Invalid)
+        assertTrue(adapter.parse(schema("""{"path":"a"}""")) is dev.min.agent.spi.ToolInput.Valid)
+        assertFalse(called)
+    }
+
+    @Test
     fun `agent patterns match whole servers, wildcards and exact tools`() {
         for (grant in listOf(true, false)) {
             assertTrue(matchesMcpPattern("mcp__github", "mcp__github__create_issue", "github", grant))

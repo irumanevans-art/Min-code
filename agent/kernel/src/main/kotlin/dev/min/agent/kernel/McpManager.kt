@@ -784,9 +784,9 @@ internal class McpManager(
                 val key = request.sessionId to request.callId
                 entry.activeCalls[key] = request
                 try {
-                    // 追踪开着时 HTTP MCP 请求带这次工具执行 span 的 traceparent（原文：「the same way」，同一个开关管）；放进协程上下文，HTTP 传输发 POST 时取
+                    // 追踪开着时 HTTP MCP 请求带这次工具执行 span 的 traceparent（原文：「the same way」，同一个开关管）；放进协程上下文，HTTP 传输发 POST 时取；工具自称只读 / 幂等的另放 [dev.min.agent.mcp.McpResendSafe]（会话中途过期可重发）
                     val trace = request.traceparent?.let { dev.min.agent.mcp.McpTraceContext(it) } ?: kotlin.coroutines.EmptyCoroutineContext
-                    val result = withContext(trace) {
+                    val result = withContext(trace + if (request.resendSafe) dev.min.agent.mcp.McpResendSafe() else kotlin.coroutines.EmptyCoroutineContext) {
                         authenticated(entry) { connection ->
                             if (request.resourceUri != null) connection.readResource(request.resourceUri) else connection.call(
                                 request.tool, request.arguments,
@@ -800,7 +800,7 @@ internal class McpManager(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    McpResults.failure(request.server, e)
+                    McpResults.failure(request.server, e, awaitingElicitation = e is dev.min.agent.mcp.McpTimeoutException && binding.rt.state.value.awaitsMcpElicitation(request.server))
                 } finally { entry.activeCalls.remove(key) }
             }
         }

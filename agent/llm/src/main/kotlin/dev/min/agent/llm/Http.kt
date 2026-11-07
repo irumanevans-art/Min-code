@@ -5,8 +5,11 @@ package dev.min.agent.llm
  * 以及工具参数解析失败的占位键。各家只在「内置特征」和「预览是否带省略号」上不同，这里参数化。
  */
 
-/** 工具调用参数解析失败时的占位键：工具的 parse 会拒掉它并告诉模型（规范 §2） */
-internal const val INVALID_JSON_KEY = "__invalid_json"
+/**
+ * 工具调用参数解析失败时的占位键：工具的 parse 会拒掉它并告诉模型（规范 §2）。内置工具靠必填字段缺失自然拒掉；
+ * MCP 工具的入参原样转给服务器，内核按这个键单独拦（`McpToolAdapter.parse`），所以公开
+ */
+const val INVALID_JSON_KEY = "__invalid_json"
 
 /** 异常 message 里带的响应体开头长度上限：够人看，又不会把整页 HTML 塞进日志 */
 private const val BODY_PREVIEW_CHARS = 500

@@ -40,6 +40,7 @@ internal fun shapeListedTools(listed: List<ListedTools>, notes: MutableList<Stri
             description = McpShaping.truncate(listOfNotNull(s.descriptionPrefix, d.description ?: d.title).joinToString("\n")),
             inputSchema = s.schema,
             readOnlyHint = d.annotations?.readOnlyHint == true,
+            idempotentHint = d.annotations?.idempotentHint == true,
             requiresUserInteraction = (d.meta?.get(META_REQUIRES_INTERACTION) as? JsonPrimitive)?.booleanOrNull == true,
             maxResultChars = (d.meta?.get(META_MAX_RESULT_CHARS) as? JsonPrimitive)?.intOrNull,
             alwaysLoad = e.alwaysLoad || (d.meta?.get(META_ALWAYS_LOAD) as? JsonPrimitive)?.booleanOrNull == true,

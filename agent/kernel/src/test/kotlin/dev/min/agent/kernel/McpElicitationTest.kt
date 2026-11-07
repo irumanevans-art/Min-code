@@ -147,6 +147,44 @@ class McpElicitationTest {
             hub.close(rt.sessionId); hub.close(second.sessionId); hub.closeMcpConnections()
         } finally { scope.cancel() }
     }
+    // CC 2.1.310：调用超时那一刻服务器的 elicitation 还没人答，告诉模型没等到回答、别再重复调用，而不是笼统的「结果未知」
+    @Test fun `a call timing out while its server's elicitation is unanswered tells the model not to repeat it`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val fs = FakeFs().apply { put("/root/.claude.json", """{"mcpServers":{"s":{"command":"unused"}}}""") }
+            val model = ScriptedModel(reply(ToolCallPart(CallId("invoke"), "mcp__s__ask", args()), stop=StopReason.ToolUse), reply(TextPart("done")))
+            val base = testDeps(model, emptyList())
+            val deps = KernelDeps(base.clock, base.ids, base.models, emptyList(), HostPorts(fs, base.host.search, base.host.exec, base.host.artifacts), base.platform, base.zone, memoryHome=GuestPath("/root"))
+            val store = FileSessionStore(tmp.newFolder().toPath(), { 0L })
+            val hub = SessionHub(store, deps, scope)
+            lateinit var rt: SessionRuntime
+            val connector = object : McpConnector {
+                override suspend fun connect(spec: dev.min.agent.ext.mcp.McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope): McpConnection = error("必须接交互处理器")
+                override suspend fun connectWithInteraction(spec: dev.min.agent.ext.mcp.McpServerSpec, projectRoot: GuestPath, scope: CoroutineScope, roots: () -> List<GuestPath>, elicit: suspend (JsonObject?) -> JsonObject) = object : McpConnection {
+                    override val state = MutableStateFlow<dev.min.agent.mcp.McpConnectionState>(dev.min.agent.mcp.McpConnectionState.Ready(dev.min.agent.mcp.McpServerInfo("2025-11-25", args(), args("tools" to args()), null)))
+                    override val toolsChanged = emptyFlow<Unit>()
+                    override val instructions: String? = null
+                    override suspend fun listTools() = listOf(dev.min.agent.mcp.McpToolDef("ask", null, "ask", args("type" to "object"), null, null, null))
+                    override suspend fun call(tool: String, arguments: JsonObject, onProgress: (dev.min.agent.mcp.McpProgress) -> Unit, idleTimeoutMs: Long, hardTimeoutMs: Long?): dev.min.agent.mcp.McpCallResult {
+                        // 反向请求跑在连接作用域里（同 McpClient），调用超时不会顺带取消它
+                        scope.launch { elicit(form) }
+                        withTimeout(5_000) { rt.state.first { it.pendingMcpQuestions.isNotEmpty() } }
+                        throw dev.min.agent.mcp.McpTimeoutException(dev.min.agent.mcp.McpTimeoutException.Kind.Hard, "超时")
+                    }
+                    override fun stderrTail() = emptyList<String>()
+                    override suspend fun close() { state.value = dev.min.agent.mcp.McpConnectionState.Closed("closed") }
+                }
+            }
+            hub.mcp = McpManager(scope, connector)
+            rt = hub.create(GuestPath("/w"), TEST_MODEL, PermissionMode.BypassPermissions)
+            rt.send(ClientMsgId("u"), listOf(TextPart("invoke")))
+            withTimeout(10_000) { rt.awaitIdle() }
+            val text = store.peek(rt.sessionId)!!.read().toList().map { it.event }.filterIsInstance<ToolOutcome>().single().result.content.toString()
+            assertTrue(text, text.contains("没有等到回答") && text.contains("不要再重复"))
+            assertFalse(text, text.contains("结果未知"))
+            hub.close(rt.sessionId); hub.closeMcpConnections()
+        } finally { scope.cancel() }
+    }
     @get:Rule val tmp = TemporaryFolder()
     private fun json(s: String) = Json.parseToJsonElement(s).jsonObject
     private val form = json("""{"message":"填写","requestedSchema":{"type":"object","properties":{"name":{"type":"string"},"count":{"type":"integer"},"ratio":{"type":"number"},"enabled":{"type":"boolean"},"color":{"type":"string","enum":["red","blue"]}},"required":["name","count","ratio","enabled","color"]}}""")

@@ -54,6 +54,8 @@ data class McpToolEntry(
     /** `_meta["anthropic/maxResultSizeChars"]`（上限 500,000）；null = 用默认的结果预算 */
     val maxResultChars: Int? = null,
     val alwaysLoad: Boolean = false,
+    /** 服务器自称幂等：和 [readOnlyHint] 一样不免审批，只决定 HTTP 会话中途过期时能不能重发这次调用（CC 2.1.307） */
+    val idempotentHint: Boolean = false,
 )
 
 /**

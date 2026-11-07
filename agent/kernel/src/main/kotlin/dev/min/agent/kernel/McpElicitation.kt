@@ -82,6 +82,10 @@ internal fun urlQuestion(request: McpUrlElicitationAsked) = UserQuestion(
     "打开网址", listOf(QuestionOption("y", "同意后由宿主打开"), QuestionOption("n", "拒绝")),
 )
 
+/** 这台服务器有没有还没人答的 elicitation（表单或网址卡片）：调用超时时据它换说法（[McpResults.failure]） */
+internal fun SessionState.awaitsMcpElicitation(server: String): Boolean =
+    pendingMcpQuestions.any { it.server == server } || pendingMcpUrls.any { it.request.server == server }
+
 internal fun elicitationResult(action: String, content: JsonObject? = null) = buildJsonObject {
     put("action", action); content?.let { put("content", it) }
 }

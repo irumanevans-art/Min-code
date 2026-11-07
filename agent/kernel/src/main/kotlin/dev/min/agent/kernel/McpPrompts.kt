@@ -37,6 +37,7 @@ suspend fun SessionRuntime.callMcpToolByName(name: String, arguments: JsonObject
         McpCallRequest(
             server = entry.server, tool = entry.tool, arguments = arguments, sessionId = sessionId,
             callId = dev.min.agent.protocol.CallId("prompt-${deps.ids.next("p")}"), artifacts = deps.host.artifacts(sessionId), progress = {},
+            resendSafe = entry.resendSafe,
         ),
     )
 }

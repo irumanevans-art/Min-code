@@ -82,6 +82,9 @@ class StreamableHttpMcpTransport(
                         // 续传 GET 也携带会话；它的 404 与原 POST 的过期必须共享一次恢复预算。
                         if (e.status != 404 || oldSession == null || refreshed || (handshaking && handshakeMessage)) throw e
                         recover(oldSession); refreshed = true
+                        // 这时 POST 已被接受，服务器可能已经执行过了：工具调用只在自称只读/幂等时重发（[McpResendSafe]）
+                        if (message.text("method") == "tools/call" && currentCoroutineContext()[McpResendSafe] == null)
+                            throw McpTransportClosed("MCP 服务器 ${safeUrl(endpoint)} 的会话在调用进行中过期，已重新连上；请求已送达，为免重复执行没有重发，这次调用的结果未知。")
                         return@use
                     } catch (e: McpTransportClosed) { throw McpProtocolException(e.reason) }
                     if (message.text("method") == "notifications/initialized") startGet()

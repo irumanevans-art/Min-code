@@ -44,6 +44,8 @@ internal data class McpCallRequest(
     val resourceUri: String? = null,
     /** 这次工具执行 span 的 `traceparent`（[dev.min.agent.spi.ToolContext.traceparent]）；HTTP 传输随请求发出，null = 不传播 */
     val traceparent: String? = null,
+    /** 工具自称只读或幂等：HTTP 会话在调用中途过期时可以重发（[dev.min.agent.mcp.McpResendSafe]）；其余调用那时以「结果未知」结束 */
+    val resendSafe: Boolean = false,
 )
 
 /**
@@ -65,6 +67,9 @@ internal fun interface McpCaller {
         }
     }
 }
+
+/** 服务器自称只读或幂等的工具：HTTP 会话在调用中途过期时可以重发（只信到这一步，审批照旧） */
+internal val McpToolEntry.resendSafe: Boolean get() = readOnlyHint || idempotentHint
 
 /** MCP 工具的结果预算：CC 默认 25,000 token，按每 token 约 3.2 个字符折算 */
 internal const val MCP_RESULT_BUDGET_CHARS = 80_000
@@ -90,14 +95,18 @@ internal class McpToolAdapter(private val entry: McpToolEntry, private val calle
 
     override fun description(profile: HarnessProfile): String = entry.description
 
-    override fun parse(raw: JsonObject): ToolInput<JsonObject> = ToolInput.Valid(raw)
+    override fun parse(raw: JsonObject): ToolInput<JsonObject> =
+        // 模型给的参数不是合法 JSON（供应商流里拼坏了）：内置工具在 parse 时就拒，MCP 工具也不能把占位键当参数发给服务器
+        if (raw.keys == setOf(dev.min.agent.llm.INVALID_JSON_KEY)) ToolInput.Invalid("参数不是合法的 JSON 对象，没有发给 MCP 服务器。请按工具的 inputSchema 重新给出完整参数。")
+        else ToolInput.Valid(raw)
 
     override fun permissionAsk(input: JsonObject, ctx: ToolContext): PermissionAsk =
         PermissionAsk(name, "调用 MCP 服务器 ${entry.server} 的工具 ${entry.tool}", mcpServer = McpNames.sanitize(entry.server))
 
     override fun run(input: JsonObject, ctx: ToolContext): Flow<ToolProgress> = channelFlow {
         val result = caller.call(
-            McpCallRequest(entry.server, entry.tool, input, ctx.sessionId, ctx.callId, ctx.artifacts, { text -> trySend(ToolProgress.Status(text)) }, traceparent = ctx.traceparent()),
+            McpCallRequest(entry.server, entry.tool, input, ctx.sessionId, ctx.callId, ctx.artifacts, { text -> trySend(ToolProgress.Status(text)) }, traceparent = ctx.traceparent(),
+                resendSafe = entry.resendSafe),
         )
         send(ToolProgress.Done(result))
     }
@@ -113,7 +122,12 @@ internal object McpShaping {
 
     private val PROPERTY_NAME = Regex("^[A-Za-z0-9_.-]{1,64}$")
 
-    fun truncate(text: String, max: Int = MAX_DESCRIPTION): String = if (text.length <= max) text else text.take(max) + "…"
+    fun truncate(text: String, max: Int = MAX_DESCRIPTION): String {
+        if (text.length <= max) return text
+        // 按 UTF-16 下标切会把 emoji 之类的代理对切成半个，孤立的高半让请求体不是合法 UTF-8，供应商会拒掉整个请求
+        val end = if (max > 0 && Character.isHighSurrogate(text[max - 1])) max - 1 else max
+        return text.take(end) + "…"
+    }
 
     sealed interface Shaped {
         /** [descriptionPrefix] 是压平根级组合时要加在工具说明前面的一句话 */

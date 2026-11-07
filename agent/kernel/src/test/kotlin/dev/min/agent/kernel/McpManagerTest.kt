@@ -74,9 +74,9 @@ class McpManagerTest {
 
     private fun run(block: suspend () -> Unit) = runBlocking { withTimeout(20_000) { block() } }
 
-    private fun tool(name: String, readOnly: Boolean = false) = McpToolDef(
+    private fun tool(name: String, readOnly: Boolean = false, idempotent: Boolean? = null) = McpToolDef(
         name, null, "github 的 $name", JsonObject(mapOf("type" to JsonPrimitive("object"))), null,
-        McpToolAnnotations(readOnlyHint = readOnly), null,
+        McpToolAnnotations(readOnlyHint = readOnly, idempotentHint = idempotent), null,
     )
 
     /** 替身连接：工具表可改，能发 list_changed，能「掉线」 */
@@ -90,8 +90,11 @@ class McpManagerTest {
         var result: (String, JsonObject) -> McpCallResult = { t, _ -> McpCallResult(listOf(McpContent.Text("$t 完成")), null, false) }
         var closed = false
         var listFails = false
+        /** 每次调用时协程上下文里有没有 [dev.min.agent.mcp.McpResendSafe]（HTTP 传输据它决定会话过期后能不能重发） */
+        val resendSafe = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
         override suspend fun listTools() = if (listFails) error("tools/list 失败") else tools
         override suspend fun call(tool: String, arguments: JsonObject, onProgress: (McpProgress) -> Unit, idleTimeoutMs: Long, hardTimeoutMs: Long?): McpCallResult {
+            resendSafe[tool] = kotlin.coroutines.coroutineContext[dev.min.agent.mcp.McpResendSafe] != null
             onProgress(McpProgress(1.0, 2.0))
             return result(tool, arguments)
         }
@@ -239,6 +242,30 @@ class McpManagerTest {
         val text = outcome.result.content.filterIsInstance<TextPart>().single().text
         assertTrue(text, text.startsWith("<mcp-result server=\"github\" tool=\"search\">") && text.contains("search 完成"))
         assertFalse(outcome.result.isError)
+    }
+
+    @Test
+    fun `only read-only or idempotent tools are marked safe to resend after a mid-call session expiry`() = run {
+        val connector = FakeConnector()
+        val model = ScriptedModel(
+            reply(TextPart("一")),
+            reply(
+                ToolCallPart(CallId("c1"), "mcp__github__search", args()),
+                ToolCallPart(CallId("c2"), "mcp__github__upsert", args()),
+                ToolCallPart(CallId("c3"), "mcp__github__create", args()),
+                stop = StopReason.ToolUse,
+            ),
+            reply(TextPart("好")),
+        )
+        val rt = hub(model, connector).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        rt.say("第一轮")
+        val connection = connector.made.single()
+        connection.tools = connection.tools + tool("upsert", idempotent = true) + tool("create", idempotent = false)
+        connection.changes.emit(Unit)
+        delay(200)
+        rt.say("调")
+        assertTrue(rt.state.value.mcpTools!!.tools.single { it.tool == "upsert" }.idempotentHint)
+        assertEquals(mapOf("search" to true, "upsert" to true, "create" to false), connection.resendSafe.toMap())
     }
 
     @Test
