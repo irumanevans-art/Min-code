@@ -7,6 +7,8 @@ import dev.min.agent.protocol.RequestId
 import dev.min.agent.protocol.TextPart
 import dev.min.agent.protocol.Usage
 import dev.min.agent.spi.ApprovalChoice
+import dev.min.agent.spi.AutoReviewed
+import dev.min.agent.spi.AutoReviewDecision
 import dev.min.agent.spi.ApprovalRequested
 import dev.min.agent.spi.ApprovalResolved
 import dev.min.agent.spi.AssistantMessageCompleted
@@ -103,6 +105,8 @@ class OtelMapper(private val options: OtelOptions) {
     private val effectAt = HashMap<CallId, Long>()
     private val approvalCall = HashMap<ApprovalId, CallId>()
     private val approvalSource = HashMap<CallId, String>()
+    /** 安全底线要求的审批卡（safety_event 的 safety_check） */
+    private val floorApprovals = HashSet<ApprovalId>()
     private val rejected = HashSet<CallId>()
 
     private class PendingRequest(val requestId: RequestId, val model: ModelRef, val atMs: Long, val clientRequestId: String?)
@@ -222,6 +226,7 @@ class OtelMapper(private val options: OtelOptions) {
             }
             is ApprovalRequested -> {
                 approvalCall[e.approvalId] = e.callId
+                if (e.floorReason != null) floorApprovals += e.approvalId
                 emptyList()
             }
             is ApprovalResolved -> approvalResolved(record, e)
@@ -230,6 +235,7 @@ class OtelMapper(private val options: OtelOptions) {
                 emptyList()
             }
             is ToolOutcome -> toolOutcome(record, e)
+            is AutoReviewed -> if (e.decision == AutoReviewDecision.Deny) listOf(safetyEvent(record, OtelSafety.classifierBlock(), e.callId)) else emptyList()
             is SettingsChanged -> {
                 if (e.clearEffort) effort = null
                 e.effort?.let { effort = it }
@@ -305,6 +311,7 @@ class OtelMapper(private val options: OtelOptions) {
     }
 
     private fun approvalResolved(record: EventRecord, e: ApprovalResolved): List<OtelItem> {
+        val floor = floorApprovals.remove(e.approvalId)
         val call = approvalCall.remove(e.approvalId) ?: return emptyList()
         val tool = planned[call]?.name ?: return emptyList()
         val accepted = e.choice !is ApprovalChoice.Deny
@@ -321,6 +328,7 @@ class OtelMapper(private val options: OtelOptions) {
             put("tool_source", text(toolSource(tool)))
             if (options.logToolDetails) put("tool_parameters", text(planned[call]!!.input.toString()))
         })
+        OtelSafety.approval(e.decidedBy, e.choice, floor)?.let { out += safetyEvent(record, it, call) }
         if (tool in CODE_EDIT_TOOLS) {
             out += metric(OtelNames.CODE_EDIT_DECISION, "", 1.0, mapOf(
                 "tool_name" to text(tool),
@@ -494,8 +502,23 @@ class OtelMapper(private val options: OtelOptions) {
             (e.cancelled ?: if (e.succeeded != null) 0 else null)?.let { put("num_cancelled", OtelValue.Whole(it.toLong())) }
             put("total_duration_ms", OtelValue.Real(e.durationMs.toDouble()))
         })
-        return listOf(start, complete)
+        return listOfNotNull(start, complete, OtelSafety.hooks(e.event, e.decision, e.callId != null)?.let { safetyEvent(record, it, e.callId) })
     }
+
+    /** safety_event（[OtelSafety]）：检查给的类别与细节，加上调用的工具类别、模式与 tool_use_id；回合结束（Stop 一类）没有调用 */
+    private fun safetyEvent(record: EventRecord, check: SafetyCheck, call: CallId?): OtelLog = log(record, OtelNames.SAFETY_EVENT, buildMap {
+        put("category", text(check.category))
+        put("decision", text(check.decision))
+        put("decision_source", text(check.decisionSource))
+        check.details.forEach { (key, value) -> put(key, text(value)) }
+        call?.let { toolNames[it] }?.let { tool ->
+            put("tool_class", text(OtelSafety.toolClass(tool)))
+            put("tool_name", text(OtelSafety.toolName(tool)))
+            put("tool_source", text(toolSource(tool)))
+        }
+        mode?.let { put("permission_mode", text(it.wire())) }
+        call?.let { put("tool_use_id", text(it.value)) }
+    })
 
     // ---- compaction ----
 

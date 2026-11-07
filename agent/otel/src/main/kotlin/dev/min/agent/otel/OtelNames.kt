@@ -19,6 +19,7 @@ object OtelNames {
     const val API_ERROR = "claude_code.api_error"
     const val TOOL_DECISION = "claude_code.tool_decision"
     const val TOOL_RESULT = "claude_code.tool_result"
+    const val SAFETY_EVENT = "claude_code.safety_event"
     const val PERMISSION_MODE_CHANGED = "claude_code.permission_mode_changed"
     const val API_RETRIES_EXHAUSTED = "claude_code.api_retries_exhausted"
     const val API_REFUSAL = "claude_code.api_refusal"
@@ -49,7 +50,7 @@ val OTEL_NAME_TABLE: Map<String, List<String>> = mapOf(
     "model_request_failed" to listOf(OtelNames.API_ERROR, OtelNames.API_RETRIES_EXHAUSTED),
     "assistant_message_completed" to listOf(OtelNames.ASSISTANT_RESPONSE, OtelNames.API_REFUSAL),
     "hooks_loaded" to listOf(OtelNames.HOOK_REGISTERED),
-    "hooks_ran" to listOf(OtelNames.HOOK_EXECUTION_START, OtelNames.HOOK_EXECUTION_COMPLETE),
+    "hooks_ran" to listOf(OtelNames.HOOK_EXECUTION_START, OtelNames.HOOK_EXECUTION_COMPLETE, OtelNames.SAFETY_EVENT),
     "compaction_started" to emptyList(),
     "context_compacted" to listOf(OtelNames.COMPACTION),
     "compaction_failed" to listOf(OtelNames.COMPACTION),
@@ -59,7 +60,8 @@ val OTEL_NAME_TABLE: Map<String, List<String>> = mapOf(
     "skills_rescanned" to emptyList(),
     "tool_planned" to emptyList(),
     "approval_requested" to emptyList(),
-    "approval_resolved" to listOf(OtelNames.TOOL_DECISION, OtelNames.CODE_EDIT_DECISION),
+    "approval_resolved" to listOf(OtelNames.TOOL_DECISION, OtelNames.CODE_EDIT_DECISION, OtelNames.SAFETY_EVENT),
+    "auto_reviewed" to listOf(OtelNames.SAFETY_EVENT),
     "tool_effect_pending" to emptyList(),
     "tool_outcome" to listOf(OtelNames.TOOL_RESULT, OtelNames.LINES_OF_CODE, OtelNames.SKILL_ACTIVATED),
     "settings_changed" to listOf(OtelNames.PERMISSION_MODE_CHANGED),
