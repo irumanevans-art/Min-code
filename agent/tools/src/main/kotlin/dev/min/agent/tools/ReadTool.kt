@@ -79,7 +79,9 @@ object ReadTool : Tool<ReadInput> {
 
     override fun permissionAsk(input: ReadInput, ctx: ToolContext) = PermissionAsk(
         tool = name,
-        summary = "读取 ${input.path}",
+        // 符号链接指向别处时写明它真正读的是哪个文件（CC 2.1.310），否则用户看到的是一个无害的工作区路径。
+        // 只改显示：路径分级与规则匹配本来就按解析后的真实路径做
+        summary = "读取 ${input.path}" + ctx.canonicalPath(input.path).takeIf { it != input.path }?.let { " → $it" }.orEmpty(),
         paths = listOf(PathAccess(input.path, AccessKind.Read, ctx.fs.scopeOf(input.path))),
     )
 

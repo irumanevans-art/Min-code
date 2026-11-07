@@ -7,7 +7,12 @@ data class WebSearchInput(val query: String, val allowedDomains: List<String>, v
 
 object WebSearchTool : Tool<WebSearchInput> {
     const val RESULT_LIMIT = 10
-    const val LIMIT_NOTICE = "已用完本会话的搜索次数，请基于已有信息继续；需要更多时请用户放宽上限。"
+    /**
+     * 次数用完时给模型的话。后半句是 CC 2.1.307 加的：模型会改用浏览器或手机的设备控制工具（device_*）打开搜索页，
+     * 等于绕过上限，所以明说不许
+     */
+    const val LIMIT_NOTICE = "已用完本会话的搜索次数，请基于已有信息继续；需要更多时请用户放宽上限。" +
+        "不要改用浏览器或手机的设备控制工具（device_* 等）去打开搜索引擎或网页来代替搜索。"
     override val name = "WebSearch"
     override val traits = ToolTraits(readOnly = true, concurrencySafe = true, resumePolicy = ResumePolicy.Replay)
     override val inputSchema = schemaObject(listOf("query"),

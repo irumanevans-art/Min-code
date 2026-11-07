@@ -127,6 +127,8 @@ class WebToolsTest {
         val result = WebSearchTool.call(ctx, "query" to "x")
         assertFalse(result.isError)
         assertEquals(WebSearchTool.LIMIT_NOTICE, result.text)
+        // CC 2.1.307：次数用完后不许绕道浏览器或手机的设备控制工具去搜
+        assertTrue(result.text, result.text.contains("浏览器") && result.text.contains("device_"))
     }
 
     @Test fun `search bare deny works qualified rules do not and default is allowed`() {

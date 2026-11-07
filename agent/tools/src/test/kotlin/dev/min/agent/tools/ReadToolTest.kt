@@ -218,6 +218,18 @@ class ReadToolTest {
         assertTrue(ask.commands.isEmpty())
     }
 
+    // CC 2.1.310：读符号链接时审批卡写明它指向哪里；路径分级本来就按解析后的路径判，这里只改显示
+    @Test
+    fun `permissionAsk 对指向别处的链接写明目标`() {
+        val linked = object : dev.min.agent.spi.ToolContext by ctx {
+            override fun canonicalPath(path: GuestPath) = if (path.value == "/work/notes") GuestPath("/sdcard/Documents/notes.txt") else path
+        }
+        val ask = ReadTool.permissionAsk(ReadTool.parsed("file_path" to "/work/notes"), linked)
+        assertEquals("读取 /work/notes → /sdcard/Documents/notes.txt", ask.summary)
+        assertEquals("权限检查的路径不变", listOf(GuestPath("/work/notes")), ask.paths.map { it.path })
+        assertEquals("读取 /work/a.txt", ReadTool.permissionAsk(ReadTool.parsed("file_path" to "/work/a.txt"), linked).summary)
+    }
+
     @Test
     fun `traits 只读 可并发 可重放`() {
         assertTrue(ReadTool.traits.readOnly)
