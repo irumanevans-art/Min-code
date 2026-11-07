@@ -56,8 +56,32 @@ data class HookHandler(
 
 data class HookMatch(val handlers: List<HookHandler>, val notes: List<String>)
 
-/** 保留不同事件和 matcher 的绑定，避免去重把另一触发时机悄悄删掉。 */
-class HookSet private constructor(val handlers: List<HookHandler>, val notes: List<String>) {
+/**
+ * 一个来源（一个仓库、用户目录、某一个插件）的 skill 在一个会话里能登记的 hooks 预算（CC 2.1.304）：
+ * 最多 [MAX_HOOKS] 个处理器、matcher 合计 [MAX_MATCHER_CHARS] 个字符，超出的丢掉。防的是一个仓库塞几万个 hook /
+ * 超长 matcher 把每次工具调用的匹配拖垮。同一来源的多次 [HookSet.parse] 共用一个实例，按登记顺序先到先得；
+ * 每个处理器都按它所在组的 matcher 长度计（组里每一条都要拿它去匹配）
+ */
+class HookBudget {
+    private var hooks = 0
+    private var matcherChars = 0
+
+    internal fun admit(matcher: String?): Boolean {
+        val chars = matcher?.length ?: 0
+        if (hooks + 1 > MAX_HOOKS || matcherChars + chars > MAX_MATCHER_CHARS) return false
+        hooks += 1; matcherChars += chars
+        return true
+    }
+
+    companion object {
+        /** CC 2.1.304 的上限原文：1,024 hooks、16,384 matcher characters，按来源、按会话 */
+        const val MAX_HOOKS = 1024
+        const val MAX_MATCHER_CHARS = 16_384
+    }
+}
+
+/** 保留不同事件和 matcher 的绑定，避免去重把另一触发时机悄悄删掉。[overBudget] 是因 [HookBudget] 用完而丢掉的处理器数 */
+class HookSet private constructor(val handlers: List<HookHandler>, val notes: List<String>, val overBudget: Int = 0) {
     fun matching(event: HookEvent, target: String?): List<HookHandler> = matchingDetailed(event, target).handlers
 
     /** 调用方闭包携带工具入参；这里不认识权限引擎，也不猜测 if 规则。 */
@@ -218,8 +242,14 @@ class HookSet private constructor(val handlers: List<HookHandler>, val notes: Li
     }
 
     companion object {
-        fun parse(sources: List<HookSource>): HookSet {
+        /**
+         * [budget]：skill / command frontmatter 的 hooks 按来源限量（见 [HookBudget]）；settings 层不传，不设限。
+         * @JvmOverloads 留着单参数版本：cli 的 hook 兼容样本测试按反射找 `parse(List)`
+         */
+        @JvmOverloads
+        fun parse(sources: List<HookSource>, budget: HookBudget? = null): HookSet {
             val notes = mutableListOf<String>()
+            var overBudget = 0
             val unique = linkedMapOf<List<Any?>, HookHandler>()
             sources.forEach { layer ->
                 layer.hooks.forEach eventLoop@{ (name, value) ->
@@ -325,9 +355,14 @@ class HookSet private constructor(val handlers: List<HookHandler>, val notes: Li
                                     once = raw["once"] == JsonPrimitive(true),
                                     prompt = prompt, model = model, continueOnBlock = continueOnBlock,
                                     server = server, tool = tool, mcpInput = mcpInput)
-                                val key = listOf(event, matcherText) + h.identity()
-                                val old = unique[key]
-                                if (old == null || priority(h.source) > priority(old.source)) unique[key] = h
+                                if (budget != null && !budget.admit(matcherText)) {
+                                    overBudget++
+                                    notes += "$where 第 ${hi + 1} 项：这个来源的 skill 登记的 hooks 已到上限（${HookBudget.MAX_HOOKS} 个、matcher 合计 ${HookBudget.MAX_MATCHER_CHARS} 字符），跳过"
+                                } else {
+                                    val key = listOf(event, matcherText) + h.identity()
+                                    val old = unique[key]
+                                    if (old == null || priority(h.source) > priority(old.source)) unique[key] = h
+                                }
                             } catch (e: IllegalArgumentException) {
                                 notes += "$where 第 ${hi + 1} 项：${e.message}，跳过"
                             } catch (e: IllegalStateException) {
@@ -337,7 +372,7 @@ class HookSet private constructor(val handlers: List<HookHandler>, val notes: Li
                     }
                 }
             }
-            return HookSet(unique.values.toList(), notes.toList())
+            return HookSet(unique.values.toList(), notes.toList(), overBudget)
         }
     }
 }

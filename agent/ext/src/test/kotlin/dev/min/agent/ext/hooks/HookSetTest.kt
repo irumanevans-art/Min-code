@@ -25,6 +25,31 @@ class HookSetTest {
         assertTrue(set.notes.any { it.contains("PreToolUse 第 4 组 第 10 项") })
     }
 
+    // CC 2.1.304：同一来源的 skill 一个会话最多登记 1,024 个 hooks、matcher 合计 16,384 个字符；超出的丢掉并记说明
+    @Test fun `一个来源的预算跨多次登记累计，超出的 hooks 跳过并记说明`() {
+        fun hooks(prefix: String, n: Int, matcher: String = "Bash") = source(
+            """{"PreToolUse":[{"matcher":"$matcher","hooks":[${(1..n).joinToString(",") { """{"type":"command","command":"$prefix$it"}""" }}]}]}""",
+        )
+        val budget = HookBudget()
+        val first = HookSet.parse(listOf(hooks("a", 1000)), budget)
+        assertEquals(1000, first.handlers.size); assertEquals(0, first.overBudget)
+        val second = HookSet.parse(listOf(hooks("b", 30)), budget)
+        assertEquals(24, second.handlers.size); assertEquals(6, second.overBudget)
+        assertTrue(second.notes.toString(), second.notes.any { "第 25 项" in it && "1024" in it })
+        // 另一个来源有自己的一份预算
+        assertEquals(30, HookSet.parse(listOf(hooks("c", 30)), HookBudget()).handlers.size)
+        // 不给预算（settings 层）不设限
+        assertEquals(1030, HookSet.parse(listOf(hooks("d", 1030))).handlers.size)
+
+        val chars = HookBudget()
+        val long = "x".repeat(10_000)
+        assertEquals(1, HookSet.parse(listOf(hooks("e", 1, long)), chars).handlers.size)
+        val over = HookSet.parse(listOf(hooks("f", 1, long)), chars)
+        assertTrue(over.handlers.isEmpty()); assertEquals(1, over.overBudget)
+        assertTrue(over.notes.toString(), over.notes.any { "16384" in it })
+        assertEquals("短 matcher 仍放得下", 1, HookSet.parse(listOf(hooks("g", 1, "Bash")), chars).handlers.size)
+    }
+
     @Test fun `五字段原样解析且 raw 不丢未知字段`() {
         val raw = """{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"exe","args":["a b","中文"],"timeout":9,"if":"Bash(git *)","extra":7}]}]}"""
         val h = HookSet.parse(listOf(source(raw))).handlers.single()

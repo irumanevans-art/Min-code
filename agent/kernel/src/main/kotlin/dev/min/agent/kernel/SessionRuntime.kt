@@ -779,7 +779,7 @@ class SessionRuntime private constructor(
             if (!root.startsWith("$userDir/") && !deps.pluginTrust(GuestPath(plugin.root), state.value.created.cwd)) return
             val filtered = dev.min.agent.ext.plugins.commandPluginHooks(hooks)
             if (filtered.isEmpty()) return
-            commit(listOf(dev.min.agent.spi.ComponentHooksRegistered(kind, name, "plugin", filtered)), Durability.Sync)
+            commitComponentHooks(dev.min.agent.spi.ComponentHooksRegistered(kind, name, "plugin", filtered))
             return
         }
         if (layer == "project" || layer == "local") {
@@ -797,7 +797,7 @@ class SessionRuntime private constructor(
                 return
             }
         }
-        commit(listOf(dev.min.agent.spi.ComponentHooksRegistered(kind, name, layer, hooks)), Durability.Sync)
+        commitComponentHooks(dev.min.agent.spi.ComponentHooksRegistered(kind, name, layer, hooks))
     }
 
     /**

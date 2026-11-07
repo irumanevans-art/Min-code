@@ -27,6 +27,7 @@ import dev.min.agent.protocol.TurnId
 import dev.min.agent.spi.Durability
 import dev.min.agent.spi.HookSourceData
 import dev.min.agent.spi.HooksRan
+import dev.min.agent.ext.hooks.HookBudget
 import dev.min.agent.spi.Note
 import dev.min.agent.spi.catchingNonCancellation
 import dev.min.agent.spi.NoteLevel
@@ -74,13 +75,15 @@ internal class HookDriver(private val rt: SessionRuntime) {
         val registered = rt.state.value.componentHooks
         if (registered !== componentParsedFrom) {
             val notes = mutableListOf<String>()
+            // skill / command 的 hooks 按来源限量（CC 2.1.304），按登记顺序先到先得；每次重新解析都从日志里的登记重算，结果确定
+            val budgets = HashMap<String, HookBudget>()
             componentSets = registered.mapNotNull { r ->
                 val source = if (r.layer.startsWith("plugin:")) ConfigSource.Plugin else ConfigSource.entries.firstOrNull { it.label == r.layer }
                 if (source == null) {
                     notes += "「${r.name}」的 hooks 来自未知层 ${r.layer}，跳过"
                     null
                 } else {
-                    r to HookSet.parse(listOf(HookSource(source, r.hooks)))
+                    r to HookSet.parse(listOf(HookSource(source, r.hooks)), componentHookBudgetKey(r)?.let { budgets.getOrPut(it) { HookBudget() } })
                 }
             }
             componentNotes = notes
@@ -88,6 +91,10 @@ internal class HookDriver(private val rt: SessionRuntime) {
         }
         return componentSets
     }
+
+    /** 这条组件登记因来源预算丢掉的处理器数（[HookBudget]）；登记之后据此落一条说明 */
+    fun overBudget(kind: String, name: String): Int =
+        components().firstOrNull { it.first.kind == kind && it.first.name == name }?.second?.overBudget ?: 0
 
     /** settings 与各组件的匹配结果合并（notes 一并汇总） */
     private fun all(

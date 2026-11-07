@@ -241,6 +241,26 @@ class ComponentHooksTest {
 
     // ---- skill 的 frontmatter hooks ----
 
+    // CC 2.1.304：同一来源（仓库 / 用户目录 / 一个插件）的 skill 一个会话最多登记 1,024 个 hooks，超出的丢掉并留说明
+    @Test
+    fun `skills from one source share a hook budget, other sources and agents have their own`() = run {
+        val rt = hub(dev.min.agent.testkit.ScriptedModel(), FakeHttp { HttpHookResult.Responded(200, "{}") }, trust = true).create(GuestPath("/workspace"), TEST_MODEL, PermissionMode.BypassPermissions)
+        fun hooks(matcher: String, n: Int) = dev.min.agent.ext.hooks.HookJson.parseToJsonElement(
+            """{"PreToolUse":[{"matcher":"$matcher","hooks":[${(1..n).joinToString(",") { """{"type":"command","command":"echo $matcher$it"}""" }}]}]}""",
+        ) as kotlinx.serialization.json.JsonObject
+        rt.registerComponentHooks("skill", "big", "project", hooks("Read", 1020))
+        rt.registerComponentHooks("skill", "late", "local", hooks("Edit", 10))
+        assertTrue("同一仓库（project 与 local）的预算还剩 4 个", HookDriver(rt).has(dev.min.agent.ext.hooks.HookEvent.PreToolUse, "Edit"))
+        assertEquals(6, HookDriver(rt).overBudget("skill", "late"))
+        assertTrue(events(rt.sessionId).filterIsInstance<Note>().any { "「late」" in it.text && "6 个没有登记" in it.text })
+        rt.registerComponentHooks("skill", "full", "project", hooks("Grep", 1))
+        assertFalse("仓库的预算用完了", HookDriver(rt).has(dev.min.agent.ext.hooks.HookEvent.PreToolUse, "Grep"))
+        rt.registerComponentHooks("skill", "mine", "user", hooks("Glob", 1))
+        assertTrue("用户目录另有一份预算", HookDriver(rt).has(dev.min.agent.ext.hooks.HookEvent.PreToolUse, "Glob"))
+        assertEquals(1, events(rt.sessionId).filterIsInstance<Note>().count { "「full」" in it.text })
+        assertLogIsTruth(rt)
+    }
+
     @Test
     fun `skill 的 hooks 调用前不生效、调用后跨回合生效`() = run {
         val http = FakeHttp { HttpHookResult.Responded(200, """{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"门禁不放行"}}""") }
