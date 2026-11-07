@@ -8,6 +8,7 @@ import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.WorkspaceFs
 import dev.min.agent.spi.catchingNonCancellation
+import dev.min.agent.spi.safeTake
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -40,7 +41,7 @@ internal const val MONITOR_MAX_LINE_CHARS = 2_000
 
 internal fun clipMonitorLine(line: String): String =
     if (line.length <= MONITOR_MAX_LINE_CHARS) line
-    else line.take(MONITOR_MAX_LINE_CHARS) + "…（这一行还有 ${line.length - MONITOR_MAX_LINE_CHARS} 个字符，见输出文件）"
+    else line.safeTake(MONITOR_MAX_LINE_CHARS) + "…（这一行还有 ${line.length - MONITOR_MAX_LINE_CHARS} 个字符，见输出文件）"
 
 /**
  * 命令源：用宿主的后台机制起命令（与 Bash 的 `run_in_background` 同一套，不另起一条进程路径），

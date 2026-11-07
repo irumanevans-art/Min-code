@@ -19,6 +19,7 @@ import dev.min.agent.spi.ToolInput
 import dev.min.agent.spi.ToolProgress
 import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.ToolTraits
+import dev.min.agent.spi.safeTake
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.JsonObject
 import java.util.Base64
@@ -195,7 +196,7 @@ object ReadTool : Tool<ReadInput> {
     /** 行号右对齐 6 位 + 制表符；\r\n 的 \r 去掉，免得模型以为行尾有个怪字符 */
     private fun numbered(n: Int, line: String): String {
         val shown = if (line.length > MAX_LINE_CHARS) {
-            line.take(MAX_LINE_CHARS) + "…[该行共 ${line.length} 字符，已截断]"
+            line.safeTake(MAX_LINE_CHARS) + "…[该行共 ${line.length} 字符，已截断]"
         } else {
             line
         }

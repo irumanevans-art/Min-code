@@ -7,6 +7,8 @@ import dev.min.agent.protocol.ToolCallPart
 import dev.min.agent.protocol.ToolResultPart
 import dev.min.agent.spi.ModelMessage
 import dev.min.agent.spi.Role
+import dev.min.agent.spi.safeTake
+import dev.min.agent.spi.safeTakeLast
 
 /*
  * `/goal` 评估器看到的对话（CC：「条件加上到目前为止的对话」）。取模型视图（与发给主模型的同源：压缩后就是摘要 + 之后的消息），
@@ -37,15 +39,15 @@ internal fun goalTranscript(messages: List<ModelMessage>, budgetChars: Int = GOA
         // 单条也可能超过窗口：保留首尾并明确省略，不能悄悄丢掉任务末尾。
         val mark = "\n\n…（消息过长，省略中间正文）\n\n"
         val room = (budgetChars - mark.length).coerceAtLeast(0)
-        return (all.take(room / 2) + mark + all.takeLast(room - room / 2)).take(budgetChars)
+        return (all.safeTake(room / 2) + mark + all.safeTakeLast(room - room / 2)).safeTake(budgetChars)
     }
-    val head = blocks.first().take(budgetChars / 2)
+    val head = blocks.first().safeTake(budgetChars / 2)
     var room = budgetChars - head.length - (if (markTruncation) ADVISOR_OMITTED_MARK else OMITTED_MARK).length - 4
     val tail = ArrayDeque<String>()
     for (block in blocks.drop(1).asReversed()) {
         if (block.length > room) {
             // 最近的一条也放不下：留它的末尾，结论通常在最后
-            if (tail.isEmpty() && room > 0) tail.addFirst(block.takeLast(room))
+            if (tail.isEmpty() && room > 0) tail.addFirst(block.safeTakeLast(room))
             break
         }
         room -= block.length + 2
@@ -72,13 +74,13 @@ private fun renderBlock(message: ModelMessage, toolInputKeep: Int, toolResultKee
 
 private fun renderPart(part: Part, toolInputKeep: Int, toolResultKeep: Int): String? = when (part) {
     is TextPart -> part.text
-    is ToolCallPart -> "（调用工具 ${part.name}：${part.input.toString().take(toolInputKeep)}）"
+    is ToolCallPart -> "（调用工具 ${part.name}：${part.input.toString().safeTake(toolInputKeep)}）"
     is ToolResultPart -> {
         val text = part.content.filterIsInstance<TextPart>().joinToString("\n") { it.text }
         val label = if (part.isError) "工具报错" else "工具结果"
         when {
             text.length <= toolResultKeep -> "（$label：$text）"
-            else -> "（$label：${text.take(toolResultKeep)}…省略 ${text.length - toolResultKeep} 字）"
+            else -> "（$label：${text.safeTake(toolResultKeep)}…省略 ${text.length - toolResultKeep} 字）"
         }
     }
     is ImagePart -> "（图片）"

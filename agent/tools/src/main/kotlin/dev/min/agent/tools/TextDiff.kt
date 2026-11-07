@@ -1,5 +1,7 @@
 package dev.min.agent.tools
 
+import dev.min.agent.spi.safeTake
+
 /**
  * 从「改之前」与「改之后」的文本拼一段 unified diff，给界面的「改动过的文件」面板用
  * （`core/session/ChangedFiles.kt` 那套判定：`+` / `-` 前缀的行算增删统计，`@@` 头由 `DiffView` 着色）。
@@ -108,5 +110,5 @@ internal object TextDiff {
     }
 
     private fun clipLine(line: String): String =
-        if (line.length <= MAX_LINE_CHARS) line else line.take(MAX_LINE_CHARS) + "…（本行还有 ${line.length - MAX_LINE_CHARS} 字）"
+        if (line.length <= MAX_LINE_CHARS) line else line.safeTake(MAX_LINE_CHARS) + "…（本行还有 ${line.length - MAX_LINE_CHARS} 字）"
 }

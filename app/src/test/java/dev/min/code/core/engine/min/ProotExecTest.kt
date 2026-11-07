@@ -183,6 +183,24 @@ class ProotExecTest {
         assertTrue(result.truncated); assertTrue(result.output.startsWith("HEAD")); assertTrue(result.output.endsWith("TAIL"))
         assertEquals(text, host.log.readText())
     }
+    @Test fun clippedLogNeverSplitsEmojiOrUtf8Sequences() {
+        val emoji = "😀" // 😀：UTF-8 四字节、UTF-16 两个 char
+        // 字符串路径（文件不大）：头尾截点都落在代理对中间
+        val small = temp.newFile().apply { writeText("a" + emoji.repeat(10) + "b") }
+        val (clipped, cut) = clippedLog(small, 4)
+        assertTrue(cut); assertNoBrokenText(clipped)
+        // 字节路径（超过 max*4 字节）：401 字节，尾段从第 381 字节读起，正好在一个 emoji 的续字节上
+        val big = temp.newFile().apply { writeText(emoji.repeat(100) + "x") }
+        val (bigClipped, bigCut) = clippedLog(big, 10)
+        assertTrue(bigCut); assertNoBrokenText(bigClipped); assertTrue(bigClipped.endsWith("x"))
+    }
+    private fun assertNoBrokenText(s: String) {
+        assertFalse(s, s.contains('�'))
+        s.forEachIndexed { i, c ->
+            if (c.isHighSurrogate()) assertTrue(s, i + 1 < s.length && s[i + 1].isLowSurrogate())
+            if (c.isLowSurrogate()) assertTrue(s, i > 0 && s[i - 1].isHighSurrogate())
+        }
+    }
     @Test fun mountsFollowSameContextAndSkipMissingSources() = runBlocking {
         val base = base(); val storage = temp.newFolder(); val missing = File(storage, "missing")
         val context = base.copy(bindMounts = listOf(WorkspaceBindMount(storage, "/sdcard"), WorkspaceBindMount(missing, "/absent")))

@@ -42,7 +42,7 @@ object WebFetchTool : Tool<WebFetchInput> {
                     .take(8).joinToString("") { "%02x".format(it) }
                 val fileHost = WebUrl.host(fetched.url).replace(Regex("[^a-z0-9.-]"), "_")
                 val path = ctx.artifacts.put("web/$fileHost-$hash.md", full.toByteArray(Charsets.UTF_8))
-                val extracted = ctx.extract(full.take(EXTRACTION_MAX_CHARS), input.prompt)
+                val extracted = ctx.extract(full.safeTake(EXTRACTION_MAX_CHARS), input.prompt)
                 val attachment = "完整页面已存为 $path（${full.length} 字符），需要细节时用 Read 读取。"
                 if (extracted.isError) extracted.copy(
                     content = extracted.content + TextPart(attachment), artifact = path, fullChars = full.length.toLong(),

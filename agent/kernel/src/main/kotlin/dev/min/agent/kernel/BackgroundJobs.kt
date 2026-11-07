@@ -14,6 +14,8 @@ import dev.min.agent.spi.MonitorStart
 import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.TurnTrigger
 import dev.min.agent.spi.catchingNonCancellation
+import dev.min.agent.spi.safeTake
+import dev.min.agent.spi.safeTakeLast
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -192,7 +194,7 @@ internal class BackgroundJobs(
     override suspend fun adoptShell(handle: ExecHandle, command: String, description: String?) {
         launchLock.withLock {
             val job = Job(
-                handle.id, BackgroundJobKind.Shell, description?.takeIf { it.isNotBlank() } ?: command.lineSequence().first().take(80),
+                handle.id, BackgroundJobKind.Shell, description?.takeIf { it.isNotBlank() } ?: command.lineSequence().first().safeTake(80),
                 command, null, handle.logPath, deps.clock.nowMs(), null, handle,
             )
             register(job)
@@ -651,7 +653,7 @@ internal class BackgroundJobs(
         val text = bytes.decodeToString()
         // 起点可能切在多字节字符中间，decode 出一个替换字符：丢掉第一个不完整的行
         val clipped = if (want < stat.size) text.substringAfter('\n', text) else text
-        if (clipped.length > chars) "…" + clipped.takeLast(chars) else clipped
+        if (clipped.length > chars) "…" + clipped.safeTakeLast(chars) else clipped
     }.getOrNull()
 
     companion object {

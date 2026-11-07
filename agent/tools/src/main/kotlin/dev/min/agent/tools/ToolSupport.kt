@@ -10,6 +10,7 @@ import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.ToolInput
 import dev.min.agent.spi.ToolProgress
 import dev.min.agent.spi.ToolResult
+import dev.min.agent.spi.safeTake
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.JsonArray
@@ -160,7 +161,7 @@ internal const val ENOENT = "Error:ENOENT"
 /** 各工具的 run 都是「做完一件事，交一个结果」，进度只有最后的 Done */
 internal fun doneFlow(block: suspend () -> ToolResult): Flow<ToolProgress> = flow { emit(ToolProgress.Done(block())) }
 
-internal fun String.clip(max: Int): String = if (length <= max) this else take(max) + "…"
+internal fun String.clip(max: Int): String = if (length <= max) this else safeTake(max) + "…"
 
 // ---- 写文件类工具共用的「先读后写」判据与大小上限 ----
 

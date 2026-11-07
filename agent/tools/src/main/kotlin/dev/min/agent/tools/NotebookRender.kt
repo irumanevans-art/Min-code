@@ -7,6 +7,8 @@ import dev.min.agent.protocol.TextPart
 import dev.min.agent.spi.FileStamp
 import dev.min.agent.spi.ToolContext
 import dev.min.agent.spi.ToolResult
+import dev.min.agent.spi.safeTake
+import dev.min.agent.spi.safeTakeLast
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -164,11 +166,11 @@ private fun collapseCarriageReturns(s: String): String =
     s.replace("\r\n", "\n").split('\n').joinToString("\n") { it.trimEnd('\r').substringAfterLast('\r') }
 
 private fun capLines(s: String): String = s.split('\n').joinToString("\n") { line ->
-    if (line.length > ReadTool.MAX_LINE_CHARS) line.take(ReadTool.MAX_LINE_CHARS) + "…[该行共 ${line.length} 字符，已截断]" else line
+    if (line.length > ReadTool.MAX_LINE_CHARS) line.safeTake(ReadTool.MAX_LINE_CHARS) + "…[该行共 ${line.length} 字符，已截断]" else line
 }
 
 private fun capTotal(s: String): String {
     if (s.length <= MAX_OUTPUT_CHARS) return s
     val half = MAX_OUTPUT_CHARS / 2
-    return s.take(half) + "\n…[输出共 ${s.length} 字符，中间省略了 ${s.length - MAX_OUTPUT_CHARS} 字符]…\n" + s.takeLast(half)
+    return s.safeTake(half) + "\n…[输出共 ${s.length} 字符，中间省略了 ${s.length - MAX_OUTPUT_CHARS} 字符]…\n" + s.safeTakeLast(half)
 }

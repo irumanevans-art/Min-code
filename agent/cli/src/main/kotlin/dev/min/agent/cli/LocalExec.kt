@@ -9,6 +9,7 @@ import dev.min.agent.spi.HostOs
 import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.ShellCwdProbe
 import dev.min.agent.spi.ShellPreamble
+import dev.min.agent.spi.safeCutStart
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -264,20 +265,23 @@ class LocalExec(
         fun append(buf: CharArray, n: Int) {
             total += n
             var from = 0
-            if (head.length < headCap) {
-                from = minOf(n, headCap - head.length)
-                head.append(buf, 0, from)
-            }
+            if (head.length < headCap) from = minOf(n, headCap - head.length)
+            // 头的末尾不劈开代理对：落在高代理之后就把紧跟的低代理也收进头（头最多超上限一个 char）。
+            // 对子跨两次 read 时也算——tail 还空着，说明这一块在流里紧接着头
+            val headEndsHigh = if (from > 0) buf[from - 1].isHighSurrogate()
+            else tail.isEmpty() && head.isNotEmpty() && head[head.length - 1].isHighSurrogate()
+            if (from < n && headEndsHigh && buf[from].isLowSurrogate()) from++
+            head.append(buf, 0, from)
             if (from < n) {
                 tail.append(buf, from, n - from)
-                if (tail.length > tailCap * 2) tail.delete(0, tail.length - tailCap)
+                if (tail.length > tailCap * 2) tail.delete(0, tail.safeCutStart(tail.length - tailCap))
             }
         }
 
         @Synchronized
         fun snapshot(): Pair<String, Boolean> {
             if (total <= maxChars) return (head.toString() + tail.toString()) to false
-            val keptTail = tail.substring(maxOf(0, tail.length - tailCap))
+            val keptTail = tail.substring(tail.safeCutStart(tail.length - tailCap))
             val omitted = total - head.length - keptTail.length
             return (head.toString() + "\n…（中间省略了 $omitted 个字符）…\n" + keptTail) to true
         }

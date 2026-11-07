@@ -8,6 +8,8 @@ import dev.min.agent.spi.GuestPath
 import dev.min.agent.spi.ShellCommand
 import dev.min.agent.spi.ShellCwdProbe
 import dev.min.agent.spi.ShellPreamble
+import dev.min.agent.spi.safeTake
+import dev.min.agent.spi.safeTakeLast
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -184,12 +186,17 @@ internal fun clippedLog(file: File, max: Int): Pair<String, Boolean> = java.io.R
         if (text.length <= max) text to false else clipText(text, max) to true
     } else {
         val half = (byteBudget / 2).toInt()
-        val head = ByteArray(half).also { input.readFully(it) }.toString(Charsets.UTF_8).take(max / 2)
+        val head = ByteArray(half).also { input.readFully(it) }.toString(Charsets.UTF_8).safeTake(max / 2)
         input.seek(size - half)
-        val tail = ByteArray(half).also { input.readFully(it) }.toString(Charsets.UTF_8).takeLast(max - max / 2)
+        val tailBytes = ByteArray(half).also { input.readFully(it) }
+        // 尾段从任意字节偏移读起，可能落在多字节 UTF-8 序列中间：跳过开头的续字节（10xxxxxx，最多 3 个），
+        // 从下一个首字节开始解码，免得开头冒出替换字符
+        var from = 0
+        while (from < minOf(3, tailBytes.size) && (tailBytes[from].toInt() and 0xC0) == 0x80) from++
+        val tail = String(tailBytes, from, tailBytes.size - from, Charsets.UTF_8).safeTakeLast(max - max / 2)
         "$head\n…（中间输出已省略，全文见日志）…\n$tail" to true
     }
 }
 
 private fun clipText(text: String, max: Int): String =
-    text.take(max / 2) + "\n…（中间输出已省略，全文见日志）…\n" + text.takeLast(max - max / 2)
+    text.safeTake(max / 2) + "\n…（中间输出已省略，全文见日志）…\n" + text.safeTakeLast(max - max / 2)

@@ -13,6 +13,7 @@ import dev.min.agent.spi.ToolInput
 import dev.min.agent.spi.ToolProgress
 import dev.min.agent.spi.ToolResult
 import dev.min.agent.spi.ToolTraits
+import dev.min.agent.spi.safeTake
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.JsonArray
@@ -202,7 +203,7 @@ private fun customTypesSection(types: List<AgentType>): String {
         append("\n\n这个项目还定义了这些子 agent 类型（subagent_type 写名字）：")
         for (t in shown) {
             val d = t.description.replace('\n', ' ').trim()
-            append("\n- ").append(t.name).append("：").append(if (d.length > MAX_TYPE_DESCRIPTION) d.take(MAX_TYPE_DESCRIPTION) + "…" else d)
+            append("\n- ").append(t.name).append("：").append(if (d.length > MAX_TYPE_DESCRIPTION) d.safeTake(MAX_TYPE_DESCRIPTION) + "…" else d)
         }
         if (types.size > shown.size) append("\n（另有 ${types.size - shown.size} 种未列出，写名字一样能用）")
     }
