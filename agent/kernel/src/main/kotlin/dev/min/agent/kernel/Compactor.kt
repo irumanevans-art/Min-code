@@ -60,7 +60,18 @@ internal class Compactor(
     private var autoBlockNoted: TurnId? = null
 
     /**
-     * 发请求前调用：按阈值决定不动、遮蔽还是摘要。熔断后（连续失败 3 次）不再自动摘要，只遮蔽。
+     * 连续几次摘要做完、估算仍在摘要线上（腾出的空间不够，下一个请求又会摘要）。和 [SessionState.compactionFailures]
+     * 合起来是同一个熔断（[summarizeTripped]）。只记在内存里：空转发生在同一个进程连着的请求上，
+     * 落盘要给压缩事件加字段；重开会话后至多再多试 [MAX_FAILURES] 次
+     */
+    private var ineffectiveInARow = 0
+
+    /** 自动摘要熔断：连续失败、或连续腾不出空间（CC 2.1.307「Autocompact is thrashing」）各满 [MAX_FAILURES] 次 */
+    private fun summarizeTripped(state: SessionState): Boolean =
+        state.compactionFailures >= MAX_FAILURES || ineffectiveInARow >= MAX_FAILURES
+
+    /**
+     * 发请求前调用：按阈值决定不动、遮蔽还是摘要。熔断后（[summarizeTripped]）不再自动摘要，只遮蔽。
      * [previousSummarizes]：刚切到窗口更小的模型、对话已经放不进它时，这次摘要由切换前的模型来做（CC 2.1.301，见 [previousModelFor]）。
      * 回合内换回退模型那一次传 false——回退是因为原模型倒了，再让它做摘要只会白等一次失败
      */
@@ -72,7 +83,7 @@ internal class Compactor(
             CompactionPlan.None -> Unit
             is CompactionPlan.Mask -> mask(turnId, plan.callIds)
             is CompactionPlan.Summarize -> {
-                if (state.compactionFailures >= MAX_FAILURES) {
+                if (summarizeTripped(state)) {
                     CompactionPlanner.maskCandidates(state, budget).takeIf { it.isNotEmpty() }?.let { mask(turnId, it.map { c -> c.first }) }
                 } else {
                     val previous = if (previousSummarizes) previousModelFor(state, model) else null
@@ -86,12 +97,17 @@ internal class Compactor(
         }
     }
 
-    /** 手动或撞墙：不看阈值直接摘要 */
+    /** 手动或撞墙：不看阈值直接摘要。撞墙时留下的尾巴也要放得下（[CompactionPlanner.overflowCut]） */
     suspend fun force(turnId: TurnId, model: ResolvedModel, trigger: CompactionTrigger, instructions: String?): CompactResult {
         val state = rt.state.value
-        val through = CompactionPlanner.summarizeBoundary(state) ?: return CompactResult.Failed("还没有可以压缩的对话")
-        val estimate = CompactionPlanner.estimate(state, fixedTokens(state, model))
-        return summarize(turnId, model, trigger, instructions, through, estimate)
+        val fixed = fixedTokens(state, model)
+        val cut = if (trigger == CompactionTrigger.Overflow) {
+            CompactionPlanner.overflowCut(state, CompactionBudget.of(model.profile.contextWindow, model.profile.maxOutputTokens), fixed)
+        } else {
+            CompactionPlanner.summarizeBoundary(state)?.let { CompactionPlanner.SummaryCut(it, emptyList()) }
+        } ?: return CompactResult.Failed("还没有可以压缩的对话")
+        val estimate = CompactionPlanner.estimate(state, fixed)
+        return summarize(turnId, model, trigger, instructions, cut.through, estimate, tailMask = cut.mask)
     }
 
     private fun fixedTokens(state: SessionState, model: ResolvedModel): Long {
@@ -134,11 +150,10 @@ internal class Compactor(
         val sink = deps.host.artifacts(rt.sessionId)
         val outputs = callIds.mapNotNull { id ->
             val result = state.toolResults[id] ?: return@mapNotNull null
-            // 超预算的结果早就落过附件，直接引用那一份；其余先把原文存下来，占位里才有路可读回
-            val path = result.artifact ?: sink.put(
-                "compactions/${id.value}.txt",
-                result.content.filterIsInstance<TextPart>().joinToString("") { it.text }.toByteArray(Charsets.UTF_8),
-            )
+            // 超预算的结果早就落过附件，直接引用那一份；其余先把原文存下来，占位里才有路可读回。
+            // 只有图片 / PDF 的结果没有文字可存：不写空附件，占位里说「需要时重新调用」
+            val text = result.content.filterIsInstance<TextPart>().joinToString("") { it.text }
+            val path = result.artifact ?: text.takeIf { it.isNotEmpty() }?.let { sink.put("compactions/${id.value}.txt", it.toByteArray(Charsets.UTF_8)) }
             MaskedOutput(id, path)
         }
         if (outputs.isNotEmpty()) rt.commit(listOf(ToolOutputsMasked(turnId, outputs)), Durability.Sync)
@@ -155,6 +170,8 @@ internal class Compactor(
         estimate: Long,
         /** 非空 = 先用它做这次摘要（切到更小窗口的模型之后）；它请求失败再退回 [model] 做 */
         previous: ResolvedModel? = null,
+        /** 留下的尾巴里随这次压缩一起遮蔽的结果（撞墙时尾巴本身放不下，[CompactionPlanner.overflowCut]） */
+        tailMask: List<CallId> = emptyList(),
     ): CompactResult {
         // PreCompact：拦下就不开始压缩（连 CompactionStarted 都不写），也不计入熔断
         preCompactBlocked(turnId, trigger, instructions)?.let { return it }
@@ -211,9 +228,38 @@ internal class Compactor(
             listOf(ContextCompacted(turnId, compactionId, trigger, summary, through, transcriptPath, estimate, usage)),
             Durability.Sync,
         )
+        if (tailMask.isNotEmpty()) mask(turnId, tailMask)
+        checkFreedEnough(model)
         postCompact(turnId, trigger, summary)
         sessionStartCompact(turnId, compactionId)
         return CompactResult.Done
+    }
+
+    /**
+     * 摘要做完，估算还在摘要线上：这次压缩腾出的空间不够，下一个请求又会摘要（工具表、用户消息里的大图 / PDF
+     * 这类摘要盖不住的东西占着窗口）。连续 [MAX_FAILURES] 次就熔断自动摘要、留一条警告，不在每个请求上空转；
+     * 之后只遮蔽，手动 /compact 与撞墙压缩照常可用，腾出空间的一次压缩清零
+     */
+    private suspend fun checkFreedEnough(model: ResolvedModel) {
+        val state = rt.state.value
+        val budget = CompactionBudget.of(model.profile.contextWindow, model.profile.maxOutputTokens)
+        if (CompactionPlanner.estimate(state, fixedTokens(state, model)) <= budget.summaryLine) {
+            ineffectiveInARow = 0
+            return
+        }
+        ineffectiveInARow++
+        if (ineffectiveInARow == MAX_FAILURES) {
+            rt.commit(
+                listOf(
+                    Note(
+                        NoteLevel.Warning,
+                        "自动压缩连续 $MAX_FAILURES 次都没能把上下文降到阈值以下（多半是工具表、图片、PDF 或很长的消息占着窗口），" +
+                            "本会话不再自动摘要，只遮蔽旧的工具输出。可以手动 /compact，或开一个新会话。",
+                    ),
+                ),
+                Durability.Batched,
+            )
+        }
     }
 
     /**
@@ -377,7 +423,8 @@ internal class Compactor(
 
     companion object {
         const val MAX_FAILURES = 3
-        private const val SUMMARY_MAX_OUTPUT = 8_000
+        /** 摘要请求的输出上限；撞墙切尾巴时按它给摘要留位置 */
+        const val SUMMARY_MAX_OUTPUT = 8_000
         private const val MAX_FILES = 50
         private val WRITE_TOOLS = setOf("Write", "Edit", "NotebookEdit")
     }

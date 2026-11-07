@@ -20,18 +20,62 @@ import dev.min.agent.spi.ModelMessage
  * 执行（写附件、调模型、落事件）在 Compactor 里；这里只算，方便把阈值和边界一条条测死。
  */
 
-/** 不用分词器的 token 估算：中日韩一字一个，其余四个字符一个，图片按固定值。宁可估多（早压缩一点），不要估少（撞墙） */
+/**
+ * 不用分词器的 token 估算：中日韩一字一个，其余四个字符一个，密集文本（base64、SVG 路径、hex）两个半字符一个，图片按固定值。
+ * 宁可估多（早压缩一点），不要估少（撞墙）
+ */
 internal object Tokens {
     private const val IMAGE_TOKENS = 1_600L
 
     // PDF 不拆页，页数常常不可知：按「不超过 10 页、每页约一千多 token」粗估一份 3 万。宁可估多，理由同上
     private const val DOCUMENT_TOKENS = 30_000L
 
+    /**
+     * 一段连续的非空白字符至少这么长才可能算密集：普通单词、标识符、路径段都短于它；
+     * MIME base64 一行 76 个字符，SVG 的 d 属性、hex 串、data URI 都远长于它
+     */
+    private const val DENSE_RUN_MIN = 32
+
+    /**
+     * 字符类别（小写 / 大写 / 数字 / 其它）在相邻字符间切换的比例达到 2/5 才算密集。随机 base64 约 64%，
+     * hex 约 47%，「L12.5,36.25」这样的 SVG 路径过半；英文单词、驼峰标识符、路径在 25% 上下，
+     * 同一个字符重复（"AAAA"）是 0——BPE 合得动的仍按四个字符一个算
+     */
+    private const val DENSE_SWITCH_NUM = 2
+    private const val DENSE_SWITCH_DEN = 5
+
     fun of(text: String): Long {
         var cjk = 0L
-        var other = 0L
-        for (c in text) if (isWide(c)) cjk++ else other++
-        return cjk + (other + 3) / 4
+        var plain = 0L
+        var dense = 0L
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            if (isWide(c)) { cjk++; i++; continue }
+            if (c.isWhitespace()) { plain++; i++; continue }
+            // 一段连续的非空白、非宽字符：看它是不是 BPE 合并不起来的密集文本
+            val start = i
+            var switches = 0
+            var previous = charClass(c)
+            i++
+            while (i < text.length && !text[i].isWhitespace() && !isWide(text[i])) {
+                val cls = charClass(text[i])
+                if (cls != previous) switches++
+                previous = cls
+                i++
+            }
+            val run = i - start
+            if (run >= DENSE_RUN_MIN && switches * DENSE_SWITCH_DEN >= run * DENSE_SWITCH_NUM) dense += run else plain += run
+        }
+        // 密集文本在真实分词器上大约两三个字符一个 token（大小写、数字交替，合不成长片段）：取 2.5 个
+        return cjk + (plain + 3) / 4 + (dense * 2 + 4) / 5
+    }
+
+    private fun charClass(c: Char): Int = when (c) {
+        in 'a'..'z' -> 0
+        in 'A'..'Z' -> 1
+        in '0'..'9' -> 2
+        else -> 3
     }
 
     fun of(part: Part): Long = when (part) {
@@ -139,11 +183,18 @@ internal object CompactionPlanner {
                 continue
             }
             if (call.callId in state.masked) continue
-            val chars = result.content.filterIsInstance<TextPart>().sumOf { it.text.length }
-            if (chars >= CompactionBudget.MIN_MASKED_CHARS) older += call.callId to tokens
+            if (worthMasking(result)) older += call.callId to tokens
         }
         return older.asReversed()
     }
+
+    /**
+     * 值得遮蔽的结果：文字够长，或带图片 / PDF。只看文字时，读图、读 PDF 的结果永远遮不掉，
+     * 压缩腾不出它们占的地方，下一个请求又要压缩（CC 2.1.307 的「Autocompact is thrashing」）
+     */
+    private fun worthMasking(result: dev.min.agent.spi.ToolResult): Boolean =
+        result.content.any { it is ImagePart || it is DocumentPart } ||
+            result.content.filterIsInstance<TextPart>().sumOf { it.text.length } >= CompactionBudget.MIN_MASKED_CHARS
 
     /**
      * 摘要的边界（含）：必须是一条助手消息——它的调用连同结果一起被摘掉，投影不会出现没有结果的 tool_use。
@@ -163,13 +214,53 @@ internal object CompactionPlanner {
         return visible[lastAssistant].messageId
     }
 
+    /** 一次摘要的切法：摘要到 [through]（含），留下的尾巴里 [mask] 这些工具结果随压缩一起遮蔽（只有撞墙时非空） */
+    data class SummaryCut(val through: MessageId, val mask: List<CallId>)
+
+    /**
+     * 撞墙（供应商说超长）时的压缩边界。照 [summarizeBoundary] 选，但留下的尾巴本身也得放得下：
+     * 尾巴超过「摘要线 − 固定部分 − 摘要上限」时，先从旧到新遮蔽尾巴里的大结果（原文存附件，占位里给路径），
+     * 还放不下就把边界挪到最后一条助手消息，尾巴只剩它之后的内容。
+     * 只按原边界留尾巴时，密集文本（base64、SVG）占满的尾巴原样留下，重发的那次照样超长，回合就此失败（CC 2.1.310）
+     */
+    fun overflowCut(state: SessionState, budget: CompactionBudget, fixedTokens: Long): SummaryCut? {
+        val preferred = summarizeBoundary(state) ?: return null
+        val target = (budget.summaryLine - fixedTokens - Compactor.SUMMARY_MAX_OUTPUT).coerceAtLeast(0)
+        val (cut, fits) = cutAfter(state, preferred, target)
+        // summarizeBoundary 有结果，最后一条助手消息就一定在可见部分里
+        val lastAssistant = state.history.last { it is HistoryEntry.Assistant }.messageId
+        if (fits || lastAssistant == preferred) return cut
+        return cutAfter(state, lastAssistant, target).first
+    }
+
+    /** 边界定在 [through] 时，为了让尾巴回到 [target] 以内要遮蔽哪些结果，以及遮完是否放得下 */
+    private fun cutAfter(state: SessionState, through: MessageId, target: Long): Pair<SummaryCut, Boolean> {
+        val tail = state.history.drop(state.history.indexOfFirst { it.messageId == through } + 1)
+        var tokens = tail.sumOf { e -> 4 + partsOf(e, state, asSeen = true).sumOf(Tokens::of) }
+        val mask = mutableListOf<CallId>()
+        // 从旧往新遮：越新的结果，模型越可能马上要用
+        for (call in tail.filterIsInstance<HistoryEntry.Assistant>().flatMap { it.toolCalls }) {
+            if (tokens <= target) break
+            if (call.callId in state.masked) continue
+            val result = state.toolResults[call.callId] ?: continue
+            if (!worthMasking(result)) continue
+            tokens -= result.content.sumOf(Tokens::of) - Tokens.of(maskedStub(call.name, null))
+            mask += call.callId
+        }
+        return SummaryCut(through, mask) to (tokens <= target)
+    }
+
     private fun tokensOf(entries: List<HistoryEntry>, state: SessionState): Long =
         entries.sumOf { e -> partsOf(e, state).sumOf(Tokens::of) }
 
-    private fun partsOf(entry: HistoryEntry, state: SessionState): List<Part> = when (entry) {
+    /** [asSeen]：已遮蔽的结果按模型视图里的占位算（撞墙切尾巴时要算真实大小）；选摘要边界时照旧按原文比 */
+    private fun partsOf(entry: HistoryEntry, state: SessionState, asSeen: Boolean = false): List<Part> = when (entry) {
         is HistoryEntry.User -> entry.parts
         is HistoryEntry.Assistant -> entry.parts + entry.toolCalls.flatMap { call ->
-            state.toolResults[call.callId]?.let { it.content + listOfNotNull(it.userPart()) }.orEmpty()
+            state.toolResults[call.callId]?.let { result ->
+                val content = if (asSeen && call.callId in state.masked) listOf(TextPart(maskedStub(call.name, state.masked[call.callId]))) else result.content
+                content + listOfNotNull(result.userPart())
+            }.orEmpty()
         }
     }
 }
