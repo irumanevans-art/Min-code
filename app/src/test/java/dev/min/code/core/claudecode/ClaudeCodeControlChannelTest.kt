@@ -30,6 +30,18 @@ class ClaudeCodeControlChannelTest {
         return ch
     }
 
+    /**
+     * CLI 2.1.307 起确认换模型最多等 15 秒（之前 5 秒）。实测 12 秒才回成功；
+     * 用默认的 8 秒会先报「CLI 未应答」，而 CLI 其实已经换过去了。
+     */
+    // 不用 runTest 的虚拟时间：它一启用就装上全局的未捕获异常收集器，
+    // 同一 JVM 里别的测试漏出的协程异常会被记到后面不相干的 runTest 头上（实测 CompanionKeeperTest 因此偶发失败）
+    @Test
+    fun `set_model waits past the CLI's own 15 second model check`() {
+        assertTrue(ClaudeCodeControlChannel.SET_MODEL_TIMEOUT_MS >= 15_000L + 5_000L)
+        assertTrue(ClaudeCodeControlChannel.SET_MODEL_TIMEOUT_MS > ClaudeCodeControlChannel.TIMEOUT_MS)
+    }
+
     @Test
     fun `a matching response completes the request with its payload`() = runBlocking {
         val ch = channel()

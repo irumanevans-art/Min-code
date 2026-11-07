@@ -127,6 +127,13 @@ internal class ClaudeCodeControlChannel(
 
     companion object {
         const val TIMEOUT_MS = 8_000L
+
+        /**
+         * set_model 的超时。CLI 2.1.307 起确认换模型要打一枪 API、最多等 15 秒（之前 5 秒）；
+         * 实测确认花 12 秒时 CLI 在 12.03s 回成功、17 秒时在 15.01s 回 `check_failed`。
+         * 用 8 秒会在 CLI 已经换过去时报「CLI 未应答」，两边从此对不上模型
+         */
+        const val SET_MODEL_TIMEOUT_MS = 20_000L
         private const val TAG = "ClaudeCodeControl"
         private const val LATE_WINDOW_MS = 120_000L
         private val SUBTYPE = Regex("\"subtype\"\\s*:\\s*\"([a-z_]+)\"")

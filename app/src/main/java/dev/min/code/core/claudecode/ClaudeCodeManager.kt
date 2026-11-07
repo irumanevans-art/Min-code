@@ -1944,7 +1944,11 @@ class ClaudeCodeManager(
                         ?: _state.value.options.model,
                 )
                 val id = controls.newRequestId()
-                val outcome = controls.request(id, encodeClaudeCodeSetModel(id, model))
+                val outcome = controls.request(
+                    id,
+                    encodeClaudeCodeSetModel(id, model),
+                    timeoutMs = ClaudeCodeControlChannel.SET_MODEL_TIMEOUT_MS,
+                )
                 if (outcome is ControlOutcome.Ok) {
                     _state.update { it.copy(options = it.options.copy(model = model)) }
                     // 热切的模型也要落盘，否则重启后重开这个会话又掉回默认模型
