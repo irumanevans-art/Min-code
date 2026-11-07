@@ -61,9 +61,9 @@ object SkillDiscovery {
             if (io.kind(skillsDir) != FileKind.Directory) continue
             val relative = dir.removePrefix("$root/")
             for (skill in SkillLoader.load(io, listOf(DefinitionRoot(ConfigSource.Project, skillsDir)))) {
-                val name = if (skill.name in names) "$relative:${skill.name}" else skill.name
-                if (name in names) {
-                    io.notes += "嵌套的 skill `${skill.name}`（${skill.path.value}）与已有的同名，限定名 `$name` 也被占用，跳过"
+                val name = qualifiedSkillName(skill.name, relative, names)
+                if (name == null) {
+                    io.notes += "嵌套的 skill `${skill.name}`（${skill.path.value}）与已有的同名，限定名 `$relative:${skill.name}` 也被占用，跳过"
                     continue
                 }
                 names += name
@@ -83,8 +83,7 @@ class AddDirSkills(val skills: List<SkillDef>, val notes: List<String>)
  */
 suspend fun addDirSkills(fs: WorkspaceFs, dirs: List<GuestPath>): AddDirSkills {
     val io = ConfigIo(fs)
-    val roots = dirs.map { DefinitionRoot(ConfigSource.AddDir, GuestPaths.join(GuestPaths.normalize(it.value), ".claude/skills")) }
-    return AddDirSkills(SkillLoader.load(io, roots), io.notes.toList())
+    return AddDirSkills(SkillLoader.load(io, addDirSkillRoots(dirs.map { it.value })), io.notes.toList())
 }
 
 /** 热更新重扫要看的目录：[skillDirs] 下的 `<名字>/SKILL.md`、[commandDirs] 下的命令文件（[commandDirs] 只在手动重扫时有） */

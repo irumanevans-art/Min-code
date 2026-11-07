@@ -4,8 +4,26 @@ import dev.min.agent.spi.FileKind
 import dev.min.agent.spi.GuestPath
 import kotlinx.serialization.json.JsonObject
 
-/** 一个按优先级排好的定义目录：[source] 是它的层名，[dir] 是 `.claude/skills` 之类的目录本身 */
-internal data class DefinitionRoot(val source: ConfigSource, val dir: String)
+/**
+ * 一个按优先级排好的定义目录：[source] 是它的层名，[dir] 是 `.claude/skills` 之类的目录本身。
+ * [qualifier] 非空时，这里的 skill 名字被占用不丢，改叫 `<qualifier>:<名字>`（`--add-dir` 用目录名，见 [addDirSkillRoots]）
+ */
+internal data class DefinitionRoot(val source: ConfigSource, val dir: String, val qualifier: String? = null)
+
+/**
+ * `--add-dir` 目录的 `.claude/skills` 根：完整档（[ClaudeConfigLoader]）与 `--bare`（[addDirSkills]）共用，重扫也走这两条。
+ * 限定名取附加目录自己的名字（CC 2.1.309：「`<folder>:<name>`」）；目录是 `/` 没有名字，重名照旧跳过
+ */
+internal fun addDirSkillRoots(dirs: List<String>): List<DefinitionRoot> = dirs.map { GuestPaths.normalize(it) }.distinct().map { dir ->
+    DefinitionRoot(ConfigSource.AddDir, GuestPaths.join(dir, ".claude/skills"), dir.substringAfterLast('/').ifEmpty { null })
+}
+
+/**
+ * 重名 skill 的限定名（文档：「when a nested skill's directory name matches another skill's name, both stay available」）：
+ * 名字没被占就原样；被占了取 `<qualifier>:<名字>`；限定名也被占返回 null（调用方跳过并记说明）。嵌套目录与 `--add-dir` 共用
+ */
+internal fun qualifiedSkillName(name: String, qualifier: String, taken: Set<String>): String? =
+    (if (name in taken) "$qualifier:$name" else name).takeIf { it !in taken }
 
 /** skills 与 commands 共用的 frontmatter 字段（文档：command「accepts the same fields except name and paths」） */
 internal class PromptFields(
@@ -88,6 +106,10 @@ internal object SkillLoader {
                 val winner = byName[skill.name]
                 if (winner == null) {
                     byName[skill.name] = skill
+                } else if (root.qualifier != null) {
+                    val name = qualifiedSkillName(skill.name, root.qualifier, byName.keys)
+                    if (name == null) io.notes += "技能 `${skill.name}`（${skill.path.value}，${skill.source.label}）与已有的同名，限定名 `${root.qualifier}:${skill.name}` 也被占用，跳过"
+                    else byName[name] = skill.copy(name = name)
                 } else {
                     io.notes += "技能 `${skill.name}`（${skill.path}，${skill.source.label}）被 ${winner.path}（${winner.source.label}）覆盖：" +
                         "同名时 managed > user > project"

@@ -68,6 +68,30 @@ class SkillDiscoveryTest {
         assertEquals(listOf("tool"), config.skills.filter { it.source == ConfigSource.AddDir }.map { it.name })
     }
 
+    // CC 2.1.309：`--add-dir` 里名字被占的 skill 不再丢，改叫 `<目录名>:<名字>`（与嵌套 skill 同一条限定规则）
+    @Test
+    fun `an add-dir skill whose name is taken is offered as folder colon name`() = runBlocking {
+        val fs = InMemoryFs()
+        fs.file("/workspace/.claude/skills/deploy/SKILL.md", skillText("project deploy"))
+        fs.file("/extra/lib/.claude/skills/deploy/SKILL.md", skillText("lib deploy"))
+        val config = ClaudeConfigLoader.load(fs, GuestPath("/workspace"), GuestPath("/root"), inputs = SettingsInputs(addDirs = listOf(GuestPath("/extra/lib"))))
+        assertEquals("project deploy", config.skills.single { it.name == "deploy" }.description)
+        val qualified = config.skills.single { it.name == "lib:deploy" }
+        assertEquals("lib deploy", qualified.description)
+        assertEquals(ConfigSource.AddDir, qualified.source)
+    }
+
+    @Test
+    fun `under bare two add-dirs with the same skill both stay, and a qualified name that is also taken is skipped with a note`() = runBlocking {
+        val fs = InMemoryFs()
+        fs.file("/a/one/.claude/skills/deploy/SKILL.md", skillText("one"))
+        fs.file("/b/two/.claude/skills/deploy/SKILL.md", skillText("two"))
+        fs.file("/c/two/.claude/skills/deploy/SKILL.md", skillText("three"))
+        val bare = addDirSkills(fs, listOf(GuestPath("/a/one"), GuestPath("/b/two"), GuestPath("/c/two")))
+        assertEquals(listOf("deploy" to "one", "two:deploy" to "two"), bare.skills.map { it.name to it.description })
+        assertTrue(bare.notes.toString(), bare.notes.any { "/c/two/.claude/skills/deploy/SKILL.md" in it && "two:deploy" in it })
+    }
+
     @Test
     fun `the config loader reads ancestor project skills at lower priority than the working directory`() = runBlocking {
         val fs = InMemoryFs()

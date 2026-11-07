@@ -313,6 +313,26 @@ class SkillReloadSessionTest {
         assertEquals(1, rescanEvents(rt))
     }
 
+    // CC 2.1.309：重扫时 `--add-dir` 里新出现的同名 skill 也以 `<目录名>:<名字>` 加进来，不被丢掉，也不被当成改动了原来那个
+    @Test
+    fun `a same-named add-dir skill found by a rescan joins as folder colon name, in full and bare mode`() = run {
+        fs.files["/workspace/.claude/skills/deploy/SKILL.md"] = skillFile("project deploy")
+        val full = create(ScriptedModel(reply(TextPart("1")), reply(TextPart("2"))), addDirs = listOf(GuestPath("/extra/lib")))
+        full.say("first")
+        fs.files["/extra/lib/.claude/skills/deploy/SKILL.md"] = skillFile("lib deploy", "lib body")
+        full.say("second")
+        assertEquals("project deploy", full.entry("deploy").description)
+        assertEquals("lib deploy", full.entry("lib:deploy").description)
+        val loaded = invoke(full, "lib:deploy")
+        assertTrue("got $loaded", loaded is SkillInvocation.Loaded && loaded.content.endsWith("lib body"))
+
+        fs.files["/other/lib2/.claude/skills/deploy/SKILL.md"] = skillFile("lib2 deploy")
+        val bare = create(ScriptedModel(), Customizations.Bare, listOf(GuestPath("/extra/lib"), GuestPath("/other/lib2")))
+        assertEquals("lib deploy", bare.entry("deploy").description)
+        assertEquals("lib2 deploy", bare.entry("lib2:deploy").description)
+        assertTrue(bare.reloadSkills().let { it.added.isEmpty() && it.removed.isEmpty() && it.changed.isEmpty() })
+    }
+
     @Test
     fun `reloadSkills in safe mode does nothing and says so, in bare mode it reads only the add-dir skills`() = run {
         fs.files["/extra/lib/.claude/skills/tool/SKILL.md"] = skillFile("a tool")

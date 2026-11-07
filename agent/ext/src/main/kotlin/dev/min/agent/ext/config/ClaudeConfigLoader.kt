@@ -44,7 +44,7 @@ object ClaudeConfigLoader {
             .map { DefinitionRoot(ConfigSource.Project, it) }
         // `--add-dir`：附加目录自己的 skills 与 commands（CC 的 Skills 文档），排在项目层之下
         val addDirs = inputs.addDirs.map { it.value }.distinct()
-        val addDirSkills = addDirs.map { DefinitionRoot(ConfigSource.AddDir, GuestPaths.join(GuestPaths.normalize(it), ".claude/skills")) }
+        val addDirSkills = addDirSkillRoots(addDirs)
         val addDirCommands = addDirs.map { DefinitionRoot(ConfigSource.AddDir, GuestPaths.join(GuestPaths.normalize(it), ".claude/commands")) }
 
         val skills = SkillLoader.load(io, roots("skills", ConfigSource.Managed, ConfigSource.User, ConfigSource.Project) + ancestors + addDirSkills)
