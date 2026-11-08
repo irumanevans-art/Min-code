@@ -157,6 +157,13 @@ class ClaudeCodeCliPipe(
                 Log.d(TAG, "readLoop closed by stopSession")
                 return
             }
+            // 进程已经没了：读端的异常只是它退出的后果（管道被掐断）。退出由 [startReading] 里等 waitFor 的那条报，
+            // 带着退出码 —— 被系统 SIGKILL 时要靠它说明原因（[cliExitError]）。这里再报「会话中断」会和它抢着写状态，
+            // 后到的赢，用户就只剩一句 Stream closed
+            if (!proc.isAlive) {
+                Log.d(TAG, "readLoop closed by process exit", e)
+                return
+            }
             Log.e(TAG, "readLoop error", e)
             onReadFailure(e)
         }

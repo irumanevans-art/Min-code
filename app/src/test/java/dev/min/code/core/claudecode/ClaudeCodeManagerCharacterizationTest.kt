@@ -556,6 +556,18 @@ class ClaudeCodeManagerCharacterizationTest {
         }
     }
 
+    /** 真机上系统的子进程上限会 SIGKILL 掉 CLI（2026-11-07 logcat）：要说清原因，不能只剩一个退出码 */
+    @Test
+    fun `the CLI killed by the system closes the session with an explanation`() = runBlocking<Unit> {
+        ManagerHarness("plain_reply").use { h ->
+            h.startAndHandshake()
+            h.process.stdoutFailsOnExit = true
+            h.process.crash(EXIT_SIGKILL)
+            val s = h.awaitState("关闭") { it.status != SessionStatus.Running && it.errorMessage == CLI_KILLED_BY_SYSTEM }
+            assertFalse(s.busy)
+        }
+    }
+
     @Test
     fun `a broken stdout stream fails the session`() = runBlocking<Unit> {
         ManagerHarness("plain_reply").use { h ->

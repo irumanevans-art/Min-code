@@ -617,16 +617,17 @@ class ClaudeCodeManager(
             // 回合进行中、不是我们关的进程死了：模型还欠一个回答，▶ 会先 --resume 接回来再续（设计 §6.4）。
             // 用户自己结束会话（unexpected = false）不记：他是有意停的
             val midTurn = if (it.busy && unexpected) ClaudeTurnEnd(ClaudeTurnEnd.Kind.EngineExited, exitedAt) else it.lastTurnEnd
+            // 被系统 SIGKILL 时换成能看懂的说明（[cliExitError]）；读流先断过、状态已是 Failed 的也换
+            val errorMessage = cliExitError(code, unexpected, it.errorMessage)
             if (it.status == SessionStatus.Failed) {
-                it.copy(busy = false, permissionQueue = emptyList(), lastTurnEnd = midTurn)
+                it.copy(busy = false, permissionQueue = emptyList(), lastTurnEnd = midTurn, errorMessage = errorMessage)
             } else {
                 it.copy(
                     status = SessionStatus.Closed,
                     busy = false,
                     permissionQueue = emptyList(),
                     lastTurnEnd = midTurn,
-                    errorMessage = it.errorMessage
-                        ?: if (unexpected) "claude 进程退出 (exit $code)" else null,
+                    errorMessage = errorMessage,
                 )
             }
         }
