@@ -22,7 +22,7 @@
 - 已知限制：正文是调用那一刻磁盘上的（只有清单冻结）；`allowed-tools` 预批准、`context: fork`、`model` / `effort` 覆盖、`hooks` 没做；Skill 工具默认不弹审批（见 :agent:tools）。
 
 ## 长寿进程配额（`QuotaProcessPort`）
-- `HostPorts.processes` 恒套一层配额：一个宿主一份，所有会话与子 agent 共用，上限 `MAX_LONG_LIVED_PROCESSES = 8`（**暂定**，真机测过 phantom 进程上限后再调）。
+- `HostPorts.processes` 恒套一层配额：一个宿主一份，所有会话与子 agent 共用，上限 `MAX_LONG_LIVED_PROCESSES = 8`（**暂定**；真机已证实 phantom 上限会杀进程，数为什么没改见 `ProcessQuota.kt` 的注释）。
   超额时 spawn 抛带说明的 `ProcessSpawnException`（列出占名额的服务器），不排队；名额从起进程前预留到进程退出。
 
 ## Agent 团队与邮箱（M5，`Teams.kt` / `TeamCoordinator.kt`；设计 docs/agent/detail/agent团队与邮箱设计.md）

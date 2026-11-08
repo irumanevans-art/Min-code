@@ -2849,3 +2849,30 @@ Windows 的并行进程测试应直接验证执行区间重叠；认证显示要
 - Pattern-Key: private-source.auth-redaction-and-native-concurrency-proof
 
 ---
+
+## [LRN-20261107-PHANTOM-ORPHANS] best_practice
+
+**Logged**: 2026-11-07T23:55:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+真机上 Android 的 phantom 子进程上限（全系统 32）会 SIGKILL 掉 Claude Code 会话；被杀的 proot 留下的 tracee 一直占着名额，新会话接连被杀。修法是 proot 给所有 tracee 设 PTRACE_O_EXITKILL。
+
+### Details
+- 证据（vivo PD2309，Android 16，两项设置都是 null）：`logcat -b all` 的 `am_kill` 以 "Trimming phantom processes" 约 5 分钟一次杀 libproot_exec.so / bash / claude；`ps -A` 里 4 个 PPID 1 的 python3 各带一对 chrome zygote，是更早被杀的会话留下的。模拟器上 40 个孤儿 1 分钟没被杀，那个结论不能外推到真机。
+- 孤儿的来历：proot 被 SIGKILL 时 `--kill-on-exit` 与 atexit 都不执行，tracee 被内核解除跟踪、继续活着，但没有路径翻译（seccomp TRACE 的调用没有 tracer 时返回 ENOSYS），什么也做不成。
+- 只能在 proot 里修：Kotlin 侧在 proot 死后已找不到这些进程（ppid 树断了），扫 uid 又要在每个入口都接一遍。PTRACE_O_EXITKILL 由内核在 tracer 退出那一刻执行，会话、终端、本地服务、Codex 全覆盖。
+- 重编 proot 前先确认可复现：从等长路径重编未改的源码，与已提交二进制的反汇编（地址与立即数归一后）逐行一致，差异只来自嵌进 rodata 的 talloc.c 路径。改完再对拍，差别只该是那组选项和 `__LINE__` 常量。
+- CLI 被 SIGKILL 时 waitFor 给 137；读 stdout 的循环可能先抛 "Stream closed"，进程已死时要让退出那条路报，不然「会话中断」会盖掉原因。
+
+### Suggested Action
+真机上排查「会话自己退出」先看 `adb logcat -b all -d | grep am_kill` 和 `dumpsys activity exit-info dev.min.code`（后者的 single-cleaner 是 vivo 清后台 / 划掉最近任务，不是上限）。不要用代码改系统设置，只提示用户开发者选项里的「停用子进程限制」。
+
+### Metadata
+- Source: debugging
+- Related Files: workspace/proot/src/tracee/event.c, workspace/proot/README.md, app/src/main/java/dev/min/code/core/claudecode/ClaudeCodeCliExit.kt
+- Pattern-Key: android.phantom-killer.proot-exitkill
+
+---
