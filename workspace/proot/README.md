@@ -19,7 +19,10 @@
 - `tracee/seccomp.c`：Android 外层 TRAP 比新增 ERRNO 优先，SIGSYS 扩展及假成功逻辑之前，用同一份 BPF 数据再判定。此处不可删除，否则 mount/unshare 仍会被 proot 模拟为成功。
 - `isolation/policy.c`：L1 路径检查执行 proot 的 guest/dirfd/符号链接翻译，再对宿主可写根做完整边界比较；覆盖路径写、fd 元数据写、共享可写 mmap、硬链接两端与 rename 两端。文件型 AF_UNIX bind 执行写策略，IP bind 拒绝以防反向连接绕过代理。关闭额外继承 fd；限制传入/传出 SCM_RIGHTS；拒绝非 guest 树的信号目标和 `/proc/<pid>` 访问，阻断本树 mem/root 魔术入口。
 - `syscall/seccomp.c`：需 L1 检查的 fd、网络及信号调用进入 TRACE，不能走上游 ALLOW 快路。
-- `tracee/event.c`：隔离模式所有 tracee 设置 PTRACE_O_EXITKILL。proot 被 SIGKILL 后，包含 setsid 的子孙均随之退出。
+- `tracee/event.c`：所有 tracee 设置 PTRACE_O_EXITKILL（起初只给隔离模式）。proot 被 SIGKILL 后，包含 setsid 的子孙均随之退出。
+  2026-11-07 起不分模式：真机（vivo PD2309，Android 16）上系统的子进程上限（全系统 32 个）会 SIGKILL 掉 Claude Code 会话的 proot，
+  留下的 tracee 没有路径翻译、什么也做不成，却一直占着名额，下一个会话一起来就超限被杀。重编后与旧二进制对拍反汇编，
+  差别只有这组选项和 `__LINE__` 常量。
 - CLI `--min-isolation=offline|proxy:<ports>`、重复的 `--min-writable=<canonical-host-dir>` 由宿主策略生成。没有参数便不启用；Min 引擎的两个生产入口均强制携带参数。
 
 L2 的按值过滤是内核限制；L1 检查路径、/proc 和代理目标仍有 tracee 内存的 TOCTOU、多线程竞态与未覆盖 ioctl 等局限，只标为防误操作级。classic BPF 不能读 connect 的 sockaddr 指针，代理目标限制在 L1，不能宣称网络代理是硬边界。`/proc` 的非本树数字目录拒绝访问，但 getdents 仍可能列出 PID 名称。

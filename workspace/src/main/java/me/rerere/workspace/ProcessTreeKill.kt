@@ -16,6 +16,10 @@ import java.io.File
  * 倒过来的话，宿主一死，后代立刻被 reparent 到 init，从 root 出发的树就再也走不到
  * 了（这正是复现实验里孤儿死壳的形态）。
  *
+ * 自维护的 proot 现在给所有 tracee 设 `PTRACE_O_EXITKILL`（`workspace/proot/README.md`）：宿主被谁 SIGKILL
+ * （包括系统的子进程上限），内核都会连带杀掉 guest，不再留孤儿。这里照旧自底向上先发 SIGTERM，为的是让
+ * guest 有机会收尾（claude 退出前才落盘 transcript），而不是只靠宿主一死全员 SIGKILL。
+ *
  * 进程组杀不可用：`ProcessBuilder` 不 setsid，proot 及其 tracee 与 App 同处一个
  * 进程组，杀组等于杀 App 自己 —— 已读代码确认 proot 侧也没有 setsid 调用。
  *

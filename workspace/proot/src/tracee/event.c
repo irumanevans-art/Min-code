@@ -522,7 +522,16 @@ int handle_tracee_event(Tracee *tracee, int tracee_status)
 				PTRACE_O_TRACEVFORKDONE	|
 				PTRACE_O_TRACEEXEC	|
 				PTRACE_O_TRACECLONE	|
-				PTRACE_O_TRACEEXIT | (min_isolation_enabled ? PTRACE_O_EXITKILL : 0));
+				/* Min: every tracee dies with PRoot, not only
+				 * isolated ones.  A tracee left behind by a
+				 * SIGKILLed PRoot (Android's phantom-process
+				 * killer does that) has no path translation, and
+				 * under seccomp its traced syscalls fail with
+				 * ENOSYS: it can do nothing useful, yet keeps one of
+				 * the 32 system-wide child-process slots, which
+				 * gets the next session killed.  */
+				PTRACE_O_TRACEEXIT	|
+				PTRACE_O_EXITKILL);
 
 			/* Distinguish some events from others and
 			 * automatically trace each new process with
